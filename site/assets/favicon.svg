@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Keeta Agent Skills">
+  <rect width="64" height="64" rx="12" fill="#ffffff" />
+  <rect x="0.5" y="0.5" width="63" height="63" rx="11.5" fill="none" stroke="#dddddd" />
+  <text
+    x="32"
+    y="44"
+    fill="#2c2a2a"
+    font-family="Helvetica, Arial, sans-serif"
+    font-size="38"
+    font-weight="500"
+    text-anchor="middle"
+  >K</text>
+</svg>
