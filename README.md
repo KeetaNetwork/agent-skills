@@ -10,7 +10,7 @@ npx skills add KeetaNetwork/agent-skills
 
 ## Why this pack
 
-USDC-only agent packs, including Arc-oriented workflows, stop at one settlement asset. Keeta workflows need to reason about native multi-currency balances, discoverable anchors, identity certificates, conversions, bridges, and off-chain payout rails. These skills provide that wider operating model while staying inside the public `@keetanetwork/keetanet-client`, `@keetanetwork/anchor`, and Keeta documentation surface.
+Keeta is built for native multi-currency balances, discoverable anchors, identity certificates, conversions, bridges, and off-chain payout rails. These skills give agents that operating model while staying inside the public `@keetanetwork/keetanet-client`, `@keetanetwork/anchor`, and Keeta documentation surface.
 
 Every workflow is confirmation-first. Skills guide agents through discovery, SDK calls, and failure handling; humans review and approve identity disclosures, quotes, recipients, and value-moving operations. A skill is guidance, not an authorization boundary or a substitute for legal, compliance, or security review.
 
