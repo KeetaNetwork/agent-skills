@@ -25,7 +25,7 @@ Every workflow is confirmation-first. Skills guide agents through discovery, SDK
 | [complete-kyc](plugins/keeta/skills/complete-kyc/SKILL.md) | Run the documented Footprint sandbox KYC pattern and attach certificates |
 | [complete-kyb](plugins/keeta/skills/complete-kyb/SKILL.md) | Gate business verification on provider documentation without inventing a KYB API |
 | [convert-via-anchors](plugins/keeta/skills/convert-via-anchors/SKILL.md) | Discover quotes and convert a documented token pair through an FX anchor |
-| [bridge-usdc](plugins/keeta/skills/bridge-usdc/SKILL.md) | Create a persistent Arbitrum USDC-to-Keeta USD deposit address |
+| [bridge-usdc](plugins/keeta/skills/bridge-usdc/SKILL.md) | Discover support for documented Arbitrum inbound and Base Sepolia USDC corridors |
 | [pay-out](plugins/keeta/skills/pay-out/SKILL.md) | Initiate and monitor a Keeta USD-to-US-bank payout |
 | [spend-policy](plugins/keeta/skills/spend-policy/SKILL.md) | Apply advisory limits and approval controls around agent transactions |
 
