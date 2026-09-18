@@ -6,6 +6,8 @@ Installable, source-linked playbooks for agents building with Keeta wallets, nat
 npx skills add KeetaNetwork/agent-skills
 ```
 
+**Catalog:** [keetanetwork.github.io/agent-skills](https://keetanetwork.github.io/agent-skills/) — the static catalog goes live after GitHub Pages is enabled (source: GitHub Actions).
+
 ## Why this pack
 
 USDC-only agent packs, including Arc-oriented workflows, stop at one settlement asset. Keeta workflows need to reason about native multi-currency balances, discoverable anchors, identity certificates, conversions, bridges, and off-chain payout rails. These skills provide that wider operating model while staying inside the public `@keetanetwork/keetanet-client`, `@keetanetwork/anchor`, and Keeta documentation surface.

@@ -301,12 +301,16 @@ h1 em {
 
 .wedge {
   display: grid;
-  grid-template-columns: 1.25fr 0.75fr;
-  gap: 45px 75px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 45px 40px;
   padding: 82px;
   border-radius: 32px;
   color: #eff7f2;
   background: var(--navy);
+}
+
+.wedge > :first-child {
+  grid-column: 1 / 3;
 }
 
 .wedge h2,
@@ -358,24 +362,10 @@ h1 em {
 }
 
 .rail small {
-  overflow: hidden;
   color: #86968e;
   font-family: var(--font-mono);
   font-size: 9px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.rail-a {
-  grid-column: 1;
-}
-
-.rail-b {
-  grid-column: 2;
-}
-
-.rail-c {
-  display: none;
+  line-height: 1.45;
 }
 
 .catalog {
@@ -664,14 +654,12 @@ footer > div {
     border-radius: 22px;
   }
 
+  .wedge > :first-child,
+  .wedge > p,
   .rail-a,
   .rail-b,
   .rail-c {
     grid-column: 1;
-  }
-
-  .rail-c {
-    display: block;
   }
 
   .rail span {
