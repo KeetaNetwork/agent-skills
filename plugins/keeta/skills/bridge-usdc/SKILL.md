@@ -112,7 +112,15 @@ Do not create or fund a main-network address until resolver discovery and author
 
 The LayerZero announcement says Keeta Stablecoins are intended to be transferable across Keeta, Ethereum, Solana, and Base through the OFT standard, and that LayerZero is being integrated as an anchor. It does not publish USDC contracts, Keeta token IDs, network environments, directions, Asset Movement operations, or a working client example.
 
-The public Base Sepolia examples use the Asset Movement client in this skill, but no public source connects their `DEV2` provider to LayerZero. Do not label these USDC flows as LayerZero, and do not claim LayerZero inbound or outbound availability from the announcement alone. The named `layerzero-vt-anchor` and `bridge-anchor` implementations were not publicly accessible for verification, and no public HopNow Asset Movement implementation was found.
+The private `layerzero-vt-anchor` reference implements a Keeta-less external-chain peer bridge. Its tests include Base mainnet chain ID `8453` and Arbitrum One chain ID `42161`, but enabled deployment legs are environment-selected and remain unknown. It implements an Asset Movement provider that the public client can discover; it is neither an inbound transfer to Keeta nor an outbound transfer from Keeta.
+
+Do not label the public Base Sepolia USDC examples or their demo `DEV2` provider as LayerZero.
+
+## Other reference anchors
+
+- The private Bridge.xyz anchor implements inbound and outbound Asset Movement relative to Keeta. Base is required by its configuration. Its committed example configures Base Sepolia chain ID `84532` and Ethereum Sepolia chain ID `11155111`; Arbitrum appears only in its supported-chain type list, so active Arbitrum support is not proven.
+- The private HopNow anchor is an outbound payout path to a US bank account. Its EVM bridge configuration uses Base Sepolia chain ID `84532` with USDC on test and Base mainnet chain ID `8453` with USDC or USDT on main; test also allows a Solana devnet USDC hop. It uses `new KeetaAnchor.AssetMovement.Client(...)` to discover the intermediate bridge. It is not the direct wallet-funding corridor in this skill.
+- Bridge.xyz and LayerZero implement provider sides of the same Asset Movement protocol. HopNow both implements a payout provider and consumes another Asset Movement provider. None identifies the unnamed operator for the public Arbitrum USDC → Keeta USD guide.
 
 ## Confirmations
 
@@ -143,3 +151,6 @@ The public Base Sepolia examples use the Asset Movement client in this skill, bu
 - [Asset Movement client](https://github.com/KeetaNetwork/anchor/blob/main/src/services/asset-movement/client.ts)
 - [Asset Movement operation metadata](https://github.com/KeetaNetwork/anchor/blob/main/src/services/asset-movement/common.ts)
 - [Keeta and LayerZero announcement](https://layerzero.network/blog/keeta-and-layerzero-bring-tokenized-bank-deposits) — scope-only evidence for the LayerZero boundary; not a corridor implementation source
+- [`layerzero-vt-anchor`](https://github.com/KeetaNetwork/layerzero-vt-anchor) — private reference implementation; access required
+- [`bridge-anchor`](https://github.com/KeetaNetwork/bridge-anchor) — private reference implementation; access required
+- [`hopnow-anchor`](https://github.com/KeetaNetwork/hopnow-anchor) — private reference implementation; access required
