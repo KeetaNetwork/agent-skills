@@ -1,0 +1,19 @@
+name: Validate skills
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate skill structure and metadata
+        run: python3 .github/scripts/validate-skills.py
+      - name: Check static site entry point
+        run: test -s site/index.html && test -s site/styles.css && test -s site/app.js

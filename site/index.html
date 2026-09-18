@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="Installable Keeta agent skills for wallets, KYC, KYB, anchors, FX, bridges, and payouts."
+    />
+    <meta name="theme-color" content="#071712" />
+    <title>Keeta Agent Skills</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+    <script src="./app.js" defer></script>
+  </head>
+  <body>
+    <div class="ambient ambient-one" aria-hidden="true"></div>
+    <div class="ambient ambient-two" aria-hidden="true"></div>
+
+    <header class="nav">
+      <a class="brand" href="#top" aria-label="Keeta Agent Skills home">
+        <svg viewBox="0 0 40 40" role="img" aria-hidden="true">
+          <path d="M7 5h26v8H15v5h15v8H15v9H7V5Z" />
+          <path d="m24 18 9-5v8l-9 5v-8Z" class="brand-accent" />
+        </svg>
+        <span>Keeta <strong>Skills</strong></span>
+      </a>
+      <nav aria-label="Primary navigation">
+        <a href="#skills">Catalog</a>
+        <a href="#why">Why Keeta</a>
+        <a href="https://github.com/KeetaNetwork/agent-skills">GitHub</a>
+      </nav>
+      <a class="nav-cta" href="#install">Install pack</a>
+    </header>
+
+    <main id="top">
+      <section class="hero">
+        <div class="eyebrow"><span></span> Open agent skill pack</div>
+        <h1>Give agents a<br /><em>multi-currency wallet.</em></h1>
+        <p class="hero-copy">
+          Source-linked Keeta playbooks for accounts, identity, anchor
+          discovery, FX, bridges, and bank payouts—built for review before
+          execution.
+        </p>
+
+        <div class="install" id="install">
+          <div class="install-label">
+            <span>Install all 10 skills</span>
+            <span class="install-status">agentskills.io compatible</span>
+          </div>
+          <div class="command">
+            <code><span>$</span> npx skills add KeetaNetwork/agent-skills</code>
+            <button
+              class="copy"
+              type="button"
+              data-copy="npx skills add KeetaNetwork/agent-skills"
+              aria-label="Copy install command"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M8 8h11v11H8z" />
+                <path d="M5 16H4V5h11v1" />
+              </svg>
+              <span>Copy</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="hero-meta">
+          <div><strong>10</strong><span>focused skills</span></div>
+          <div><strong>2</strong><span>public SDKs</span></div>
+          <div><strong>0</strong><span>invented APIs</span></div>
+        </div>
+      </section>
+
+      <section class="wedge" id="why">
+        <div>
+          <p class="section-kicker">Beyond a single stablecoin</p>
+          <h2>One wallet. More than one money rail.</h2>
+        </div>
+        <p>
+          USDC-only and Arc-oriented packs handle one asset well. Keeta agents
+          also need native multi-asset balances, on-chain service discovery,
+          reusable identity certificates, FX anchors, cross-chain deposits,
+          and external bank payouts.
+        </p>
+        <div class="rail rail-a">
+          <span>01</span>
+          <strong>Native assets</strong>
+          <small>KTA · USD · EUR · token accounts</small>
+        </div>
+        <div class="rail rail-b">
+          <span>02</span>
+          <strong>Discoverable anchors</strong>
+          <small>KYC · FX · bridge · asset movement</small>
+        </div>
+        <div class="rail rail-c">
+          <span>03</span>
+          <strong>External rails</strong>
+          <small>Arbitrum · US bank accounts</small>
+        </div>
+      </section>
+
+      <section class="catalog" id="skills">
+        <div class="section-heading">
+          <div>
+            <p class="section-kicker">The catalog</p>
+            <h2>From empty wallet to external settlement.</h2>
+          </div>
+          <p>
+            Load only the skill the task needs. Every playbook includes
+            confirmations, failure stops, related workflows, and primary
+            sources.
+          </p>
+        </div>
+
+        <div class="filters" role="group" aria-label="Filter skills">
+          <button class="filter active" type="button" data-filter="all">All 10</button>
+          <button class="filter" type="button" data-filter="wallet">Wallet</button>
+          <button class="filter" type="button" data-filter="identity">Identity</button>
+          <button class="filter" type="button" data-filter="anchors">Anchors</button>
+          <button class="filter" type="button" data-filter="controls">Controls</button>
+        </div>
+
+        <div class="skill-grid">
+          <a
+            class="skill-card featured"
+            data-category="wallet"
+            href="https://github.com/KeetaNetwork/agent-skills/blob/main/plugins/keeta/skills/create-fund-wallet/SKILL.md"
+          >
+            <div class="card-top"><span class="number">01</span><span class="tag">Wallet</span></div>
+            <h3>Create &amp; fund wallet</h3>
+            <p>Create or restore a signer, choose a network, and prepare a safe funding request.</p>
+            <span class="card-link">Read skill <span>↗</span></span>
+          </a>
+
+          <a
+            class="skill-card"
+            data-category="wallet"
+            href="https://github.com/KeetaNetwork/agent-skills/blob/main/plugins/keeta/skills/multi-asset-balances/SKILL.md"
+          >
+            <div class="card-top"><span class="number">02</span><span class="tag">Wallet</span></div>
+            <h3>Multi-asset balances</h3>
+            <p>Read native token balances without losing token identity, decimals, or base-unit precision.</p>
+            <span class="card-link">Read skill <span>↗</span></span>
+          </a>
+
+          <a
+            class="skill-card"
+            data-category="wallet"
+            href="https://github.com/KeetaNetwork/agent-skills/blob/main/plugins/keeta/skills/send-receive-tokens/SKILL.md"
+          >
+            <div class="card-top"><span class="number">03</span><span class="tag">Wallet</span></div>
+            <h3>Send &amp; receive</h3>
+            <p>Validate recipient, asset, and base-unit amount before a direct Keeta transfer.</p>
+            <span class="card-link">Read skill <span>↗</span></span>
+          </a>
+
+          <a
+            class="skill-card featured"
+            data-category="anchors"
+            href="https://github.com/KeetaNetwork/agent-skills/blob/main/plugins/keeta/skills/discover-resolve-anchors/SKILL.md"
+          >
+            <div class="card-top"><span class="number">04</span><span class="tag">Anchors</span></div>
+            <h3>Discover anchors</h3>
+            <p>Resolve signed on-chain metadata and find providers for an exact corridor.</p>
+            <span class="card-link">Read skill <span>↗</span></span>
+          </a>
+
+          <a
+            class="skill-card"
+            data-category="identity"
+            href="https://github.com/KeetaNetwork/agent-skills/blob/main/plugins/keeta/skills/complete-kyc/SKILL.md"
+          >
+            <div class="card-top"><span class="number">05</span><span class="tag">Identity</span></div>
+            <h3>Complete KYC</h3>
+            <p>Run the documented Footprint sandbox pattern, attach certificates, and share only approved attributes.</p>
+            <span class="card-link">Read skill <span>↗</span></span>
+          </a>
+
+          <a
+            class="skill-card gap-card"
+            data-category="identity"
+            href="https://github.com/KeetaNetwork/agent-skills/blob/main/plugins/keeta/skills/complete-kyb/SKILL.md"
+          >
+            <div class="card-top"><span class="number">06</span><span class="tag">Identity · Gap-safe</span></div>
+            <h3>Complete KYB</h3>
+            <p>Discover provider requirements and stop safely where the public SDK has no stable KYB client.</p>
+            <span class="card-link">Read skill <span>↗</span></span>
+          </a>
+
+          <a
+            class="skill-card"
+            data-category="anchors"
+            href="https://github.com/KeetaNetwork/agent-skills/blob/main/plugins/keeta/skills/convert-via-anchors/SKILL.md"
+          >
+            <div class="card-top"><span class="number">07</span><span class="tag">Anchors</span></div>
+            <h3>Convert via anchors</h3>
+            <p>Discover KTA-to-USD quotes, review rate and fees, then execute the approved exchange.</p>
+            <span class="card-link">Read skill <span>↗</span></span>
+          </a>
+
+          <a
+            class="skill-card"
+            data-category="anchors"
+            href="https://github.com/KeetaNetwork/agent-skills/blob/main/plugins/keeta/skills/bridge-usdc/SKILL.md"
+          >
+            <div class="card-top"><span class="number">08</span><span class="tag">Anchors</span></div>
+            <h3>Bridge USDC</h3>
+            <p>Create a persistent Arbitrum USDC address that settles into native Keeta USD.</p>
+            <span class="card-link">Read skill <span>↗</span></span>
+          </a>
+
+          <a
+            class="skill-card featured"
+            data-category="anchors"
+            href="https://github.com/KeetaNetwork/agent-skills/blob/main/plugins/keeta/skills/pay-out/SKILL.md"
+          >
+            <div class="card-top"><span class="number">09</span><span class="tag">Anchors</span></div>
+            <h3>Pay out</h3>
+            <p>Initiate, fund, and monitor a Keeta USD payout to a verified US bank recipient.</p>
+            <span class="card-link">Read skill <span>↗</span></span>
+          </a>
+
+          <a
+            class="skill-card"
+            data-category="controls"
+            href="https://github.com/KeetaNetwork/agent-skills/blob/main/plugins/keeta/skills/spend-policy/SKILL.md"
+          >
+            <div class="card-top"><span class="number">10</span><span class="tag">Controls</span></div>
+            <h3>Spend policy</h3>
+            <p>Apply honest advisory controls, fail-closed limits, approvals, and audit records.</p>
+            <span class="card-link">Read skill <span>↗</span></span>
+          </a>
+        </div>
+      </section>
+
+      <section class="principles">
+        <p class="section-kicker">Built for trust</p>
+        <h2>Agents prepare.<br />Humans approve.</h2>
+        <div class="principle-grid">
+          <article>
+            <span>01</span>
+            <h3>Public APIs only</h3>
+            <p>Every named SDK method links back to Keeta documentation or public source.</p>
+          </article>
+          <article>
+            <span>02</span>
+            <h3>Unknown means stop</h3>
+            <p>Missing partner contracts and unavailable corridors stay visible as explicit gaps.</p>
+          </article>
+          <article>
+            <span>03</span>
+            <h3>Confirmation first</h3>
+            <p>Identity disclosure, quotes, recipients, and money movement return to a human.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="final-cta">
+        <p class="section-kicker">Ready to install</p>
+        <h2>Build on every Keeta rail.</h2>
+        <div class="command command-light">
+          <code><span>$</span> npx skills add KeetaNetwork/agent-skills</code>
+          <button
+            class="copy"
+            type="button"
+            data-copy="npx skills add KeetaNetwork/agent-skills"
+            aria-label="Copy install command"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M8 8h11v11H8z" />
+              <path d="M5 16H4V5h11v1" />
+            </svg>
+            <span>Copy</span>
+          </button>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <a class="brand footer-brand" href="#top">
+        <svg viewBox="0 0 40 40" aria-hidden="true">
+          <path d="M7 5h26v8H15v5h15v8H15v9H7V5Z" />
+          <path d="m24 18 9-5v8l-9 5v-8Z" class="brand-accent" />
+        </svg>
+        <span>Keeta <strong>Skills</strong></span>
+      </a>
+      <p>Open source under Apache-2.0.</p>
+      <div>
+        <a href="https://docs.keeta.com/">Keeta docs</a>
+        <a href="https://agentskills.io/">Agent Skills</a>
+        <a href="https://github.com/KeetaNetwork/agent-skills">GitHub</a>
+      </div>
+    </footer>
+  </body>
+</html>
