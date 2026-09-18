@@ -21,7 +21,9 @@ Do not use a documented corridor as evidence that a provider is currently availa
 
 1. Connect with `KeetaAnchor.KeetaNet.UserClient.fromNetwork('test', account)`.
 2. Construct `new KeetaAnchor.AssetMovement.Client(userClient)`.
-3. Call `getProvidersForTransfer(...)` with one exact corridor. Use an asset pair for Arbitrum USDC → Keeta USD:
+3. Call `getProvidersForTransfer(...)` with one exact corridor.
+
+   Arbitrum USDC → Keeta USD uses an asset pair:
 
    ```ts
    const providers = await assetMovementClient.getProvidersForTransfer({
@@ -39,15 +41,47 @@ Do not use a documented corridor as evidence that a provider is currently availa
    });
    ```
 
-4. Stop if discovery returns no provider or errors. For each result, check `provider.isOperationSupported('createPersistentForwarding')` for inbound persistent addresses or `provider.isOperationSupported('initiateTransfer')` for outbound transfers.
-5. Review the provider ID, legal terms, fees, limits, rails, and account actions before selecting it. The public Arbitrum guide does not identify the operator.
+   Base Sepolia → Keeta USDC uses the single Keeta USDC token, not an `evm:` asset pair:
+
+   ```ts
+   const providers = await assetMovementClient.getProvidersForTransfer({
+     asset: 'keeta_apna75yhhvnv4ei7ape55hndk4yepno7a7i2mhtiwahiygixjcnmvswxhnmnk',
+     from: { type: 'chain', chain: { type: 'evm', chainId: 84532n } },
+     to: {
+       type: 'chain',
+       chain: { type: 'keeta', networkId: userClient.network }
+     }
+   });
+   ```
+
+4. Stop if discovery returns no provider or errors. For each result, call `await provider.isOperationSupported('createPersistentForwarding')` for inbound persistent addresses or `await provider.isOperationSupported('initiateTransfer')` for outbound transfers, and stop unless it returns `true`. That check confirms the provider exposes the operation endpoint. Also inspect the matching source rail in `provider.serviceInfo.supportedAssets` and require its `supportedOperations` metadata to advertise the same operation.
+5. Review the provider ID, legal terms, fees, limits, rails, and account actions before selecting it. The public Arbitrum guide does not identify the operator. Public Base examples hardcode `DEV2` for demo only — never hardcode `DEV2` or any example provider ID; select only from the current discovery results after the operation checks above.
 
 ## Inbound persistent deposit
 
-For either documented inbound corridor, require `createPersistentForwarding` support, then call `provider.createPersistentForwardingAddress(...)` with the same asset and locations used for discovery. Confirm the returned address and its EVM network before asking the user to send USDC.
+For either documented inbound corridor, require `createPersistentForwarding` support, then call `provider.createPersistentForwardingAddress(...)` with the corridor's asset and locations. Confirm the returned address and its EVM network before asking the user to send USDC.
 
-- Arbitrum uses the USDC-to-USD asset pair above.
-- Base Sepolia uses asset `keeta_apna75yhhvnv4ei7ape55hndk4yepno7a7i2mhtiwahiygixjcnmvswxhnmnk`, source chain ID `84532`, and the Keeta test destination. The example identifies `0x036CbD53842c5426634e7929541eC2318f3dCF7e` as the corresponding Base Sepolia USDC contract.
+Arbitrum uses the USDC-to-USD asset pair:
+
+```ts
+const deposit = await provider.createPersistentForwardingAddress({
+  account: userAccount,
+  asset: {
+    from: 'evm:0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d',
+    to: Account.fromPublicKeyString(
+      'keeta_any4zllibya6fum3lsoimxmnmeo57nklxlh4c6d6xosfacarfaa3knkiprkmm'
+    )
+  },
+  sourceLocation: { type: 'chain', chain: { type: 'evm', chainId: 421614n } },
+  destinationLocation: {
+    type: 'chain',
+    chain: { type: 'keeta', networkId: userClient.network }
+  },
+  destinationAddress: userAccount.publicKeyString.get()
+});
+```
+
+Base Sepolia keeps the same field shape but uses asset `keeta_apna75yhhvnv4ei7ape55hndk4yepno7a7i2mhtiwahiygixjcnmvswxhnmnk`, source chain ID `84532n`, and the Keeta test destination. The example identifies `0x036CbD53842c5426634e7929541eC2318f3dCF7e` as the corresponding Base Sepolia USDC contract.
 
 Monitor a created address with `provider.listTransactions(...)`, then verify the destination balance or `userClient.history()`.
 
@@ -56,10 +90,12 @@ Monitor a created address with `provider.listTransactions(...)`, then verify the
 This is not the reverse of the Arbitrum USDC-to-USD conversion. The public example covers only Keeta test USDC → Base Sepolia:
 
 1. Discover with asset `keeta_apna75yhhvnv4ei7ape55hndk4yepno7a7i2mhtiwahiygixjcnmvswxhnmnk`, Keeta test as `from`, and EVM chain ID `84532` as `to`.
-2. Require `initiateTransfer` support.
-3. Call `provider.initiateTransfer(...)` with the approved EVM recipient and base-unit value.
-4. Follow the returned instruction. The current example expects `KEETA_SEND`, then uses `userClient.send(...)` with the instruction's anchor address and external data.
-5. Monitor with `provider.getTransferStatus(...)`.
+2. Call `await provider.isOperationSupported('initiateTransfer')` and stop unless it returns `true`; also require a matching source rail that advertises `initiateTransfer`.
+3. Validate the EVM recipient as `0x`-prefixed and exactly 42 characters; stop if it fails.
+4. Require a non-zero balance of that exact Keeta USDC token before calling `initiateTransfer`. Do not fund this flow with Arbitrum-credited Keeta USD `keeta_any4zllibya6fum3lsoimxmnmeo57nklxlh4c6d6xosfacarfaa3knkiprkmm`.
+5. Call `provider.initiateTransfer(...)` with the approved EVM recipient and base-unit value.
+6. Follow the returned instruction. The current example expects `KEETA_SEND`, then `userClient.send(anchorAccount, amount, usdcTokenAccount, instruction.external)` where `usdcTokenAccount` is that Keeta USDC token.
+7. Monitor with `provider.getTransferStatus(...)`.
 
 Do not infer an Arbitrum outbound path or a main-network Base path from this test-only example.
 
@@ -96,7 +132,7 @@ The public Base Sepolia examples use the Asset Movement client in this skill, bu
 
 - Use [complete-kyc](../complete-kyc/SKILL.md) or [complete-kyb](../complete-kyb/SKILL.md) first.
 - Use [discover-resolve-anchors](../discover-resolve-anchors/SKILL.md) to review the provider.
-- Use [multi-asset-balances](../multi-asset-balances/SKILL.md) to reconcile Keeta USD.
+- Use [multi-asset-balances](../multi-asset-balances/SKILL.md) to reconcile Keeta USD for Arbitrum inbound and Keeta USDC for Base flows.
 
 ## Sources
 
@@ -106,4 +142,4 @@ The public Base Sepolia examples use the Asset Movement client in this skill, bu
 - [Keeta USDC → Base Sepolia example](https://github.com/KeetaNetwork/keetanet-examples/blob/main/src/anchor/asset-movement-evm-outbound.ts)
 - [Asset Movement client](https://github.com/KeetaNetwork/anchor/blob/main/src/services/asset-movement/client.ts)
 - [Asset Movement operation metadata](https://github.com/KeetaNetwork/anchor/blob/main/src/services/asset-movement/common.ts)
-- [Keeta and LayerZero announcement](https://layerzero.network/blog/keeta-and-layerzero-bring-tokenized-bank-deposits)
+- [Keeta and LayerZero announcement](https://layerzero.network/blog/keeta-and-layerzero-bring-tokenized-bank-deposits) — scope-only evidence for the LayerZero boundary; not a corridor implementation source
