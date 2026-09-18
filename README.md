@@ -6,7 +6,7 @@ Installable, source-linked playbooks for agents building with Keeta wallets, nat
 npx skills add KeetaNetwork/agent-skills
 ```
 
-**Catalog:** [keetanetwork.github.io/agent-skills](https://keetanetwork.github.io/agent-skills/) — the static catalog goes live after GitHub Pages is enabled (source: GitHub Actions).
+**Catalog:** [keeta.ai](https://keeta.ai/)
 
 ## Why this pack
 
