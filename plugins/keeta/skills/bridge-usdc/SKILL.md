@@ -17,7 +17,7 @@ The Arbitrum flow converts Circle USDC into Keeta USD. The Base flows move the K
 
 Do not use a documented corridor as evidence that a provider is currently available. On 2026-09-18, `@keetanetwork/anchor` `0.0.97` with `@keetanetwork/keetanet-client` `0.18.4` connected to Keeta test network ID `1413829460`, but every corridor lookup failed with `No valid root metadata found`; no provider or operation was returned.
 
-## Discover before use
+## SDK steps
 
 1. Connect with `KeetaAnchor.KeetaNet.UserClient.fromNetwork('test', account)`.
 2. Construct `new KeetaAnchor.AssetMovement.Client(userClient)`.
