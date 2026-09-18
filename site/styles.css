@@ -11,6 +11,8 @@
   --coral-hover: #f87159;
   --blue: #7091df;
   --light-blue: #cae0e3;
+  --arc-wash: #f5f5f5;
+  --arc-peach: #fbbeb0;
   --radius: 10px;
   --font-sans: "Geist", Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: "Geist Mono", ui-monospace, "SFMono-Regular", monospace;
@@ -138,7 +140,7 @@ footer {
 
 .hero {
   position: relative;
-  overflow: hidden;
+  overflow-x: clip;
   padding-top: 112px;
   padding-bottom: 104px;
   background: var(--white);
@@ -146,28 +148,30 @@ footer {
 
 .hero-arc {
   position: absolute;
-  top: 128px;
-  right: max(28px, calc((100% - 1240px) / 2));
-  width: 520px;
-  height: 260px;
-  border-radius: 260px 260px 0 0;
+  right: var(--gutter);
+  bottom: 0;
+  z-index: 0;
+  width: clamp(340px, 42vw, 600px);
+  height: clamp(170px, 21vw, 300px);
+  border-radius: 999px 999px 0 0;
   background: conic-gradient(
     from 270deg at 50% 100%,
     var(--blue) 0deg,
-    var(--light-blue) 48deg,
-    var(--coral) 106deg,
+    var(--light-blue) 63deg,
+    var(--arc-wash) 90deg,
+    var(--arc-peach) 117deg,
     var(--coral) 180deg,
     transparent 180deg
   );
   -webkit-mask: radial-gradient(
-    260px 260px at 50% 100%,
-    transparent 0 89%,
-    #000 89% 100%
+    farthest-side at 50% 100%,
+    transparent 0 85.8%,
+    #000 86.3% 100%
   );
   mask: radial-gradient(
-    260px 260px at 50% 100%,
-    transparent 0 89%,
-    #000 89% 100%
+    farthest-side at 50% 100%,
+    transparent 0 85.8%,
+    #000 86.3% 100%
   );
   pointer-events: none;
 }
@@ -183,6 +187,8 @@ footer {
 }
 
 .eyebrow {
+  position: relative;
+  z-index: 1;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -197,6 +203,7 @@ footer {
 
 h1 {
   position: relative;
+  z-index: 1;
   max-width: 820px;
   margin-bottom: 24px;
   font-size: clamp(44px, 5.2vw, 72px);
@@ -209,6 +216,7 @@ h1 em {
 
 .hero-copy {
   position: relative;
+  z-index: 1;
   max-width: 520px;
   margin-bottom: 44px;
   color: var(--muted-strong);
@@ -218,6 +226,7 @@ h1 em {
 
 .install {
   position: relative;
+  z-index: 1;
   max-width: 700px;
   padding: 12px;
   border: 1px solid var(--line);
@@ -296,6 +305,8 @@ h1 em {
 }
 
 .hero-meta {
+  position: relative;
+  z-index: 1;
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 190px));
   margin-top: 56px;
@@ -612,8 +623,8 @@ footer > div {
 
 @media (max-width: 960px) {
   .hero-arc {
-    right: -160px;
-    opacity: 0.85;
+    width: clamp(300px, 40vw, 380px);
+    height: clamp(150px, 20vw, 190px);
   }
 
   .skill-grid {
@@ -650,11 +661,9 @@ footer > div {
   }
 
   .hero-arc {
-    top: 20px;
-    right: -230px;
-    width: 400px;
-    height: 200px;
-    opacity: 0.6;
+    width: min(300px, 76vw);
+    height: min(150px, 38vw);
+    opacity: 0.8;
   }
 
   .hero-copy {
