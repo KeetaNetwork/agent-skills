@@ -18,7 +18,7 @@ for (const principal of shareWithPrincipals) {
 await provider.shareKYCAttributes({ account, attributes: sharable });
 ```
 
-Further onboarding arrives as `Errors.UserActionNeeded`. The share example publishes it with:
+Further onboarding arrives as `Errors.UserActionNeeded`. Decode each action before publishing. `add-certificate` needs issuer, subject, and validity. `grant-permission` needs principal, target, entity, and permission bits, under a separate approval. Unknown or unreadable actions stop the publish. The share example then publishes the approved ledger actions with:
 
 ```ts
 const builder = userClient.initBuilder();

@@ -12,6 +12,8 @@ npx skills add KeetaNetwork/agent-skills
 
 A new account follows one order: create a wallet, complete individual KYC, request US bank deposit instructions, confirm the Keeta USD balance, and pay out only when the user asks.
 
+On `main`, pay-in and pay-out re-resolve Keeta USD from the public guide and from provider metadata. The bank guides name `keeta_amnkge74xitii5dsobstldatv3irmyimujfjotftx7plaaaseam4bntb7wnna` and current `keetanet-examples` names `keeta_aonxxqry6rknxyb6c5q2ybxk2gt776xlchhcohhyla5kqvinnaduevuxyx3tc`. Those sources conflict, so this path stops and reports both ids. It does not pick one. The test-network example token is the one the bank guides and examples share.
+
 | Step | Skill |
 | --- | --- |
 | 1. Create or restore a wallet and confirm `test` or `main` | [create-fund-wallet](plugins/keeta/skills/create-fund-wallet/SKILL.md) |

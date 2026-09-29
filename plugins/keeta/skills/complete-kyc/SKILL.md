@@ -65,21 +65,29 @@ Business verification is [complete-kyb](../complete-kyb/SKILL.md). This skill is
    });
    ```
 
-10. When the error is `Errors.UserActionNeeded`, show `actionsNeeded` and wait for approval. The share example publishes those operations with the user client builder. `Errors` is the export from `@keetanetwork/anchor/services/asset-movement/common.js`.
+10. When the error is `Errors.UserActionNeeded`, decode every entry in `actionsNeeded` before building a block. `Errors` is the export from `@keetanetwork/anchor/services/asset-movement/common.js`. The public action type is `add-certificate`, `grant-permission`, or `provider-kyc-flow`.
+
+    - `add-certificate`: show the certificate issuer, subject, and validity, and show intermediates when they are present. Ask for consent to attach that certificate.
+    - `grant-permission`: show `permissionToGrant.principal`, `permissionToGrant.target`, `permissionToGrant.entity`, and `permissionToGrant.permissions` (the bit pair the SDK passes to `KeetaNet.lib.Permissions`). This changes wallet permissions. Ask for a separate approval that names those fields. A yes on the KYC page, the attribute share, or the rest of `actionsNeeded` does not approve this action. When that separate approval is missing, stop and do not publish.
+    - `provider-kyc-flow`: show `flow.url` and ask before the human opens it. `addOperationsToBuilder` does not publish this action.
+
+    Stop when an action has any other `type`, when `type` is missing, or when issuer, subject, validity, principal, target, entity, or the permission bits cannot be read. Do not call `addOperationsToBuilder` or `publishBuilder` for that list.
+
+    After every `add-certificate` and every `grant-permission` has its own approval, publish only those approved actions:
 
     ```ts
     const builder = userClient.initBuilder();
-    Errors.UserActionNeeded.addOperationsToBuilder(actionsNeeded, builder);
+    Errors.UserActionNeeded.addOperationsToBuilder(approvedActions, builder);
     await userClient.publishBuilder(builder);
     ```
 
-    Return to pay-in or pay-out only after the share or the user-action block succeeds.
+    `approvedActions` contains the `add-certificate` and `grant-permission` entries the human approved. It omits `provider-kyc-flow` and any refused action. Return to pay-in or pay-out only after that publish succeeds.
 
 ## Confirmations
 
 - Get human consent before opening the provider URL, submitting identity data, attaching a certificate, or sharing attributes.
 - Display the provider id, country, requested attribute names, principal addresses, accepted issuers, certificate issuer, status string, and environment.
-- Treat a terms URL and a user-action block as their own approval steps.
+- Treat a terms URL, each `add-certificate`, and each `grant-permission` as separate approval steps. A grant-permission approval names the principal, target, entity, and permission bits.
 - Say plainly when status is `pending`, `incomplete`, `fail`, or `error`, and say that no certificate was attached.
 
 ## Failures
@@ -90,6 +98,7 @@ Business verification is [complete-kyb](../complete-kyb/SKILL.md). This skill is
 - On `{ ok: false }` from `getCertificates()`, wait and poll. That response means the certificate is not ready.
 - Keep identity values out of logs, prompts, source files, and on-chain external identifiers. Attribute names may be shown. Decrypted values such as a legal name stay on the provider page and inside the encrypted container.
 - Stop when a flow needs a business KYB contract. Do not place organization fields into individual KYC.
+- Stop before `publishBuilder` when a `UserActionNeeded` action is unknown or cannot be summarized, or when a `grant-permission` lacks its own approval. Leave the signer unused.
 
 ## Related skills
 

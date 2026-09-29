@@ -4,7 +4,7 @@ Canonical page: https://docs.keeta.com/guides/fiat-deposit-from-bank
 
 Example: https://github.com/KeetaNetwork/keetanet-examples/blob/main/src/anchor/asset-movement-fiat-deposit-from-bank.ts
 
-The guide obtains deposit instructions from an Asset Movement anchor that can mint inbound value on Keeta. It assumes KYC is already completed and shared. Test network uses Keeta USD `keeta_any4zllibya6fum3lsoimxmnmeo57nklxlh4c6d6xosfacarfaa3knkiprkmm`. Main network uses `keeta_amnkge74xitii5dsobstldatv3irmyimujfjotftx7plaaaseam4bntb7wnna`.
+The guide obtains deposit instructions from an Asset Movement anchor that can mint inbound value on Keeta. It assumes KYC is already completed and shared. On test, the guide and the bank example both use Keeta USD `keeta_any4zllibya6fum3lsoimxmnmeo57nklxlh4c6d6xosfacarfaa3knkiprkmm`. On main, the guide names `keeta_amnkge74xitii5dsobstldatv3irmyimujfjotftx7plaaaseam4bntb7wnna` and `asset-movement-fiat-deposit-from-crypto.ts` names `keeta_aonxxqry6rknxyb6c5q2ybxk2gt776xlchhcohhyla5kqvinnaduevuxyx3tc`. Those mainnet ids conflict. Stop until the guide and provider metadata name one token.
 
 Discovery and the forwarding request use the same pair and locations:
 

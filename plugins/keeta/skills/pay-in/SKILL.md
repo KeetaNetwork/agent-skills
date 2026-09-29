@@ -9,12 +9,11 @@ description: Discover an Asset Movement provider for inbound US bank deposits th
 
 Use this skill when a person needs reusable instructions to send USD from a US bank account so the credit lands as Keeta USD. Complete individual KYC and any requested attribute share before asking for deposit instructions. This skill covers the public inbound corridor from the Fiat Deposit from Bank guide. It does not send a Keeta transaction and it does not register a payout recipient.
 
-Bind `UserClient` to an explicit `test` or `main` network. The guide's illustrative tokens are:
+Bind `UserClient` to an explicit `test` or `main` network. Re-resolve Keeta USD for that network from the public guide and from the provider metadata for the selected provider. Use a token only when those sources name the same id.
 
-- test Keeta USD `keeta_any4zllibya6fum3lsoimxmnmeo57nklxlh4c6d6xosfacarfaa3knkiprkmm`
-- main Keeta USD `keeta_amnkge74xitii5dsobstldatv3irmyimujfjotftx7plaaaseam4bntb7wnna`
+On `test`, the Fiat Deposit from Bank guide and `asset-movement-fiat-deposit-from-bank.ts` both use `keeta_any4zllibya6fum3lsoimxmnmeo57nklxlh4c6d6xosfacarfaa3knkiprkmm`. Prefer that id when provider metadata agrees. Stop when the provider names a different test token, and tell the human both ids.
 
-Re-resolve the token for the selected network from the guide or from provider metadata. A token id from the other network is a stop.
+On `main`, the bank guide names `keeta_amnkge74xitii5dsobstldatv3irmyimujfjotftx7plaaaseam4bntb7wnna` and current `keetanet-examples` names `keeta_aonxxqry6rknxyb6c5q2ybxk2gt776xlchhcohhyla5kqvinnaduevuxyx3tc` for mainnet Keeta USD. Those sources conflict, so neither id is authoritative here. Stop and tell the human both ids. Continue only when the guide and the provider metadata identify one token. A token id from the other network is also a stop.
 
 ## SDK steps
 
@@ -70,6 +69,7 @@ Re-resolve the token for the selected network from the guide or from provider me
 ## Failures
 
 - Stop when discovery returns no provider, throws, or the chosen provider does not support `createPersistentForwarding`.
+- Stop on `main` while the bank guide and `keetanet-examples` disagree on the Keeta USD token, and stop when provider metadata names a third id. Report the ids you compared.
 - When `Errors.KYCShareNeeded.isInstance(error)` or `Errors.UserActionNeeded.isInstance(error)` is true, stop this request and hand the error to [complete-kyc](../complete-kyc/SKILL.md). The share error carries `shareWithPrincipals`, `neededAttributes`, `acceptedIssuers`, and an optional `tosFlow`. The user-action error carries `actionsNeeded`. Retry `createPersistentForwardingAddress` only after that skill finishes the consented step.
 - Stop when the returned object is empty or omits `address`. Ask the provider flow again after the human reconfirms the provider. Do not fill in bank fields from memory or from a payout recipient.
 - Keep account numbers, routing numbers, and identity attributes out of logs, source files, and on-chain identifiers. The human-facing confirmation is the only place those returned instruction fields belong.
@@ -88,6 +88,7 @@ Re-resolve the token for the selected network from the guide or from provider me
 
 - [Fiat Deposit from Bank](https://docs.keeta.com/guides/fiat-deposit-from-bank)
 - [Bank deposit example](https://github.com/KeetaNetwork/keetanet-examples/blob/main/src/anchor/asset-movement-fiat-deposit-from-bank.ts)
+- [Mainnet Keeta USD id in the USDC example](https://github.com/KeetaNetwork/keetanet-examples/blob/main/src/anchor/asset-movement-fiat-deposit-from-crypto.ts)
 - [Asset Movement](https://docs.keeta.com/anchors/anchor-types/asset-movement)
 - [Asset Movement client](https://github.com/KeetaNetwork/anchor/blob/main/src/services/asset-movement/client.ts)
 - [Persistent forwarding address details](https://github.com/KeetaNetwork/anchor/blob/main/src/services/asset-movement/common.ts)

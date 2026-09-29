@@ -4,7 +4,7 @@ Canonical page: https://docs.keeta.com/guides/fiat-withdraw-to-bank
 
 Example: https://github.com/KeetaNetwork/keetanet-examples/blob/main/src/anchor/asset-movement-fiat-withdraw-to-bank.ts
 
-The guide initiates an outbound payment to a US bank and then sends Keeta USD to the anchor with the returned instruction. Test and main Keeta USD token ids match the deposit guide.
+The guide initiates an outbound payment to a US bank and then sends Keeta USD to the anchor with the returned instruction. On test, the guide and example use the same Keeta USD id as the bank deposit guide. On main, the withdraw guide names one id and `keetanet-examples` names another. Follow the pay-out skill and stop until those sources and provider metadata agree.
 
 Provider search:
 

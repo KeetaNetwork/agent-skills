@@ -14,7 +14,9 @@ Use this skill after the human has approved a US bank recipient and any required
 - destination location: `{ type: 'bank-account', account: { type: 'us' } }`
 - environment: `test`
 
-The guide's main-network Keeta USD token is `keeta_amnkge74xitii5dsobstldatv3irmyimujfjotftx7plaaaseam4bntb7wnna`. Re-resolve the token for the selected network. The guide selects the Asset Movement provider through the Resolver and does not name an operator. Discovery has to return a provider, and the human has to approve that provider, before any transfer starts.
+Re-resolve Keeta USD for the selected network from the public guide and from the provider metadata. Use a token only when those sources name the same id. On `test`, the withdraw guide and example use `keeta_any4zllibya6fum3lsoimxmnmeo57nklxlh4c6d6xosfacarfaa3knkiprkmm`. On `main`, the withdraw guide names `keeta_amnkge74xitii5dsobstldatv3irmyimujfjotftx7plaaaseam4bntb7wnna` and current `keetanet-examples` names `keeta_aonxxqry6rknxyb6c5q2ybxk2gt776xlchhcohhyla5kqvinnaduevuxyx3tc`. Those sources conflict, so neither mainnet id is authoritative here. Stop and tell the human both ids. Continue only when the guide and the provider metadata identify one token.
+
+The guide selects the Asset Movement provider through the Resolver and does not name an operator. Discovery has to return a provider, and the human has to approve that provider, before any transfer starts.
 
 ## SDK steps
 
@@ -93,6 +95,7 @@ The guide's main-network Keeta USD token is `keeta_amnkge74xitii5dsobstldatv3irm
 ## Failures
 
 - Stop when no provider is returned or the requested operation is missing.
+- Stop on `main` while the withdraw guide and `keetanet-examples` disagree on the Keeta USD token, and stop when provider metadata names a third id. Report the ids you compared. Do not fund a payout against either contested id.
 - On `KYCShareNeeded` or `UserActionNeeded`, stop and finish only the typed action in [complete-kyc](../complete-kyc/SKILL.md), with consent, then retry discovery.
 - Refuse to fund an instruction whose amount, token, provider, recipient, or id differs from the approved transfer.
 - Fund one `KEETA_SEND` instruction one time. When publish or status is ambiguous, reconcile balance, history, and `getTransferStatus()` before retrying.
@@ -110,6 +113,7 @@ The guide's main-network Keeta USD token is `keeta_amnkge74xitii5dsobstldatv3irm
 
 - [Fiat Withdraw to Bank](https://docs.keeta.com/guides/fiat-withdraw-to-bank)
 - [Full withdrawal example](https://github.com/KeetaNetwork/keetanet-examples/blob/main/src/anchor/asset-movement-fiat-withdraw-to-bank.ts)
+- [Mainnet Keeta USD id in the USDC example](https://github.com/KeetaNetwork/keetanet-examples/blob/main/src/anchor/asset-movement-fiat-deposit-from-crypto.ts)
 - [Asset Movement](https://docs.keeta.com/anchors/anchor-types/asset-movement)
 - [Asset Movement client](https://github.com/KeetaNetwork/anchor/blob/main/src/services/asset-movement/client.ts)
 - [Instruction fees and transfer status fields](https://github.com/KeetaNetwork/anchor/blob/main/src/services/asset-movement/common.ts)
