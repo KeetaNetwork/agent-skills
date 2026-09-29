@@ -1,7 +1,7 @@
 {
   "name": "keeta",
   "version": "0.1.0",
-  "description": "Source-linked agent skills for Keeta wallets, identity, anchors, FX, bridges, and payouts.",
+  "description": "Source-linked agent skills for Keeta wallets, identity, anchors, FX, bridges, bank deposits, and payouts.",
   "repository": "https://github.com/KeetaNetwork/agent-skills",
   "license": "Apache-2.0",
   "skills": [
@@ -13,6 +13,7 @@
     "skills/complete-kyb",
     "skills/convert-via-anchors",
     "skills/bridge-usdc",
+    "skills/pay-in",
     "skills/pay-out",
     "skills/spend-policy"
   ]

@@ -44,7 +44,21 @@ Use before KYC, conversion, bridging, or payout whenever a provider is not expli
    - `new KeetaAnchor.KYC.Client(userClient)` and `getSupportedCountries()`
    - `new KeetaAnchor.FX.Client(userClient)` and `listPossibleConversions(...)`
    - `new KeetaAnchor.AssetMovement.Client(userClient)` and `getProvidersForTransfer(...)`
-5. Filter for the exact pair, locations, country, required operation, and trusted operator/account. Present all qualifying providers and legal disclaimers; do not select solely by array order.
+5. A US bank deposit that should credit Keeta USD uses this criteria shape. `{ type: 'bank-account', account: { type: 'us' } }` is the SDK form of `bank-account:us`. The Keeta USD token must be the token for `userClient`'s network.
+
+   ```ts
+   const providers = await assetMovementClient.getProvidersForTransfer({
+     asset: { from: 'USD', to: keetaUsdToken },
+     from: { type: 'bank-account', account: { type: 'us' } },
+     to: {
+       type: 'chain',
+       chain: { type: 'keeta', networkId: userClient.network }
+     }
+   });
+   ```
+
+   The outbound payout search swaps the direction: Keeta USD to `'USD'`, from the Keeta chain location, to the same US bank location. An empty list stops the flow.
+6. Filter for the exact pair, locations, country, required operation, and trusted operator or account. Present every qualifying provider and the legal text returned with it. The human chooses. Array order is not a selection.
 
 ## Confirmations
 
@@ -63,11 +77,13 @@ Use before KYC, conversion, bridging, or payout whenever a provider is not expli
 ## Related skills
 
 - Use [complete-kyc](../complete-kyc/SKILL.md) for individual verification.
+- Use [pay-in](../pay-in/SKILL.md) after this search returns a US bank deposit provider.
 - Use [convert-via-anchors](../convert-via-anchors/SKILL.md) for FX.
-- Use [bridge-usdc](../bridge-usdc/SKILL.md) or [pay-out](../pay-out/SKILL.md) for asset movement.
+- Use [bridge-usdc](../bridge-usdc/SKILL.md) or [pay-out](../pay-out/SKILL.md) for the other asset-movement corridors.
 
 ## Sources
 
 - [Anchor Resolver](https://docs.keeta.com/anchors/overview/anchor-resolver)
+- [Fiat Deposit from Bank](https://docs.keeta.com/guides/fiat-deposit-from-bank)
 - [`Resolver` type in `@keetanetwork/anchor`](https://github.com/KeetaNetwork/anchor/blob/main/src/lib/resolver.ts)
 - [Anchor Client](https://docs.keeta.com/anchors/overview/anchor-client)

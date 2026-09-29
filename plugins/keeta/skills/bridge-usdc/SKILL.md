@@ -142,6 +142,7 @@ These are private reference implementations, not public install paths:
 
 - Use [complete-kyc](../complete-kyc/SKILL.md) or [complete-kyb](../complete-kyb/SKILL.md) first.
 - Use [discover-resolve-anchors](../discover-resolve-anchors/SKILL.md) to review the provider.
+- Use [pay-in](../pay-in/SKILL.md) for US bank deposit instructions. This skill stays on the documented USDC corridors.
 - Use [multi-asset-balances](../multi-asset-balances/SKILL.md) to reconcile Keeta USD for Arbitrum inbound and Keeta USDC for Base flows.
 
 ## Sources

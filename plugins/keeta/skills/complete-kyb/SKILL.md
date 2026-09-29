@@ -42,6 +42,7 @@ This skill is therefore a discovery and safety gate, not a fabricated executable
 
 - Use [complete-kyc](../complete-kyc/SKILL.md) for natural persons and beneficial owners.
 - Use [discover-resolve-anchors](../discover-resolve-anchors/SKILL.md) to re-check capabilities at runtime.
+- Use [pay-in](../pay-in/SKILL.md) for US bank deposit instructions after the provider's own readiness check. A deposit instruction is not evidence of KYB.
 - Use [pay-out](../pay-out/SKILL.md) only after provider readiness is confirmed.
 
 ## Sources

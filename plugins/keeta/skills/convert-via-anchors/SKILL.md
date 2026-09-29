@@ -60,6 +60,7 @@ Use for an on-chain conversion after the exact source and destination assets are
 ## Related skills
 
 - Use [discover-resolve-anchors](../discover-resolve-anchors/SKILL.md) to inspect provider metadata.
+- Use [pay-in](../pay-in/SKILL.md) when the source balance should come from a US bank deposit before this conversion.
 - Use [multi-asset-balances](../multi-asset-balances/SKILL.md) to reconcile.
 - Apply [spend-policy](../spend-policy/SKILL.md) before execution.
 

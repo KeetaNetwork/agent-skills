@@ -43,7 +43,8 @@ Do not call `userClient.updatePermissions(...)` as a generic spend-limit API. Us
 
 ## Related skills
 
-- Apply this skill to [send-receive-tokens](../send-receive-tokens/SKILL.md), [convert-via-anchors](../convert-via-anchors/SKILL.md), [bridge-usdc](../bridge-usdc/SKILL.md), and [pay-out](../pay-out/SKILL.md).
+- Apply this skill to [send-receive-tokens](../send-receive-tokens/SKILL.md), [convert-via-anchors](../convert-via-anchors/SKILL.md), [bridge-usdc](../bridge-usdc/SKILL.md), [pay-in](../pay-in/SKILL.md), and [pay-out](../pay-out/SKILL.md).
+- Pay-in obtains deposit instructions and does not send Keeta value. The policy still covers the human approval before those instructions are requested, and it covers any later payout or transfer.
 - Use [multi-asset-balances](../multi-asset-balances/SKILL.md) for fresh preflight state.
 
 ## Sources

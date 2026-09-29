@@ -130,6 +130,7 @@ h3 {
 
 .hero,
 .wedge,
+.basics,
 .catalog,
 .principles,
 .final-cta,
@@ -347,6 +348,7 @@ h1 em {
 }
 
 .wedge h2,
+.basics h2,
 .catalog h2,
 .principles h2,
 .final-cta h2 {
@@ -392,6 +394,75 @@ h1 em {
   color: var(--muted);
   font-family: var(--font-mono);
   font-size: 11px;
+  line-height: 1.55;
+}
+
+.basics {
+  padding-top: 104px;
+  padding-bottom: 104px;
+  border-bottom: 1px solid var(--line);
+  background: var(--white);
+}
+
+.path-steps {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 1px;
+  margin: 48px 0 0;
+  padding: 0;
+  overflow: hidden;
+  list-style: none;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--line);
+}
+
+.path-steps li {
+  margin: 0;
+  padding: 24px;
+  background: var(--white);
+}
+
+.path-steps span {
+  display: block;
+  margin-bottom: 28px;
+  color: var(--coral);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.path-steps strong {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.path-steps p {
+  margin: 0;
+  color: var(--muted-strong);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.prompts {
+  margin-top: 48px;
+}
+
+.prompts ul {
+  display: grid;
+  gap: 12px;
+  margin: 20px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.prompts li {
+  padding: 16px 18px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--wash);
+  font-size: 14px;
   line-height: 1.55;
 }
 
@@ -627,8 +698,13 @@ footer > div {
     height: clamp(150px, 20vw, 190px);
   }
 
+  .path-steps,
   .skill-grid {
     grid-template-columns: repeat(2, 1fr);
+  }
+
+  .path-steps li:last-child {
+    grid-column: 1 / -1;
   }
 
   .section-heading {
@@ -719,15 +795,21 @@ footer > div {
     margin-bottom: 22px;
   }
 
+  .basics,
   .catalog,
   .principles {
     padding-top: 72px;
     padding-bottom: 72px;
   }
 
+  .path-steps,
   .skill-grid,
   .principle-grid {
     grid-template-columns: 1fr;
+  }
+
+  .path-steps li:last-child {
+    grid-column: auto;
   }
 
   .skill-card {

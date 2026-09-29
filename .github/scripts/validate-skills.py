@@ -20,6 +20,7 @@ EXPECTED_SKILLS = {
     "create-fund-wallet",
     "discover-resolve-anchors",
     "multi-asset-balances",
+    "pay-in",
     "pay-out",
     "send-receive-tokens",
     "spend-policy",
@@ -30,6 +31,7 @@ REQUIRED_SECTIONS = {
     "confirmations",
     "failures",
     "related skills",
+    "sources",
 }
 NAME_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
