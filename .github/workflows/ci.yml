@@ -26,6 +26,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+      - name: Check the Cloudflare deploy config
+        env:
+          WRANGLER_SEND_METRICS: "false"
+        run: npx --yes wrangler@4.147.0 deploy --dry-run
       - name: Install every skill from the built site with the skills CLI
         env:
           DISABLE_TELEMETRY: "1"

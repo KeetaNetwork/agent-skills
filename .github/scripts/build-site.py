@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Assemble the keeta.ai Pages artifact: the catalog site plus hosted Agent Skills.
+"""Assemble keeta.ai for Cloudflare (see wrangler.jsonc): the catalog site plus hosted Agent Skills.
 
 Usage: python3 .github/scripts/build-site.py [OUT_DIR]   (default: _site)
 
 Output layout:
     index.html, styles.css, app.js, assets/       copied from site/
+    _headers                                      Cloudflare response headers (CORS for agents); not served
     SKILL.md, skill.md                            the main `keeta` skill, links made absolute
     llms.txt                                      plain index for LLMs and web agents
     .well-known/agent-skills/index.json           discovery index v0.2.0 (type/url/digest)

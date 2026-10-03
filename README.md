@@ -55,7 +55,7 @@ Don't use `npx skills add https://keeta.ai/SKILL.md`. Once the site publishes a 
 
 ## Hosting on keeta.ai
 
-`.github/workflows/pages.yml` deploys `_site/`, which `.github/scripts/build-site.py` assembles from `site/` and `plugins/keeta/skills/`:
+keeta.ai is served by Cloudflare as an assets-only Worker (`wrangler.jsonc`). `.github/scripts/build-site.py` assembles `_site/` from `site/` and `plugins/keeta/skills/`, and `.github/workflows/deploy.yml` deploys it on every push to `main` that touches the site, the skills or the build scripts.
 
 | Path | Content |
 | --- | --- |
@@ -66,19 +66,26 @@ Don't use `npx skills add https://keeta.ai/SKILL.md`. Once the site publishes a 
 | `/.well-known/skills/index.json` | legacy discovery index, for older CLI versions |
 | `/.well-known/agent-skills/<name>/…` | every skill's files |
 
-**Generated, never committed.** A `SKILL.md` outside `plugins/keeta/skills/<name>/` would hide the pack from `npx skills add KeetaNetwork/agent-skills`, so the validator rejects one.
+- **Response headers.** `site/_headers` lets any origin fetch the skills, `llms.txt` and the indexes, so browser-based agents can read them. Cloudflare applies the file and doesn't publish it.
+- **Generated, never committed.** A `SKILL.md` outside `plugins/keeta/skills/<name>/` would hide the pack from `npx skills add KeetaNetwork/agent-skills`, so the validator rejects one.
 
-**One-time setup.** GitHub Pages must be enabled with **GitHub Actions** as its source, and keeta.ai attached as the custom domain (Settings → Pages). The workflow token can't create the Pages site.
+**One-time setup:**
 
-**Pinned action.** The workflow pins `actions/upload-pages-artifact@v3`, because v4 drops the `.well-known/` directory.
+1. **Zone.** The keeta.ai zone must be in the Cloudflare account. On deploy, `wrangler.jsonc` attaches keeta.ai to the Worker as a custom domain. In CI, Wrangler replaces any existing keeta.ai DNS record or custom domain without asking, so make sure nothing else is served from the apex.
+2. **API token.** Create a token from the **Edit Cloudflare Workers** template, scoped to that account and the keeta.ai zone. If the custom-domain step fails with an authentication error, also give the token **Zone → DNS → Edit** on keeta.ai.
+3. **Repository secrets.** Add the token as `CLOUDFLARE_API_TOKEN` and the account ID as `CLOUDFLARE_ACCOUNT_ID` (Settings → Secrets and variables → Actions).
+4. **First deploy.** Run the **Deploy keeta.ai to Cloudflare** workflow, or push to `main`.
+
+The site is also served at `keeta-ai.<your-subdomain>.workers.dev`, for checks before DNS moves.
 
 Build and check locally:
 
 ```bash
 python3 .github/scripts/validate-skills.py
 python3 .github/scripts/build-site.py _site
-python3 -m http.server 8000 --directory _site &
-npx skills add http://127.0.0.1:8000 --list
+npx wrangler@4.147.0 deploy --dry-run    # checks the deploy config without credentials
+npx wrangler@4.147.0 dev &                # serves _site/ the way Cloudflare does, on http://localhost:8787
+npx skills add http://localhost:8787 --list
 ```
 
 ## Repository layout
@@ -88,7 +95,8 @@ npx skills add http://127.0.0.1:8000 --list
 | `plugins/keeta/skills/` | the skills ([Agent Skills specification](https://agentskills.io/specification)) |
 | `plugins/keeta/.claude-plugin/plugin.json` | the Claude Code plugin manifest |
 | `.claude-plugin/marketplace.json` | the marketplace that lists the plugin |
-| `site/` | the static catalog |
+| `site/` | the static catalog, plus `_headers` for Cloudflare |
+| `wrangler.jsonc` | the Cloudflare Worker that serves keeta.ai |
 
 ## License
 

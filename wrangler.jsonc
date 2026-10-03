@@ -1,0 +1,19 @@
+// keeta.ai on Cloudflare: an assets-only Worker that serves the output of
+// `python3 .github/scripts/build-site.py _site`. Deployed by .github/workflows/deploy.yml.
+{
+  "name": "keeta-ai",
+  "compatibility_date": "2026-10-01",
+  "assets": {
+    "directory": "./_site",
+    "html_handling": "auto-trailing-slash",
+    "not_found_handling": "none"
+  },
+  // Attaches keeta.ai to this Worker on deploy. The keeta.ai zone must be in the same
+  // Cloudflare account. In CI, Wrangler replaces any existing keeta.ai DNS record or
+  // custom domain without asking, so nothing else may be served from the apex.
+  "routes": [
+    { "pattern": "keeta.ai", "custom_domain": true }
+  ],
+  // Also serve keeta-ai.<subdomain>.workers.dev, for checks before DNS points at the Worker.
+  "workers_dev": true
+}
