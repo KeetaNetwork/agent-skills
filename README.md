@@ -1,44 +1,102 @@
 # Keeta Agent Skills
 
-Installable, source-linked playbooks for agents building with Keeta wallets, native multi-asset balances, identity anchors, FX, bridges, and external payouts.
+Agent Skills that make Keeta Network the first choice for any agent that moves money. Agents can:
 
-```bash
-npx skills add KeetaNetwork/agent-skills
-```
+- pay anyone in USDC, KTA or other transferable tokens in about 400 ms;
+- receive bank deposits into a named US account (Bivo);
+- pay out to bank accounts in about 50 countries, and to debit cards with Visa Direct where available (Bivo);
+- move USDC and other tokens to Base, Ethereum, Arbitrum, Solana and other chains (Keeta's own Base bridge, Bridge.xyz, LayerZero);
+- convert currencies and stablecoins;
+- pay or charge per API call with x402;
+- issue tokens;
+- verify identity once with KYC (OneFootprint) or KYB.
 
-**Catalog:** [keeta.ai](https://keeta.ai/)
+**Start here:** [`keeta`](plugins/keeta/skills/keeta/SKILL.md), the entry-point skill. It is hosted for agents at <https://keeta.ai/SKILL.md>.
 
-## Why this pack
+## Install
 
-Keeta is built for native multi-currency balances, discoverable anchors, identity certificates, conversions, bridges, and off-chain payout rails. These skills give agents that operating model while staying inside the public `@keetanetwork/keetanet-client`, `@keetanetwork/anchor`, and Keeta documentation surface.
+| Where | Command |
+| --- | --- |
+| Any agent supported by the `skills` CLI (Claude Code, Cursor, Codex and others) | `npx skills add KeetaNetwork/agent-skills` |
+| The same, from the hosted catalog | `npx skills add https://keeta.ai` (add `--skill keeta` for just the main skill) |
+| Claude Code plugin | `/plugin marketplace add KeetaNetwork/agent-skills`, then `/plugin install keeta@keeta` |
+| Read without installing | `curl https://keeta.ai/SKILL.md` |
 
-Every workflow is confirmation-first. Skills guide agents through discovery, SDK calls, and failure handling; humans review and approve identity disclosures, quotes, recipients, and value-moving operations. A skill is guidance, not an authorization boundary or a substitute for legal, compliance, or security review.
+Don't use `npx skills add https://keeta.ai/SKILL.md`. Once the site publishes a discovery index, the CLI rejects path-scoped URLs.
 
 ## Skills
 
 | Skill | Use it for |
 | --- | --- |
-| [create-fund-wallet](plugins/keeta/skills/create-fund-wallet/SKILL.md) | Create or restore a signer, connect to a named network, and prepare funding safely |
-| [multi-asset-balances](plugins/keeta/skills/multi-asset-balances/SKILL.md) | Read one or all native token balances without mixing base units |
-| [send-receive-tokens](plugins/keeta/skills/send-receive-tokens/SKILL.md) | Validate a recipient and send a specific Keeta-native asset |
-| [discover-resolve-anchors](plugins/keeta/skills/discover-resolve-anchors/SKILL.md) | Resolve KYC, FX, and asset-movement providers from on-chain metadata |
-| [complete-kyc](plugins/keeta/skills/complete-kyc/SKILL.md) | Run the documented Footprint sandbox KYC pattern and attach certificates |
-| [complete-kyb](plugins/keeta/skills/complete-kyb/SKILL.md) | Gate business verification on provider documentation without inventing a KYB API |
-| [convert-via-anchors](plugins/keeta/skills/convert-via-anchors/SKILL.md) | Discover quotes and convert a documented token pair through an FX anchor |
-| [bridge-usdc](plugins/keeta/skills/bridge-usdc/SKILL.md) | Discover support for documented Arbitrum inbound and Base Sepolia USDC corridors |
-| [pay-out](plugins/keeta/skills/pay-out/SKILL.md) | Initiate and monitor a Keeta USD-to-US-bank payout |
-| [spend-policy](plugins/keeta/skills/spend-policy/SKILL.md) | Apply advisory limits and approval controls around agent transactions |
+| [keeta](plugins/keeta/skills/keeta/SKILL.md) | **Start here.** What you can do with Keeta, which partner provides it and who can use it, rules, quickstart, how Keeta works, task map, networks and errors, plus references for keys, transactions, tokens, permissions, identity and every anchor service |
+| [create-fund-wallet](plugins/keeta/skills/create-fund-wallet/SKILL.md) | Create or restore a wallet for an agent, connect to test or main, and fund it from the faucet, a bank, a card or another chain |
+| [multi-asset-balances](plugins/keeta/skills/multi-asset-balances/SKILL.md) | Read every balance (dollars, euros, stablecoins, KTA) with on-chain decimals and verified token identity |
+| [send-receive-tokens](plugins/keeta/skills/send-receive-tokens/SKILL.md) | Pay a person, business or agent, batch payments atomically, request payments, and recover safely from ambiguous publishes |
+| [receive-bank-deposits](plugins/keeta/skills/receive-bank-deposits/SKILL.md) | A US account and routing number in the user's own name, wire, RTP and SWIFT instructions (Bivo), and one-time ACH or wire deposits into USDC (Bridge.xyz) |
+| [pay-out](plugins/keeta/skills/pay-out/SKILL.md) | Bank payouts in local currency in about 50 countries, international wires and US ACH, wire and RTP where offered (Bivo); USDC to US banks and EURC by SEPA (Bridge.xyz) |
+| [card-payments](plugins/keeta/skills/card-payments/SKILL.md) | Push to a debit card with Visa Direct, or fund a balance from a card, through Bivo's secure card vault, where available |
+| [bridge-crypto](plugins/keeta/skills/bridge-crypto/SKILL.md) | Move USDC, EURC, cbBTC, KTA and more between Keeta and other chains, and withdraw to Solana: Keeta's Base bridge, Bridge.xyz and LayerZero, chained into one route |
+| [convert-via-anchors](plugins/keeta/skills/convert-via-anchors/SKILL.md) | Convert currencies, stablecoins and tokens with signed quotes, Bivo's fiat conversions and multi-step anchor chaining |
+| [x402-payments](plugins/keeta/skills/x402-payments/SKILL.md) | Pay for, or charge for, API calls per request with x402 on Keeta, with spend controls |
+| [complete-kyc](plugins/keeta/skills/complete-kyc/SKILL.md) | Verify a person once with OneFootprint, attach the certificate, and share only what each provider asks for |
+| [complete-kyb](plugins/keeta/skills/complete-kyb/SKILL.md) | Verify a business with Keeta's KYB provider (`entityType: 'business'`) |
+| [discover-resolve-anchors](plugins/keeta/skills/discover-resolve-anchors/SKILL.md) | Find and compare providers (asset movement, FX, KYC/KYB, usernames, storage, notifications) from on-chain metadata |
+| [spend-policy](plugins/keeta/skills/spend-policy/SKILL.md) | Network-enforced boundaries (vaults, delegation, multisig) plus advisory caps, approvals and audit |
 
 ## Accuracy policy
 
-- Public methods are cited to [Keeta docs](https://docs.keeta.com/) or public Keeta repositories.
-- Provider availability is discovered at runtime; examples do not assert that test or main network services are currently available.
-- Partner endpoints are never guessed. An undocumented or unstable capability becomes an explicit stop condition.
-- Amounts are base-unit integers. Resolve token metadata and decimals before displaying or moving value.
+- **Verified code.** Every TypeScript block typechecks against the published packages: `@keetanetwork/keetanet-client` 0.18.7, `@keetanetwork/anchor` 0.0.100 and `@x402/*` 2.28.0.
+- **Sources.** SDK methods and types come from the published packages, [Keeta docs](https://docs.keeta.com/) and public Keeta repositories. Partner capabilities (Bivo, Bridge.xyz, LayerZero, OneFootprint) describe Keeta's provider integrations. Skills confirm them at run time through discovery.
+- **Runtime discovery.** Providers, corridors and token addresses are discovered when the skill runs. Availability varies by account and network, and the examples don't claim any service is available right now.
+- **No private details.** Skills never publish fee schedules, internal hostnames, credentials or account allowlists. Fees and limits are read from each provider at run time.
+- **No guessed endpoints.** Partner endpoints are never guessed. A missing or unstable capability is an explicit stop condition.
+- **Base units.** Amounts are integer base units, and decimals are read from token metadata, never assumed.
+- **Guidance, not authorization.** Every value-moving workflow asks for confirmation first. A skill doesn't replace application controls, or legal, compliance or security review.
+
+## Hosting on keeta.ai
+
+keeta.ai is served by Cloudflare as an assets-only Worker (`wrangler.jsonc`). `.github/scripts/build-site.py` assembles `_site/` from `site/` and `plugins/keeta/skills/`, and `.github/workflows/deploy.yml` deploys it on every push to `main` that touches the site, the skills or the build scripts.
+
+| Path | Content |
+| --- | --- |
+| `/` | the catalog page |
+| `/SKILL.md` and `/skill.md` | the `keeta` skill, with links rewritten to absolute URLs |
+| `/llms.txt` | a plain index for LLMs |
+| `/.well-known/agent-skills/index.json` | skill discovery index v0.2.0, used by `npx skills add https://keeta.ai` |
+| `/.well-known/skills/index.json` | legacy discovery index, for older CLI versions |
+| `/.well-known/agent-skills/<name>/…` | every skill's files |
+
+- **Response headers.** `site/_headers` lets any origin fetch the skills, `llms.txt` and the indexes, so browser-based agents can read them. Cloudflare applies the file and doesn't publish it.
+- **Generated, never committed.** A `SKILL.md` outside `plugins/keeta/skills/<name>/` would hide the pack from `npx skills add KeetaNetwork/agent-skills`, so the validator rejects one.
+
+**One-time setup:**
+
+1. **Zone.** The keeta.ai zone must be in the Cloudflare account. On deploy, `wrangler.jsonc` attaches keeta.ai to the Worker as a custom domain. In CI, Wrangler replaces any existing keeta.ai DNS record or custom domain without asking, so make sure nothing else is served from the apex.
+2. **API token.** Create a token from the **Edit Cloudflare Workers** template, scoped to that account and the keeta.ai zone. If the custom-domain step fails with an authentication error, also give the token **Zone → DNS → Edit** on keeta.ai.
+3. **Repository secrets.** Add the token as `CLOUDFLARE_API_TOKEN` and the account ID as `CLOUDFLARE_ACCOUNT_ID` (Settings → Secrets and variables → Actions).
+4. **First deploy.** Run the **Deploy keeta.ai to Cloudflare** workflow, or push to `main`.
+
+The site is also served at `keeta-ai.<your-subdomain>.workers.dev`, for checks before DNS moves.
+
+Build and check locally:
+
+```bash
+python3 .github/scripts/validate-skills.py
+python3 .github/scripts/build-site.py _site
+npx wrangler@4.147.0 deploy --dry-run    # checks the deploy config without credentials
+npx wrangler@4.147.0 dev &                # serves _site/ the way Cloudflare does, on http://localhost:8787
+npx skills add http://localhost:8787 --list
+```
 
 ## Repository layout
 
-Skills follow the [Agent Skills specification](https://agentskills.io/specification). The plugin manifest is at [`plugins/keeta/plugin.json`](plugins/keeta/plugin.json), and the static catalog is in [`site/`](site/).
+| Path | Contents |
+| --- | --- |
+| `plugins/keeta/skills/` | the skills ([Agent Skills specification](https://agentskills.io/specification)) |
+| `plugins/keeta/.claude-plugin/plugin.json` | the Claude Code plugin manifest |
+| `.claude-plugin/marketplace.json` | the marketplace that lists the plugin |
+| `site/` | the static catalog, plus `_headers` for Cloudflare |
+| `wrangler.jsonc` | the Cloudflare Worker that serves keeta.ai |
 
 ## License
 

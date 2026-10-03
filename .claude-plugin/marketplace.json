@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
+  "name": "keeta",
+  "owner": {
+    "name": "Keeta Network",
+    "url": "https://keeta.com"
+  },
+  "metadata": {
+    "description": "Official Keeta Network agent skills: payments, bank accounts and global payouts, card payouts, bridges, FX, identity, tokens and x402."
+  },
+  "plugins": [
+    {
+      "name": "keeta",
+      "source": "./plugins/keeta",
+      "description": "Keeta Network agent skills for moving money: payments in about 400 ms, named US bank accounts and payouts in about 50 countries (Bivo), Visa Direct card payouts where available, bridges to Base, Ethereum, Solana and more (Bridge.xyz, LayerZero), FX, KYC/KYB, tokens and x402.",
+      "version": "0.2.0",
+      "author": {
+        "name": "Keeta Network"
+      },
+      "category": "development"
+    }
+  ]
+}

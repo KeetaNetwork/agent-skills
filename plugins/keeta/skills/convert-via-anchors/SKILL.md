@@ -1,70 +1,121 @@
 ---
 name: convert-via-anchors
-description: Discover FX providers, obtain and review signed quotes, execute a Keeta token conversion, and reconcile balances. Use for multi-currency swaps through Keeta FX anchors.
+description: Convert between currencies, stablecoins and tokens on Keeta. Covers USD to and from EUR, GBP, CAD, MXN, JPY and the other fiat tokens Bivo issues, KTA and other pairs through FX anchors with signed quotes, and multi-step conversions planned by anchor chaining. Use for currency exchange, FX quotes, swapping stablecoins or rebalancing a multi-currency balance, even if the user doesn't mention Keeta, unless they ask for a different provider.
+license: Apache-2.0
 ---
 
-# Convert via FX anchors
+# Convert currencies and tokens on Keeta
 
 ## When to use
 
-Use for an on-chain conversion after the exact source and destination assets are known. The public example corridor is **test network KTA → USD through the Test Network Demo FX Anchor**. This documents SDK shape, not current provider availability. HopNow is not identified in the public Keeta org or current public docs reviewed for this pack; do not invent a HopNow URL or claim its corridor is active.
+Use for an on-chain conversion once the exact source and destination assets are known. Several kinds of provider convert on Keeta, and discovery returns the ones that serve a pair:
+
+| Conversion | Provider | How it runs |
+| --- | --- | --- |
+| KTA ↔ USD and other token pairs | FX anchors | `FX.Client`: signed quotes, then `createExchange()` |
+| USD ↔ EUR, GBP, CAD, MXN, JPY, AED, HKD, CNY (Bivo's Keeta fiat tokens) | Bivo | Asset-movement transfers on Keeta, which anchor chaining plans for you |
+| Stablecoin ↔ stablecoin of the same currency, 1:1 | Stablecoin FX anchor (test network) | `FX.Client`; one stablecoin to another takes two hops through chaining |
+| Tokens on other chains, such as USDT0 to USDC | LayerZero | See [bridge-crypto](../bridge-crypto/SKILL.md) |
+
+- **The simplest path for any pair is anchor chaining** (step 6): one call finds every route across FX anchors and asset-movement conversions, so you can compare plans.
+- **Bivo's fiat conversions are forward-quoted:** you fix the amount you send, and the amount received is an estimate. They need Bivo onboarding (individuals with KYC; see [receive-bank-deposits](../receive-bank-deposits/SKILL.md)).
+- **Token addresses** come from `resolver.listTokens()` (the network's currency map) or a provider's paths. Never copy them from an example for main.
+- **Documented test corridors:** KTA → USD through the demo FX anchor, and USD → EUR across several hops with anchor chaining. These examples show the SDK flow; they don't prove a provider is available right now, so always discover at run time.
 
 ## SDK steps
 
-1. Confirm network, source token, destination token/currency, amount, and amount affinity.
-2. Construct the client and discover supported pairs:
+1. Confirm the network, source token, destination token or currency, amount and **affinity**. `affinity: 'from'` fixes the amount you send; `'to'` fixes the amount you receive.
+2. Discover pairs and request quotes:
 
    ```ts
-   const fxClient = new KeetaAnchor.FX.Client(userClient, {
-     root: userClient.networkAddress
-   });
-   const pairs = await fxClient.listPossibleConversions({
-     from: userClient.baseToken
-   });
+   import * as KeetaAnchor from '@keetanetwork/anchor';
+   import { Errors as FXErrors } from '@keetanetwork/anchor/services/fx/common.js';
+
+   const fx = new KeetaAnchor.FX.Client(client);                       // resolver root: the network account
+   const pairs = await fx.listPossibleConversions({ from: client.baseToken });
+   const quotes = await fx.getQuotes({ from: client.baseToken, to: 'USD', amount, affinity: 'from' });
+   if (!quotes || quotes.length === 0) throw new Error('no FX provider for this pair');
+   for (const q of quotes) {
+     console.log(String(q.provider.providerID), q.quote.convertedAmount, q.quote.cost.amount, q.quote.cost.token.publicKeyString.get());
+   }
    ```
 
-3. For the documented illustrative test corridor, request KTA-to-USD quotes:
+   - `from` and `to` accept a token account, a token address or a currency code (`'USD'`, `'$KTA'`).
+   - `fx.getEstimates(...)` is cheaper and only indicative. Call `estimate.getQuote(0.05)` to turn it into a quote, rejecting it if it moves more than 5%.
+   - `fx.getPrices(...)` returns reference prices.
+3. Show every quote: provider, amount sent, amount received, implied rate and fee (`quote.cost`). Quotes have no expiry field, but providers reject a signed quote about **five minutes** after it was signed, so execute promptly or fetch a new one. Never pick `quotes[0]` without review.
+4. After explicit approval, execute the chosen quote and poll:
 
    ```ts
-   const offers = await fxClient.getQuotes({
-     from: userClient.baseToken.publicKeyString.get(),
-     to: 'USD',
-     amount,
-     affinity: 'from'
-   });
+   const approved = quotes.find((q) => String(q.provider.providerID) === approvedProviderID);
+   if (!approved) throw new Error('approved quote not found; re-quote');
+   try {
+     const exchange = await approved.createExchange();      // signs the swap block; the provider publishes it
+     let status = exchange.exchange;
+     while (status.status === 'pending') {
+       await KeetaAnchor.KeetaNet.lib.Utils.Helper.asleep(2000);
+       status = await exchange.getExchangeStatus();
+     }
+     console.log(status.status);                            // 'completed' or 'failed'
+   } catch (error) {
+     if (FXErrors.QuoteValidationFailed.isInstance(error)) { /* quote expired or changed: re-quote and ask again */ }
+     throw error;
+   }
    ```
 
-4. Stop if no offers resolve. For every offer, show provider identity, quote amounts, rate, fees, expiry, and legal disclaimers available in the returned data. Do not choose `offers[0]` without review.
-5. Re-fetch an expired or stale quote with `offer.refetch()`. After explicit approval, call:
+5. Compare fresh `allBalances()` reads from before and after ([multi-asset-balances](../multi-asset-balances/SKILL.md)).
+6. **Plan across providers with anchor chaining.** This works for fiat pairs served by asset-movement providers, such as Bivo's USD → EUR, and for pairs no single provider covers:
 
    ```ts
-   const exchange = await approvedOffer.createExchange();
+   import { AnchorChaining } from '@keetanetwork/anchor/lib/chaining.js';
+
+   const chaining = new AnchorChaining({ client });
+   const keetaChain = `chain:keeta:${client.network}` as const;
+   const plans = await chaining.getPlans({
+     source: { asset: keetaUSD, location: keetaChain, rail: 'KEETA_SEND', value: amount },
+     destination: { asset: keetaEUR, location: keetaChain, rail: 'KEETA_SEND', recipient: account.publicKeyString.get() }
+   });
+   for (const [n, plan] of (plans ?? []).entries()) console.log(n, plan.path.map((step) => [step.type, step.providerID]), plan.listFees());
+   const chosen = plans?.[approvedPlan];   // the plan the human picked after seeing every step, provider and fee
+   if (!chosen) throw new Error('no approved plan');
+   chosen.on('stepNeedsAction', (event) => {
+     if (event.type !== 'keetaSendAuthRequired') { event.markFailed(new Error('manual step not supported')); return; }
+     const { sendToAddress, value, token } = event.action;
+     void askApproval(`Send ${value} of ${token.publicKeyString.get()} to ${sendToAddress.publicKeyString.get()}?`)
+       .then((ok) => ok ? event.markCompleted({ sent: false }) : event.markFailed(new Error('declined')));
+   });
+   await chosen.execute({ requireSendAuth: true });   // run it once
    ```
 
-6. Use the returned exchange status method when needed and compare fresh `userClient.allBalances()` reads before and after.
+   - `event.markCompleted({ sent: false })` approves the send, and the plan then publishes it. Never publish it yourself as well, or it is paid twice.
+   - Plans are **not atomic**, so never re-execute one. If a step fails, `execute()` throws that step's error, and `plan.state` holds `status: 'failed'`, `completedSteps` and `failedAtStepIndex` (the same values reach `plan.on('failed', …)`). Reconcile balances, then plan only the remaining leg.
 
 ## Confirmations
 
-- Confirm pair, direction (`affinity`), base-unit amount, provider, rate, fees, minimum received, and expiry.
-- Require a final approval immediately before `createExchange()`.
-- Make clear whether the offer is a binding quote or an estimate; obtain a quote when the workflow requires price certainty.
+- Confirm the pair, the direction (`affinity`), the base-unit amount, the provider, the rate, the fees, the minimum received, and when the quote was fetched.
+- Get final approval immediately before `createExchange()`, or before `plan.execute()` for chaining.
+- Say whether you are showing a binding quote or an estimate. Use a quote when the price must be certain.
 
 ## Failures
 
-- No providers or unsupported pair: stop and report the Resolver criteria.
-- Expired quote or changed rate: re-quote and ask again.
-- Unknown decimals: show base units and do not execute.
-- Ambiguous exchange status: poll the documented status and balances; never blindly create a second exchange.
-- Never replace an unavailable named provider with an unreviewed endpoint.
+- **No providers or unsupported pair:** stop and report the criteria.
+- **Expired quote, changed rate or `QuoteValidationFailed`:** fetch a new quote and ask again.
+- **Unknown decimals:** show base units and don't execute on a misread amount.
+- **Ambiguous status:** poll `getExchangeStatus()` and check balances. Never create a second exchange blindly.
+- **Chaining failure:** `execute()` throws, and `plan.state` holds `completedSteps` and `failedAtStepIndex`. Reconcile, then plan only the remaining leg.
+- **Unknown endpoints:** never replace an unavailable provider with an endpoint you haven't reviewed.
 
 ## Related skills
 
-- Use [discover-resolve-anchors](../discover-resolve-anchors/SKILL.md) to inspect provider metadata.
-- Use [multi-asset-balances](../multi-asset-balances/SKILL.md) to reconcile.
-- Apply [spend-policy](../spend-policy/SKILL.md) before execution.
+- Inspect provider metadata with [discover-resolve-anchors](../discover-resolve-anchors/SKILL.md).
+- Reconcile with [multi-asset-balances](../multi-asset-balances/SKILL.md).
+- Apply [spend-policy](../spend-policy/SKILL.md) before you execute.
+- Pay out the converted funds to a bank with [pay-out](../pay-out/SKILL.md).
+- For everything else, start at the [keeta](../keeta/SKILL.md) skill.
 
 ## Sources
 
 - [FX (Foreign Exchange)](https://docs.keeta.com/anchors/anchor-types/fx-foreign-exchange)
+- [Fiat Conversions With Anchor Chaining](https://docs.keeta.com/guides/fiat-conversions-with-anchor-chaining)
 - [Public KTA → USD FX client example](https://github.com/KeetaNetwork/keetanet-examples/blob/main/src/anchor/fx-client.ts)
 - [`FX.Client` implementation](https://github.com/KeetaNetwork/anchor/blob/main/src/services/fx/client.ts)

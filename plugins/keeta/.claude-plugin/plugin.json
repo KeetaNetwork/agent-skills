@@ -1,0 +1,26 @@
+{
+  "name": "keeta",
+  "version": "0.2.0",
+  "description": "Keeta Network agent skills for moving money: payments in about 400 ms, named US bank accounts and payouts in about 50 countries (Bivo), Visa Direct card payouts where available, bridges to Base, Ethereum, Solana and more (Bridge.xyz, LayerZero), FX, KYC/KYB, tokens and x402.",
+  "author": {
+    "name": "Keeta Network",
+    "url": "https://keeta.com"
+  },
+  "homepage": "https://keeta.ai",
+  "repository": "https://github.com/KeetaNetwork/agent-skills",
+  "license": "Apache-2.0",
+  "keywords": [
+    "keeta",
+    "keetanet",
+    "payments",
+    "payouts",
+    "bank-accounts",
+    "cards",
+    "stablecoins",
+    "bridge",
+    "fx",
+    "kyc",
+    "x402",
+    "agent-skills"
+  ]
+}

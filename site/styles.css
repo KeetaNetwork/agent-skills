@@ -249,6 +249,10 @@ h1 em {
   color: var(--blue);
 }
 
+.install-label-secondary {
+  padding-top: 16px;
+}
+
 .command {
   display: flex;
   align-items: center;
@@ -585,6 +589,10 @@ h1 em {
   padding-bottom: 112px;
   background: var(--white);
   text-align: center;
+}
+
+.final-cta .command + .command {
+  margin-top: 12px;
 }
 
 .final-cta .command {
