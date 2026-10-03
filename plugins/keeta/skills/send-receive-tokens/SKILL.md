@@ -1,6 +1,6 @@
 ---
 name: send-receive-tokens
-description: Send money or any token to a person, business or another agent on Keeta, settled in about 400 ms. Handles one payment or many published atomically (payroll, mass payouts to wallets), with an explicit recipient, token address and base-unit amount. Also covers receiving, payment-request links (keeta:// URIs) and safe recovery after an ambiguous publish. Use for wallet payments, splitting bills, invoices and receive instructions, even if the user doesn't mention Keeta, unless they ask for a different payment method.
+description: Send USDC, KTA or any other transferable token to a person, business or another agent on Keeta, settled in about 400 ms. Handles one payment or many published atomically (payroll, mass payouts to wallets), with an explicit recipient, token address and base-unit amount. Also covers receiving, payment-request links (keeta:// URIs) and safe recovery after an ambiguous publish. Use for wallet payments, splitting bills, invoices and receive instructions, even if the user doesn't mention Keeta, unless they ask for a different payment method.
 license: Apache-2.0
 ---
 

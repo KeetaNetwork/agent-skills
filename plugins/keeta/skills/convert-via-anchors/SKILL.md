@@ -77,10 +77,18 @@ Use for an on-chain conversion once the exact source and destination assets are 
    });
    for (const [n, plan] of (plans ?? []).entries()) console.log(n, plan.path.map((step) => [step.type, step.providerID]), plan.listFees());
    const chosen = plans?.[approvedPlan];   // the plan the human picked after seeing every step, provider and fee
-   if (chosen) await chosen.execute();     // run it once. Pass { requireSendAuth: true } to approve each Keeta send.
+   if (!chosen) throw new Error('no approved plan');
+   chosen.on('stepNeedsAction', (event) => {
+     if (event.type !== 'keetaSendAuthRequired') { event.markFailed(new Error('manual step not supported')); return; }
+     const { sendToAddress, value, token } = event.action;
+     void askApproval(`Send ${value} of ${token.publicKeyString.get()} to ${sendToAddress.publicKeyString.get()}?`)
+       .then((ok) => ok ? event.markCompleted({ sent: false }) : event.markFailed(new Error('declined')));
+   });
+   await chosen.execute({ requireSendAuth: true });   // run it once
    ```
 
-   Plans are **not atomic**, so never re-execute one. If a step fails, the error reports `completedSteps` and `failedAtStepIndex`. Reconcile balances, then plan only the remaining leg.
+   - `event.markCompleted({ sent: false })` approves the send, and the plan then publishes it. Never publish it yourself as well, or it is paid twice.
+   - Plans are **not atomic**, so never re-execute one. If a step fails, `execute()` throws that step's error, and `plan.state` holds `status: 'failed'`, `completedSteps` and `failedAtStepIndex` (the same values reach `plan.on('failed', …)`). Reconcile balances, then plan only the remaining leg.
 
 ## Confirmations
 
@@ -94,7 +102,7 @@ Use for an on-chain conversion once the exact source and destination assets are 
 - **Expired quote, changed rate or `QuoteValidationFailed`:** fetch a new quote and ask again.
 - **Unknown decimals:** show base units and don't execute on a misread amount.
 - **Ambiguous status:** poll `getExchangeStatus()` and check balances. Never create a second exchange blindly.
-- **Chaining failure:** the result includes `completedSteps` and `failedAtStepIndex`. Reconcile, then plan only the remaining leg.
+- **Chaining failure:** `execute()` throws, and `plan.state` holds `completedSteps` and `failedAtStepIndex`. Reconcile, then plan only the remaining leg.
 - **Unknown endpoints:** never replace an unavailable provider with an endpoint you haven't reviewed.
 
 ## Related skills

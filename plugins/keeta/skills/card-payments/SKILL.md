@@ -1,6 +1,6 @@
 ---
 name: card-payments
-description: Push money to a debit card in about a minute with Visa Direct, or fund a Keeta balance from a debit card, through Bivo on Keeta. The card is linked once through the provider's secure card vault, so agents never see card numbers. Use when a user wants to cash out to their debit card, get paid out to a card, or top up from a card, even if they don't mention Keeta, unless they ask for a different provider.
+description: Push money to a debit card in about a minute with Visa Direct, or fund a Keeta balance from a debit card, through Bivo on Keeta where available. The card is linked once through a secure card-entry screen and the provider's card vault, so agents never see card numbers. Use when a user wants to cash out to their debit card, get paid out to a card, or top up from a card, even if they don't mention Keeta, unless they ask for a different provider.
 license: Apache-2.0
 ---
 
@@ -23,7 +23,8 @@ Use when money moves between a Keeta balance and **the user's own debit card**:
 
 - **Never** ask for, display, store, log, or forward a card number, expiry date or security code: not in chat, files, prompts, logs, `external` fields or on-chain metadata.
 - Card details are entered only in a **secure card-entry screen the user controls**. That screen posts the card straight to the provider's card vault, and the provider returns a token. Keeta and the agent only ever see the last four digits.
-- If no secure card-entry screen is available, for example in a chat-only or headless agent, tell the user that linking a new card isn't possible through the agent. Cards they have already linked can still be used.
+- Card linking needs a PCI-compliant card-entry screen in the user's own app, fed by the provider's session. Don't assume Keeta's wallet offers one, and never ask the user to type card details anywhere else. Without such a screen, linking a new card isn't possible through the agent; cards already linked can still be used.
+- Keep `session.data`, the card-entry session token, out of chat and logs. Pass it only to the secure screen.
 - Refer to a card only by its last four digits (`cardNumberEnding` on the obfuscated address).
 - The SDK has a raw `card` address type, but providers reject raw card numbers. Always pay a linked card by its template ID.
 

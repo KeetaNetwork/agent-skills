@@ -13,12 +13,12 @@ Use whenever someone needs to **receive money by bank transfer into a Keeta acco
 | Option | Provider | What the user gets | Lands as |
 | --- | --- | --- | --- |
 | **Named US account (ACH)** | Bivo | A checking **account number and routing number in the user's own legal name**. Anyone can pay it by ACH, including an employer's payroll. | Bivo's Keeta USD token, less fees |
-| **Wire or RTP** | Bivo | Domestic wire or real-time payment (RTP) instructions with a reference memo | Keeta USD |
+| **Wire, or RTP where offered** | Bivo | Domestic wire or real-time payment (RTP) instructions with a reference memo | Keeta USD |
 | **International wire (SWIFT)** | Bivo | IBAN or account number, BIC and bank details with a memo. Available in USD and the other currencies Bivo issues on Keeta, such as EUR, GBP, CAD, MXN, JPY, AED, HKD and CNY. | That currency's Bivo token |
 | **One-time ACH or wire into USDC** | Bridge.xyz | Deposit instructions with a reference, for one transfer | Keeta USDC |
 
 - **Bivo Inc. (NMLS #2572288)** is a licensed money transmitter. It provides payment accounts and international payments on Keeta. Identity verification is by OneFootprint, through a Keeta KYC certificate.
-- **Unannounced deposits:** money sent to the named account doesn't need to be announced. It is credited automatically.
+- **No advance notice:** deposits to the named account don't need to be announced. Confirm each one with `listTransactions` or the balance.
 - **Other ways in:**
   - stablecoins from another chain: [bridge-crypto](../bridge-crypto/SKILL.md)
   - a debit card: [card-payments](../card-payments/SKILL.md)
@@ -53,7 +53,7 @@ Use whenever someone needs to **receive money by bank transfer into a Keeta acco
    for (const p of providers) console.log(String(p.providerID), creditedTokens(p, 'bank-account:us'), p.getLegalDisclaimers());
    ```
 
-3. **Named account.** Request the details from the provider the user approves. Bivo issues named accounts, and its provider ID contains `bivo`.
+3. **Named account.** Request the details from the provider the user approves. Bivo issues named accounts; its listing carries Bivo's legal disclaimer (Bivo Inc., NMLS #2572288).
 
    ```ts
    const provider = providers.find((p) => String(p.providerID) === approvedProviderID);
@@ -81,8 +81,8 @@ Use whenever someone needs to **receive money by bank transfer into a Keeta acco
 
    - **For ACH,** `details.address` holds `routingNumber`, `accountNumber`, `accountTypeDetail: 'checking'`, an optional `bankName`, and `accountOwner`: the user's legal first and last name, which can't be changed.
    - **For a wire or RTP,** the beneficiary can be the bank rather than the user, and `details.depositMessage` is a reference the sender **must** include.
-   - **`UserActionNeeded`** usually means adding the provider's certificate and granting it `SEND_ON_BEHALF` on the USD token. Explain the grant before the user approves it: if someone pulls money from the named account by ACH debit (a biller, say), the provider covers it from the user's Keeta USD balance.
-4. **International wire (SWIFT).** Discover with `rail: 'WIRE_INTL_PUSH'`, and use the location the provider's path names (`bank-account:iban-swift` for most currencies). Then make the same call with `incomingRail: 'WIRE_INTL_PUSH'` and the currency's pair, for example `{ from: 'EUR', to: <Bivo's Keeta EUR token> }`. Deposits are same-currency only: a EUR wire credits the EUR token. The USD named account accepts USD only.
+   - **`UserActionNeeded`** usually means adding the provider's certificate and granting it `SEND_ON_BEHALF` on the USD token. Explain the grant before the user approves it: it lets the provider move the user's Keeta USD balance, with no amount limit. The provider uses it to cover ACH debits on the named account, such as a biller pulling a payment.
+4. **International wire (SWIFT).** Discover with `rail: 'WIRE_INTL_PUSH'`, and use the location the provider's path names (`bank-account:iban-swift` for most currencies). Then make the same `createPersistentForwardingAddress` call with `sourceLocation` set to that location, `incomingRail: 'WIRE_INTL_PUSH'` and the currency's pair, for example `{ from: 'EUR', to: <Bivo's Keeta EUR token> }`. Deposits are same-currency only: a EUR wire credits the EUR token. The USD named account accepts USD only.
 5. **One-time deposit into USDC (Bridge.xyz).** Bridge.xyz issues instructions per transfer, not a standing account:
 
    ```ts

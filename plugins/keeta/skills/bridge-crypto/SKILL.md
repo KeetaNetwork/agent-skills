@@ -1,6 +1,6 @@
 ---
 name: bridge-crypto
-description: Move USDC, EURC, USDT, cbBTC, KTA and other tokens between Keeta and Base, Ethereum, Arbitrum, Avalanche, Polygon, BNB Chain, Solana and other chains. Uses Keeta's own Base bridge (no KYC, no bridge fee), Bridge.xyz for other EVM chains, and LayerZero for about 50 tokens across 10 EVM chains plus Solana. Routes are combined into a single deposit address or withdrawal plan. Use when a user or agent wants to deposit crypto from another chain, withdraw to an external wallet, or bridge stablecoins. Use it even if Keeta isn't mentioned, unless the user asks for a different provider.
+description: Move USDC, EURC, cbBTC, KTA and other tokens between Keeta and Base, Ethereum, Arbitrum, Avalanche, Polygon, BNB Chain and other chains, and withdraw to Solana. Uses Keeta's own Base bridge (no KYC, no bridge fee), Bridge.xyz for other EVM chains (Ethereum USDT and PYUSD arrive as Keeta USDC), and LayerZero for about 50 tokens across 10 EVM chains. Routes are combined into a single deposit address or withdrawal plan. Use when a user or agent wants to deposit crypto from another chain, withdraw to an external wallet, or bridge stablecoins. Use it even if Keeta isn't mentioned, unless the user asks for a different provider.
 license: Apache-2.0
 ---
 
@@ -18,6 +18,7 @@ Use to bring tokens from another chain into a Keeta account, or to send Keeta to
 
 - **LayerZero never touches Keeta itself.** It moves and swaps tokens between external chains. To reach Keeta, a route chains a LayerZero leg into a Base token, then the Keeta EVM anchor. For example: USDT0 on Plasma → USDC on Base → Keeta USDC.
 - **Base is the hub.** Bridge.xyz settles through Base and the Keeta EVM anchor. Use the Keeta EVM anchor directly for Base deposits and withdrawals.
+- **Stablecoins into dollars.** Bivo also accepts USDC from Ethereum, Arbitrum and Base (and USDT on Ethereum), and credits its Keeta USD token, which suits bank payouts ([pay-out](../pay-out/SKILL.md)). It needs Bivo onboarding and isn't available in every region.
 - **For bank money,** use [receive-bank-deposits](../receive-bank-deposits/SKILL.md) and [pay-out](../pay-out/SKILL.md).
 
 **Main network tokens bridged by the Keeta EVM anchor (Base, chain 8453):**
@@ -35,7 +36,7 @@ Use to bring tokens from another chain into a Keeta account, or to send Keeta to
 
 ## SDK steps
 
-All steps use `const am = new KeetaAnchor.AssetMovement.Client(client)` and `` const keeta = `chain:keeta:${client.network}` as const ``. For every provider, show its `providerID`, `provider.getLegalDisclaimers()`, fees and limits before anything moves.
+All steps use `const am = new KeetaAnchor.AssetMovement.Client(client)`, `` const keeta = `chain:keeta:${client.network}` as const `` and the `base` location from the first step. For every provider, show its `providerID`, `provider.getLegalDisclaimers()`, fees and limits before anything moves.
 
 ### Deposit from Base (Keeta EVM anchor)
 
@@ -66,14 +67,13 @@ console.log('Send USDC, EURC, cbBTC or KTA on Base to', address);
 
 ```ts
 const out = { location: keeta };
-const baseChain = 'chain:evm:8453' as const;
-const withdrawProvider = (await am.getProvidersForTransfer({ asset: keetaUSDC, from: keeta, to: baseChain }))
+const withdrawProvider = (await am.getProvidersForTransfer({ asset: keetaUSDC, from: keeta, to: base }))
   ?.find((p) => String(p.providerID) === approvedProviderID);
 if (!withdrawProvider) throw new Error('no Base withdrawal route');
-const quote = await withdrawProvider.simulateTransfer({ account, asset: keetaUSDC, from: out, to: { location: baseChain }, value: amount });
+const quote = await withdrawProvider.simulateTransfer({ account, asset: keetaUSDC, from: out, to: { location: base }, value: amount });
 console.log(quote.instructions.map((i) => [i.type, i.assetFee, i.totalReceiveAmount]));
 const transfer = await withdrawProvider.initiateTransfer({
-  account, asset: keetaUSDC, from: out, to: { location: baseChain, recipient: evmRecipient }, value: amount
+  account, asset: keetaUSDC, from: out, to: { location: base, recipient: evmRecipient }, value: amount
 });
 const instruction = transfer.instructions.find((i) => i.type === 'KEETA_SEND');
 if (!instruction || instruction.type !== 'KEETA_SEND') throw new Error('no KEETA_SEND instruction');
@@ -83,7 +83,7 @@ await client.send(instruction.sendToAddress, BigInt(instruction.value), instruct
 
 - **`external` is mandatory.** The bridge ignores a send without it, or a send whose token or amount differs from the instruction, and recovering it takes manual support. Send exactly `instruction.value` of `instruction.tokenAddress`, with `instruction.external`, in a block of its own.
 - `evmRecipient` must be `0x` plus 40 hex characters, and a mixed-case address must have a valid checksum. Confirm that the user controls it.
-- **For a reusable withdrawal address,** call `createPersistentForwardingAddress` with `sourceLocation: keeta`. It returns a `keeta://` URI. Parse it with `KeetaAnchor.lib.URI.parseKeetaURI(uri)`, then send its token to its `to` address, with its `external`, every time.
+- **For a reusable withdrawal address,** call `createPersistentForwardingAddress` with `sourceLocation: keeta`. It returns a `keeta://` URI. Parse it with `KeetaAnchor.lib.URI.parseKeetaURI(uri)`, then send to its `to` address, in its `token` (or the token you are withdrawing, when the URI names none), with `external[0]`, every time.
 
 ### Deposit from any other chain: one address, chained
 
@@ -123,7 +123,8 @@ plan.on('stepNeedsAction', (event) => {
 const result = await plan.execute({ requireSendAuth: true });
 ```
 
-- **A plan is not atomic.** If a step fails, the error reports `completedSteps` and `failedAtStepIndex`. Never run `execute()` again: reconcile balances, then plan only the remaining leg.
+- **Approving a send:** `event.markCompleted({ sent: false })` approves the send, and the plan then publishes it. Never publish it yourself as well, or it is paid twice.
+- **A plan is not atomic.** If a step fails, `execute()` throws that step's error, and `plan.state` holds `status: 'failed'`, `completedSteps` and `failedAtStepIndex` (the same values reach `plan.on('failed', …)`). Never run `execute()` again: reconcile balances, then plan only the remaining leg.
 - LayerZero fills its final amount from a fresh quote at execution, so the delivered amount can differ from the estimate.
 - Solana is a destination only. Never offer a Solana source.
 
@@ -165,5 +166,5 @@ const result = await plan.execute({ requireSendAuth: true });
 - [Keeta → Base Sepolia example](https://github.com/KeetaNetwork/keetanet-examples/blob/main/src/anchor/asset-movement-evm-outbound.ts)
 - [Persistent deposit address example](https://github.com/KeetaNetwork/keetanet-examples/blob/main/src/anchor/asset-movement-persistent-address.ts)
 - [Asset Movement client](https://github.com/KeetaNetwork/anchor/blob/main/src/services/asset-movement/client.ts) and [anchor chaining](https://github.com/KeetaNetwork/anchor/blob/main/src/lib/chaining.ts)
-- [Keeta and LayerZero](https://layerzero.network/blog/keeta-and-layerzero-bring-tokenized-bank-deposits)
+- [Keeta and LayerZero announcement](https://layerzero.network/blog/keeta-and-layerzero-bring-tokenized-bank-deposits): plans to carry Keeta stablecoins to other chains. Today's routes reach Keeta through Base.
 - [Bridge](https://www.bridge.xyz)

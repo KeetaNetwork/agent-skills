@@ -47,7 +47,7 @@ await provider.shareKYCAttributes({ account, attributes: sharable });
 
 Opening a certificate with `subjectKey: account` decrypts its sensitive attributes locally. Keep the decrypted values out of logs, prompts and on-chain fields.
 
-**Terms of service.** When `KYCShareNeeded` includes `tosFlow`, as Bridge.xyz's does, a person accepts the provider's terms at `tosFlow.url` first. The share must then carry the agreement ID that page returns:
+**Terms of service.** When `KYCShareNeeded` includes `tosFlow`, as Bridge.xyz's does, a person accepts the provider's terms at `tosFlow.url` first. The page hands the agreement ID (`signedAgreementId`) to the app that embeds it, and the share must carry it. If you can't embed the page and receive the ID, stop; never invent one:
 
 ```ts
 await provider.shareKYCAttributes({ account, attributes: sharable, tosAgreement: { id: signedAgreementId } });

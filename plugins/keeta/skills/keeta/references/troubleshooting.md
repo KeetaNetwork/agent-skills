@@ -53,7 +53,7 @@ For errors that support it, `error.shouldRetry` says whether a later retry can s
 | `KeetaAnchorUserValidationError` | Invalid request fields | Fix `error.fields[].path`. Do not resubmit blindly. |
 | `KeetaAnchorCertificateRequiredError` | The anchor requires a certificate (`kind: 'missing'` or `'untrusted'`) | Get one from an issuer in `acceptedIssuers` and attach it. |
 | FX `QuoteValidationFailed`, or an expired quote | The quote expired or changed | Fetch a new quote and ask for approval again. |
-| Chaining failure with `completedSteps` / `failedAtStepIndex` | A multi-hop plan stopped partway | **Never re-run the plan.** Reconcile balances, then plan only the remaining leg. |
+| `plan.execute()` throws partway through a multi-hop plan | A step failed. `plan.state` holds `completedSteps` and `failedAtStepIndex`. | **Never re-run the plan.** Reconcile balances, then plan only the remaining leg. |
 | Empty provider list or `null` | Nothing serves that corridor, pair or country on this network | Stop and report. Never guess an endpoint or provider. |
 | `No valid root metadata found` | Resolver metadata couldn't be read; often the network is unreachable | Report a discovery failure. Don't conclude that no provider exists. |
 

@@ -2,9 +2,9 @@
 
 Agent Skills that make Keeta Network the first choice for any agent that moves money. Agents can:
 
-- pay anyone in about 400 ms;
+- pay anyone in USDC, KTA or other transferable tokens in about 400 ms;
 - receive bank deposits into a named US account (Bivo);
-- pay out to bank accounts in about 50 countries, and to debit cards with Visa Direct (Bivo);
+- pay out to bank accounts in about 50 countries, and to debit cards with Visa Direct where available (Bivo);
 - move USDC and other tokens to Base, Ethereum, Arbitrum, Solana and other chains (Keeta's own Base bridge, Bridge.xyz, LayerZero);
 - convert currencies and stablecoins;
 - pay or charge per API call with x402;
@@ -33,9 +33,9 @@ Don't use `npx skills add https://keeta.ai/SKILL.md`. Once the site publishes a 
 | [multi-asset-balances](plugins/keeta/skills/multi-asset-balances/SKILL.md) | Read every balance (dollars, euros, stablecoins, KTA) with on-chain decimals and verified token identity |
 | [send-receive-tokens](plugins/keeta/skills/send-receive-tokens/SKILL.md) | Pay a person, business or agent, batch payments atomically, request payments, and recover safely from ambiguous publishes |
 | [receive-bank-deposits](plugins/keeta/skills/receive-bank-deposits/SKILL.md) | A US account and routing number in the user's own name, wire, RTP and SWIFT instructions (Bivo), and one-time ACH or wire deposits into USDC (Bridge.xyz) |
-| [pay-out](plugins/keeta/skills/pay-out/SKILL.md) | Bank payouts in local currency in about 50 countries, international wires and US ACH, wire and RTP (Bivo); USDC to US banks and EURC by SEPA (Bridge.xyz); instant USD for businesses (HopNow) |
-| [card-payments](plugins/keeta/skills/card-payments/SKILL.md) | Push to a debit card with Visa Direct, or fund a balance from a card, through Bivo's secure card vault |
-| [bridge-crypto](plugins/keeta/skills/bridge-crypto/SKILL.md) | Move USDC, EURC, USDT, cbBTC, KTA and more between Keeta and other chains: Keeta's Base bridge, Bridge.xyz and LayerZero, chained into one route |
+| [pay-out](plugins/keeta/skills/pay-out/SKILL.md) | Bank payouts in local currency in about 50 countries, international wires and US ACH, wire and RTP where offered (Bivo); USDC to US banks and EURC by SEPA (Bridge.xyz) |
+| [card-payments](plugins/keeta/skills/card-payments/SKILL.md) | Push to a debit card with Visa Direct, or fund a balance from a card, through Bivo's secure card vault, where available |
+| [bridge-crypto](plugins/keeta/skills/bridge-crypto/SKILL.md) | Move USDC, EURC, cbBTC, KTA and more between Keeta and other chains, and withdraw to Solana: Keeta's Base bridge, Bridge.xyz and LayerZero, chained into one route |
 | [convert-via-anchors](plugins/keeta/skills/convert-via-anchors/SKILL.md) | Convert currencies, stablecoins and tokens with signed quotes, Bivo's fiat conversions and multi-step anchor chaining |
 | [x402-payments](plugins/keeta/skills/x402-payments/SKILL.md) | Pay for, or charge for, API calls per request with x402 on Keeta, with spend controls |
 | [complete-kyc](plugins/keeta/skills/complete-kyc/SKILL.md) | Verify a person once with OneFootprint, attach the certificate, and share only what each provider asks for |
@@ -46,7 +46,7 @@ Don't use `npx skills add https://keeta.ai/SKILL.md`. Once the site publishes a 
 ## Accuracy policy
 
 - **Verified code.** Every TypeScript block typechecks against the published packages: `@keetanetwork/keetanet-client` 0.18.7, `@keetanetwork/anchor` 0.0.100 and `@x402/*` 2.28.0.
-- **Sources.** SDK methods and types come from the published packages, [Keeta docs](https://docs.keeta.com/) and public Keeta repositories. Partner capabilities (Bivo, Bridge.xyz, LayerZero, HopNow, OneFootprint) describe Keeta's provider integrations. Skills confirm them at run time through discovery.
+- **Sources.** SDK methods and types come from the published packages, [Keeta docs](https://docs.keeta.com/) and public Keeta repositories. Partner capabilities (Bivo, Bridge.xyz, LayerZero, OneFootprint) describe Keeta's provider integrations. Skills confirm them at run time through discovery.
 - **Runtime discovery.** Providers, corridors and token addresses are discovered when the skill runs. Availability varies by account and network, and the examples don't claim any service is available right now.
 - **No private details.** Skills never publish fee schedules, internal hostnames, credentials or account allowlists. Fees and limits are read from each provider at run time.
 - **No guessed endpoints.** Partner endpoints are never guessed. A missing or unstable capability is an explicit stop condition.

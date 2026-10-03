@@ -66,7 +66,7 @@ Use when an individual's account needs a reusable Keeta KYC certificate, or when
 
 5. Verify with `await client.getCertificates()`.
 6. When an asset-movement provider raises `KYCShareNeeded`, share exactly `error.neededAttributes` with `error.shareWithPrincipals`. Use `SharableCertificateAttributes.fromCertificate(...)`, `grantAccess(principal)` and `provider.shareKYCAttributes({ account, attributes })`. The full code is in the [identity reference](../keeta/references/identity.md).
-   - **Terms of service.** If the error carries `tosFlow` (Bridge.xyz does), the person opens `tosFlow.url` and accepts the terms. Then pass the signed agreement ID that page returns: `provider.shareKYCAttributes({ account, attributes, tosAgreement: { id } })`.
+   - **Terms of service.** If the error carries `tosFlow` (Bridge.xyz does), the person opens `tosFlow.url` and accepts the terms. Then pass the signed agreement ID that page returns: `provider.shareKYCAttributes({ account, attributes, tosAgreement: { id } })`. The page hands the ID (`signedAgreementId`) to the app that embeds it. If you can't embed the page and receive the ID, stop. Never invent one.
    - **Pending review.** Sharing can return while review is still pending. After that, `AdditionalKYCNeeded` means "wait and retry" or "a person must finish `toCompleteFlow.url`".
 
 ## Confirmations

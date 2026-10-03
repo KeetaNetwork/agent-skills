@@ -1,6 +1,6 @@
 ---
 name: pay-out
-description: Send money from Keeta to bank accounts. Through Bivo, a licensed money transmitter, it pays local currency in about 50 countries (SEPA, SPEI, PIX, Faster Payments, UPI, Interac and more), sends international wires, and pays US accounts by ACH, wire or RTP. It also pays out USDC to US banks and EURC by SEPA through Bridge.xyz, and gives businesses instant USD from stablecoins through HopNow. Use for paying people or suppliers, payroll, invoices, remittances and cross-border transfers to a bank, even if the user doesn't mention Keeta, unless they ask for a different provider. For debit cards, use card-payments.
+description: Send money from Keeta to bank accounts. Through Bivo, a licensed money transmitter, it pays local currency in about 50 countries (SEPA, SPEI, PIX, Faster Payments, UPI, Interac and more), sends international wires, and pays US accounts by ACH, wire or RTP where offered. It also pays out USDC to US banks and EURC by SEPA through Bridge.xyz. Use for paying people or suppliers, payroll, invoices, remittances and cross-border transfers to a bank, even if the user doesn't mention Keeta, unless they ask for a different provider. For debit cards, use card-payments.
 license: Apache-2.0
 ---
 
@@ -17,11 +17,9 @@ Use to pay a person or business at their bank. Every payout starts from a Keeta 
 | US bank account | Bivo | Bivo's Keeta USD token | `bank-account:us` | `ACH`, `WIRE`, and `RTP_PUSH` where offered |
 | US bank account from USDC | Bridge.xyz | Keeta USDC | `bank-account:us` | `ACH`, `WIRE` |
 | Euro IBAN from EURC | Bridge.xyz | Keeta EURC (main network) | `bank-account:iban-swift` | `SEPA_PUSH` |
-| Instant USD for businesses | HopNow | Keeta USDC or USDT | `bank-account:us` | `RTP_PUSH` |
 
 - **Bivo Inc. (NMLS #2572288)** is a licensed money transmitter. It provides payment accounts and international payments on Keeta. Bivo quotes the FX for local-currency payouts, so the receive amount is an estimate.
-- **HopNow** serves verified businesses only (KYB). Payouts need at least $10 after fees, in whole cents. It may not be listed on every network yet.
-- **Identity:** the sender verifies with the provider first ([complete-kyc](../complete-kyc/SKILL.md), or [complete-kyb](../complete-kyb/SKILL.md) for businesses). Recipients need no account and no KYC.
+- **Identity:** the sender verifies with the provider first ([complete-kyc](../complete-kyc/SKILL.md)). Bivo and Bridge.xyz serve individual senders; for a business sender, complete [complete-kyb](../complete-kyb/SKILL.md) and use what discovery returns. Recipients can be people or businesses, and need no account and no KYC.
 - **Availability** varies by account and network. Discovery returns only what this account can use.
 - To pay a debit card, use [card-payments](../card-payments/SKILL.md). To pay a Keeta address, use [send-receive-tokens](../send-receive-tokens/SKILL.md).
 
@@ -94,18 +92,22 @@ Use to pay a person or business at their bank. Every payout starts from a Keeta 
    ```
 
    The send must carry the provider's `external` value unchanged. Without it, the provider can't match the payment.
-7. Poll until the payout settles:
+7. Poll until the payout settles, with a deadline that fits the rail:
 
    ```ts
+   const deadline = Date.now() + 5 * 24 * 60 * 60 * 1000;   // international wires can take days
    for (;;) {
      const { transaction } = await transfer.getTransferStatus();
-     if (KeetaAnchor.lib.isCompletedTransferStatus(transaction.status)) break;              // 'COMPLETE'
-     if (['FAILED', 'CANCELED', 'REVERSED', 'RETURNED'].includes(transaction.status)) throw new Error(`payout ${transaction.status}`);
-     await KeetaAnchor.KeetaNet.lib.Utils.Helper.asleep(10_000);
+     if (KeetaAnchor.lib.isCompletedTransferStatus(transaction.status)) break;   // 'COMPLETE'
+     console.log('status:', transaction.status);                                 // provider-specific: report it verbatim
+     if (/FAIL|CANCEL|REVERS|RETURN|UNDELIVERABLE|ERROR|ATTENTION/.test(transaction.status) || Date.now() > deadline) {
+       throw new Error(`payout needs attention: ${transaction.status}`);         // stop here, and never fund it again
+     }
+     await KeetaAnchor.KeetaNet.lib.Utils.Helper.asleep(30_000);
    }
    ```
 
-   - Only `COMPLETE` is standard. Report other statuses verbatim, such as `PENDING` and `PROCESSING` (Bivo) or `DESTINATION_UNDELIVERABLE` (Bridge.xyz).
+   - Only `COMPLETE` is standard. Other statuses belong to each provider, such as `PENDING` and `PROCESSING` (Bivo) or `DESTINATION_UNDELIVERABLE` and `INTERNAL_ERROR_SUPPORT_NEEDED` (Bridge.xyz). On a failure status, an unfamiliar status or a timeout, stop and report it.
    - **Typical times:** RTP, Faster Payments, PIX, UPI and PayNow in about a minute; SPEI and Interac within an hour; SEPA and domestic wires within hours; ACH in one to two business days; international wires in one to five business days.
 
 ### Recipient fields by location
@@ -128,7 +130,6 @@ Every bank recipient is `{ type: 'bank-account', accountType, …fields, account
 Local rails also reach Hong Kong, Singapore, Malaysia, Australia, Japan, China, South Korea, the Philippines, Indonesia, Vietnam, Thailand, Nigeria, Kenya, Ghana, Egypt, Türkiye, Israel, Colombia, Argentina, Chile, Peru and others. Discovery lists the current set.
 
 - **Bridge.xyz recipients:** `accountOwner` must be an individual or a business, and `accountAddress` must be an object. EUR recipients need `iban`, `bic` and a `bankAddress` object. Pass exactly one rail in `allowedRails`. The default is `ACH` for US accounts and `SEPA_PUSH` for IBANs; for a wire, pass `['WIRE']`.
-- **HopNow recipients:** US accounts only (`bank-account:us`), and rail `RTP_PUSH`.
 
 ### Pay from any token: convert and pay out in one plan
 
@@ -142,18 +143,25 @@ const plans = await chaining.getPlans({
 });
 for (const [n, plan] of (plans ?? []).entries()) console.log(n, plan.path.map((step) => step.providerID), plan.listFees());
 const chosen = plans?.[approvedPlan];   // the plan the human picked after seeing every step, fee and provider
-if (chosen) await chosen.execute();     // run it once. Pass { requireSendAuth: true } to approve each Keeta send.
+if (!chosen) throw new Error('no approved plan');
+chosen.on('stepNeedsAction', (event) => {
+  if (event.type !== 'keetaSendAuthRequired') { event.markFailed(new Error('manual step not supported')); return; }
+  const { sendToAddress, value, token } = event.action;
+  void askApproval(`Send ${value} of ${token.publicKeyString.get()} to ${sendToAddress.publicKeyString.get()}?`)
+    .then((ok) => ok ? event.markCompleted({ sent: false }) : event.markFailed(new Error('declined')));
+});
+await chosen.execute({ requireSendAuth: true });   // run it once
 ```
 
-A plan is not atomic. If a step fails, the error reports `completedSteps` and `failedAtStepIndex`. Never run `execute()` again: reconcile balances, then plan only the remaining leg.
+- `event.markCompleted({ sent: false })` approves the send, and the plan then publishes it. Never publish it yourself as well, or it is paid twice.
+- A plan is not atomic. If a step fails, `execute()` throws that step's error, and `plan.state` holds `status: 'failed'`, `completedSteps` and `failedAtStepIndex` (the same values reach `plan.on('failed', …)`). Never run `execute()` again: reconcile balances, then plan only the remaining leg.
 
 ### Recurring payouts
 
 - **Save a recipient.** Call `provider.createPersistentForwardingTemplate({ account, asset, location, address: recipient })`, then pay with `recipient: { type: 'persistent-address-template', persistentAddressTemplateId }`.
 - **Standing payout address.** `provider.createPersistentForwardingAddress({ account, sourceLocation: keeta, destinationLocation: to, destinationAddress: recipient, asset })` returns an address that pays the recipient every time it is funded.
-  - A `keeta://` URI means: send its token to its `to` address, with its `external` (parse it with `KeetaAnchor.lib.URI.parseKeetaURI`).
+  - A `keeta://` URI means: parse it with `KeetaAnchor.lib.URI.parseKeetaURI`, then send to its `to` address, in its `token` (or your source token, when the URI names none), with `external[0]`.
   - A plain Keeta address means: send to it directly.
-  - HopNow can issue one such address per end customer.
 
 ## Confirmations
 

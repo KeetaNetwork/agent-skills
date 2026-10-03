@@ -21,7 +21,6 @@ Anchors are off-chain services that connect Keeta to the outside world. They pub
 | **Bridge.xyz** | asset movement | USD by ACH or wire to and from US accounts against Keeta USDC; EUR by SEPA from Keeta EURC; USDC with Ethereum, Arbitrum, Avalanche and Polygon; Ethereum USDT and PYUSD into Keeta USDC | main, test (USDC only) | Individual KYC plus Bridge's terms of service |
 | **Keeta EVM anchor** | asset movement | Keeta's own bridge with Base for KTA, USDC, EURC and cbBTC, with no bridge fee | main (Base), test (Base Sepolia) | None |
 | **LayerZero** (Virtual Transfer anchor) | asset movement | Bridges and swaps about 50 tokens across 10 EVM chains, with Solana as a destination. It never touches Keeta, so routes chain it with the Keeta EVM anchor through Base. | main | None |
-| **HopNow** | asset movement | Keeta USDC or USDT to USD over RTP to US bank accounts, for businesses | where listed | KYB |
 | **OneFootprint** | KYC | Hosted identity verification that issues a reusable Keeta KYC certificate | main, test | — |
 | **Keeta KYB provider** | KYC (`entityType: 'business'`) | Business verification for companies incorporated in about 30 countries | where listed | — |
 | **Stablecoin FX anchor** | FX | 1:1 conversions between stablecoins of the same currency | test | None |
@@ -105,11 +104,17 @@ const plans = await chaining.getPlans(request);
 const plan = plans?.[0];
 if (plan) {
   console.log(plan.path.length, plan.plan.steps.map((step) => step.type));  // show every step, fee and provider first
-  const result = await plan.execute();                                    // only after explicit approval
+  plan.on('stepNeedsAction', (event) => {
+    if (event.type !== 'keetaSendAuthRequired') { event.markFailed(new Error('manual step not supported')); return; }
+    void askApproval(`Send ${event.action.value} of ${event.action.token.publicKeyString.get()}?`)
+      .then((ok) => ok ? event.markCompleted({ sent: false }) : event.markFailed(new Error('declined')));
+  });
+  const result = await plan.execute({ requireSendAuth: true });          // only after explicit approval of the plan
 }
 ```
 
-**A plan is not atomic.** Each step settles on its own. If a step fails, the error reports `completedSteps` and `failedAtStepIndex`. **Never call `execute()` again.** Reconcile balances, then plan only the remaining leg.
+- `event.markCompleted({ sent: false })` approves the send, and the plan then publishes it. Never publish it yourself as well, or it is paid twice.
+- **A plan is not atomic.** Each step settles on its own. If a step fails, `execute()` throws that step's error, and `plan.state` holds `status: 'failed'`, `completedSteps` and `failedAtStepIndex` (the same values reach `plan.on('failed', …)`). **Never call `execute()` again.** Reconcile balances, then plan only the remaining leg.
 
 ## KYC and KYB
 
