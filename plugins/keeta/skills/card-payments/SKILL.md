@@ -17,7 +17,7 @@ Use when money moves between a Keeta balance and **the user's own debit card**:
 
 - **Provider:** Bivo Inc. (NMLS #2572288), a licensed money transmitter, provides card transfers on Keeta through Visa Direct. The user completes Bivo onboarding first (KYC, as in [receive-bank-deposits](../receive-bank-deposits/SKILL.md)).
 - **Own cards only:** a linked card belongs to the user's own profile, so pay only cards the user owns. To pay someone else, use [pay-out](../pay-out/SKILL.md) to their bank account, or [send-receive-tokens](../send-receive-tokens/SKILL.md) to their Keeta address.
-- **Who can use it:** individuals onboarded with Bivo, paying their own card. Bivo's newer listing doesn't onboard residents of the EU or Florida.
+- **Who can use it:** individuals onboarded with Bivo, paying their own card. Bivo's newer listing doesn't onboard residents of the EU or Texas.
 - **Card currencies** include USD, EUR, GBP, CAD, MXN, JPY, AUD, CNY, HKD, SGD, AED, ILS, DKK, NZD, ZAR, THB, INR and NGN.
 - **Availability** of card rails, currencies and pairs varies by account and network. Discovery shows what this account can use.
 

@@ -16,7 +16,7 @@ Use when an individual's account needs a reusable Keeta KYC certificate, or when
 
 | Provider asking | Typical attributes | Extra step |
 | --- | --- | --- |
-| Bivo (bank accounts, payouts, cards) | name, date of birth, address, phone, email, ID document details. Bivo's newer listing doesn't onboard residents of the EU or Florida. | Review is asynchronous, often under an hour. Then add the provider's certificate and grant `SEND_ON_BEHALF` on the USD token, with approval. |
+| Bivo (bank accounts, payouts, cards) | name, date of birth, address, phone, email, ID document details. Bivo's newer listing doesn't onboard residents of the EU or Texas. | Review is asynchronous, often under an hour. Then add the provider's certificate and grant `SEND_ON_BEHALF` on the USD token, with approval. |
 | Bridge.xyz (USDC and EURC bank transfers, other EVM chains) | name, date of birth, address (with state in the US), tax ID (SSN in the US). Tax IDs from the UK, Spain, Switzerland, Singapore, Argentina, Colombia and Uruguay aren't supported. | The person accepts Bridge's terms of service at `tosFlow.url` |
 
 ## SDK steps

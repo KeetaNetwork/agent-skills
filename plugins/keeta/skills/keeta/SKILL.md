@@ -68,13 +68,13 @@ If the agent runs on its own account and can't read the principal's certificate,
 | LayerZero cross-chain routes | Anyone; no KYC | — | main |
 | OneFootprint (KYC) | Individuals in any country | — | main, test |
 | Keeta KYB | Businesses incorporated in one of 33 countries (listed in [complete-kyb](../complete-kyb/SKILL.md)) | Businesses incorporated elsewhere | test; main where listed |
-| Bivo: bank accounts, payouts, cards, fiat conversions | Individuals with KYC | Businesses. Residents of the EU and Texas can't use its stablecoin deposits and withdrawals. Its newer listing doesn't onboard residents of the EU or Florida. | main, test |
+| Bivo: bank accounts, payouts, cards, fiat conversions | Individuals with KYC | Businesses. Residents of the EU and Texas can't use its stablecoin deposits and withdrawals. Its newer listing doesn't onboard them at all. | main, test |
 | Bridge.xyz: USD and EUR bank transfers, other EVM chains | Individuals with KYC and either a US SSN or a national tax ID from a supported country | Businesses. Tax IDs from the UK, Spain, Switzerland, Singapore, Argentina, Colombia or Uruguay. Regions Bridge declines in its own review. | main, test (USDC only) |
 
 - **The provider's answer is final.** `BIVO_REGION_NOT_SUPPORTED`, `USER_REGION_NOT_SUPPORTED`, `ONBOARDING_BUSINESS_NOT_SUPPORTED` or `ONBOARDING_TAX_ID_NOT_SUPPORTED` means stop and offer an alternative from this table. Never retry with different personal details.
 - **Examples:**
   - an EU resident can use Bivo's original listing for bank accounts and payouts, and Keeta's Base bridge for stablecoins; Bridge.xyz also works with most EU tax IDs, but not Spain's;
-  - a Texas resident can use Bivo for fiat, and Bridge.xyz or Keeta's Base bridge for stablecoins;
+  - a Texas resident can use Bivo's original listing for fiat, and Bridge.xyz or Keeta's Base bridge for stablecoins;
   - a UK resident without a US SSN can use Bivo, but not Bridge.xyz;
   - a business can use payments, x402, Keeta's Base bridge, LayerZero routes and Keeta KYB today; Bivo and Bridge.xyz serve individuals.
 - Availability also varies by account and network. Discovery returns what this account can use.

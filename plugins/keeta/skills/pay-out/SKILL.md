@@ -21,7 +21,7 @@ Use to pay a person or business at their bank. Every payout starts from a Keeta 
 - **Bivo Inc. (NMLS #2572288)** is a licensed money transmitter. It provides payment accounts and international payments on Keeta. Bivo quotes the FX for local-currency payouts, so the receive amount is an estimate.
 - **Identity:** the sender verifies with the provider first ([complete-kyc](../complete-kyc/SKILL.md)). Bivo and Bridge.xyz serve individual senders; for a business sender, complete [complete-kyb](../complete-kyb/SKILL.md) and use what discovery returns. Recipients can be people or businesses, and need no account and no KYC.
 - **Who can send:**
-  - Bivo's newer listing doesn't onboard residents of the EU or Florida.
+  - Bivo's newer listing doesn't onboard residents of the EU or Texas.
   - Bivo's stablecoin conversions aren't available to residents of the EU or Texas.
   - Bridge.xyz needs a US SSN or a national tax ID from a supported country; the UK, Spain, Switzerland, Singapore, Argentina, Colombia and Uruguay aren't supported.
   - Match each option to the principal first: see "Match services to your principal" in the [keeta](../keeta/SKILL.md) skill.
