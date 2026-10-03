@@ -18,7 +18,7 @@ Use for an on-chain conversion once the exact source and destination assets are 
 | Tokens on other chains, such as USDT0 to USDC | LayerZero | See [bridge-crypto](../bridge-crypto/SKILL.md) |
 
 - **The simplest path for any pair is anchor chaining** (step 6): one call finds every route across FX anchors and asset-movement conversions, so you can compare plans.
-- **Bivo's fiat conversions are forward-quoted:** you fix the amount you send, and the amount received is an estimate.
+- **Bivo's fiat conversions are forward-quoted:** you fix the amount you send, and the amount received is an estimate. They need Bivo onboarding (individuals with KYC; see [receive-bank-deposits](../receive-bank-deposits/SKILL.md)).
 - **Token addresses** come from `resolver.listTokens()` (the network's currency map) or a provider's paths. Never copy them from an example for main.
 - **Documented test corridors:** KTA → USD through the demo FX anchor, and USD → EUR across several hops with anchor chaining. These examples show the SDK flow; they don't prove a provider is available right now, so always discover at run time.
 

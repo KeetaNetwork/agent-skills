@@ -25,6 +25,8 @@ Anchors are off-chain services that connect Keeta to the outside world. They pub
 | **Keeta KYB provider** | KYC (`entityType: 'business'`) | Business verification for companies incorporated in about 30 countries | where listed | — |
 | **Stablecoin FX anchor** | FX | 1:1 conversions between stablecoins of the same currency | test | None |
 
+Who may use each provider (individuals or businesses, and regional limits) is in "Match services to your principal" in [SKILL.md](../SKILL.md).
+
 Workflows: [receive-bank-deposits](../../receive-bank-deposits/SKILL.md), [pay-out](../../pay-out/SKILL.md), [card-payments](../../card-payments/SKILL.md), [bridge-crypto](../../bridge-crypto/SKILL.md), [convert-via-anchors](../../convert-via-anchors/SKILL.md), [complete-kyc](../../complete-kyc/SKILL.md) and [complete-kyb](../../complete-kyb/SKILL.md).
 
 ## Discover

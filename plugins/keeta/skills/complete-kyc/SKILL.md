@@ -11,13 +11,13 @@ license: Apache-2.0
 Use when an individual's account needs a reusable Keeta KYC certificate, or when an asset-movement provider raises `KYCShareNeeded` or `AdditionalKYCNeeded`. For a company, use [complete-kyb](../complete-kyb/SKILL.md).
 
 - **Verify once, reuse everywhere.** The certificate is issued under Keeta's KYC root, and providers such as Bivo and Bridge.xyz accept it. One verification serves many providers, and each one receives only the attributes it asks for. Some add a step of their own, such as Bridge's terms of service.
-- **Provider.** OneFootprint verifies individuals on Keeta and needs a country code. The test network also has a basic demo provider, and lists OneFootprint as `Footprint`. Select only from what discovery returns.
+- **Provider.** OneFootprint verifies individuals in any country on Keeta, and needs a country code. The test network also has a basic demo provider, and lists OneFootprint as `Footprint`. Select only from what discovery returns.
 - **The person does the identity steps.** They complete them in the provider's hosted page. An agent never fills in identity answers or uploads documents for them.
 
 | Provider asking | Typical attributes | Extra step |
 | --- | --- | --- |
-| Bivo (bank accounts, payouts, cards) | name, date of birth, address, phone, email, ID document details | Review is asynchronous, often under an hour. Then add the provider's certificate and grant `SEND_ON_BEHALF` on the USD token, with approval. |
-| Bridge.xyz (USDC and EURC bank transfers, other EVM chains) | name, date of birth, address (with state in the US), tax ID (SSN in the US) | The person accepts Bridge's terms of service at `tosFlow.url` |
+| Bivo (bank accounts, payouts, cards) | name, date of birth, address, phone, email, ID document details. Bivo's newer listing doesn't onboard residents of the EU or Florida. | Review is asynchronous, often under an hour. Then add the provider's certificate and grant `SEND_ON_BEHALF` on the USD token, with approval. |
+| Bridge.xyz (USDC and EURC bank transfers, other EVM chains) | name, date of birth, address (with state in the US), tax ID (SSN in the US). Tax IDs from the UK, Spain, Switzerland, Singapore, Argentina, Colombia and Uruguay aren't supported. | The person accepts Bridge's terms of service at `tosFlow.url` |
 
 ## SDK steps
 

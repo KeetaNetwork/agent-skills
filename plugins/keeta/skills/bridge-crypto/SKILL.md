@@ -18,7 +18,8 @@ Use to bring tokens from another chain into a Keeta account, or to send Keeta to
 
 - **LayerZero never touches Keeta itself.** It moves and swaps tokens between external chains. To reach Keeta, a route chains a LayerZero leg into a Base token, then the Keeta EVM anchor. For example: USDT0 on Plasma → USDC on Base → Keeta USDC.
 - **Base is the hub.** Bridge.xyz settles through Base and the Keeta EVM anchor. Use the Keeta EVM anchor directly for Base deposits and withdrawals.
-- **Stablecoins into dollars.** Bivo also accepts USDC from Ethereum, Arbitrum and Base (and USDT on Ethereum), and credits its Keeta USD token, which suits bank payouts ([pay-out](../pay-out/SKILL.md)). It needs Bivo onboarding and isn't available in every region.
+- **Stablecoins into dollars.** Bivo also accepts USDC from Ethereum, Arbitrum and Base (and USDT on Ethereum), and credits its Keeta USD token, which suits bank payouts ([pay-out](../pay-out/SKILL.md)). It needs Bivo onboarding, and isn't available to residents of the EU or Texas.
+- **Who can use it:** Keeta's Base bridge and LayerZero need no KYC. Bridge.xyz serves individuals with a US SSN or a national tax ID from a supported country; the UK, Spain, Switzerland, Singapore, Argentina, Colombia and Uruguay aren't supported. See "Match services to your principal" in the [keeta](../keeta/SKILL.md) skill.
 - **For bank money,** use [receive-bank-deposits](../receive-bank-deposits/SKILL.md) and [pay-out](../pay-out/SKILL.md).
 
 **Main network tokens bridged by the Keeta EVM anchor (Base, chain 8453):**

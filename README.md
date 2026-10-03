@@ -28,7 +28,7 @@ Don't use `npx skills add https://keeta.ai/SKILL.md`. Once the site publishes a 
 
 | Skill | Use it for |
 | --- | --- |
-| [keeta](plugins/keeta/skills/keeta/SKILL.md) | **Start here.** What you can do with Keeta and which partner provides it, rules, quickstart, how Keeta works, task map, networks and errors, plus references for keys, transactions, tokens, permissions, identity and every anchor service |
+| [keeta](plugins/keeta/skills/keeta/SKILL.md) | **Start here.** What you can do with Keeta, which partner provides it and who can use it, rules, quickstart, how Keeta works, task map, networks and errors, plus references for keys, transactions, tokens, permissions, identity and every anchor service |
 | [create-fund-wallet](plugins/keeta/skills/create-fund-wallet/SKILL.md) | Create or restore a wallet for an agent, connect to test or main, and fund it from the faucet, a bank, a card or another chain |
 | [multi-asset-balances](plugins/keeta/skills/multi-asset-balances/SKILL.md) | Read every balance (dollars, euros, stablecoins, KTA) with on-chain decimals and verified token identity |
 | [send-receive-tokens](plugins/keeta/skills/send-receive-tokens/SKILL.md) | Pay a person, business or agent, batch payments atomically, request payments, and recover safely from ambiguous publishes |

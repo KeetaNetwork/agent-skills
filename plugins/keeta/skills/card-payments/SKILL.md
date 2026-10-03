@@ -17,13 +17,15 @@ Use when money moves between a Keeta balance and **the user's own debit card**:
 
 - **Provider:** Bivo Inc. (NMLS #2572288), a licensed money transmitter, provides card transfers on Keeta through Visa Direct. The user completes Bivo onboarding first (KYC, as in [receive-bank-deposits](../receive-bank-deposits/SKILL.md)).
 - **Own cards only:** a linked card belongs to the user's own profile, so pay only cards the user owns. To pay someone else, use [pay-out](../pay-out/SKILL.md) to their bank account, or [send-receive-tokens](../send-receive-tokens/SKILL.md) to their Keeta address.
+- **Who can use it:** individuals onboarded with Bivo, paying their own card. Bivo's newer listing doesn't onboard residents of the EU or Florida.
+- **Card currencies** include USD, EUR, GBP, CAD, MXN, JPY, AUD, CNY, HKD, SGD, AED, ILS, DKK, NZD, ZAR, THB, INR and NGN.
 - **Availability** of card rails, currencies and pairs varies by account and network. Discovery shows what this account can use.
 
 ## Card data rules
 
 - **Never** ask for, display, store, log, or forward a card number, expiry date or security code: not in chat, files, prompts, logs, `external` fields or on-chain metadata.
 - Card details are entered only in a **secure card-entry screen the user controls**. That screen posts the card straight to the provider's card vault, and the provider returns a token. Keeta and the agent only ever see the last four digits.
-- Card linking needs a PCI-compliant card-entry screen in the user's own app, fed by the provider's session. Don't assume Keeta's wallet offers one, and never ask the user to type card details anywhere else. Without such a screen, linking a new card isn't possible through the agent; cards already linked can still be used.
+- Card linking needs a PCI-compliant card-entry screen, fed by the provider's session. Keeta's wallet will offer one, but it isn't live yet; until then the screen has to be in the user's own app. Never ask the user to type card details anywhere else. Without such a screen, linking a new card isn't possible through the agent; cards already linked can still be used.
 - Keep `session.data`, the card-entry session token, out of chat and logs. Pass it only to the secure screen.
 - Refer to a card only by its last four digits (`cardNumberEnding` on the obfuscated address).
 - The SDK has a raw `card` address type, but providers reject raw card numbers. Always pay a linked card by its template ID.

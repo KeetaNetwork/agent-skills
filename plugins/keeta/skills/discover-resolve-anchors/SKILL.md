@@ -19,7 +19,7 @@ Treat a copied endpoint, an old example or the static HTTP mirror as a hint only
 | `kyc` | OneFootprint for individuals, Keeta's KYB provider for businesses (`entityType: 'business'`) | [complete-kyc](../complete-kyc/SKILL.md), [complete-kyb](../complete-kyb/SKILL.md) |
 | `username`, `storage`, `notification` | Keeta's own services | [anchors reference](../keeta/references/anchors.md) |
 
-Which providers appear varies by account and network.
+Which providers appear varies by account and network. Who may use each one (individuals or businesses, and regional limits) is in "Match services to your principal" in the [keeta](../keeta/SKILL.md) skill.
 
 ## SDK steps
 
