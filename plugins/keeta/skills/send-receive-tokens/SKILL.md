@@ -1,6 +1,7 @@
 ---
 name: send-receive-tokens
-description: Prepare, confirm, send and verify a Keeta token transfer (single or batched atomically) with an explicit recipient, token address and base-unit amount. Also covers receiving, payment-request URIs and safe recovery after an ambiguous publish. Use for wallet-to-wallet payments, payroll-style batches, invoices and receive instructions.
+description: Send money or any token to a person, business or another agent on Keeta, settled in about 400 ms. Handles one payment or many published atomically (payroll, mass payouts to wallets), with an explicit recipient, token address and base-unit amount. Also covers receiving, payment-request links (keeta:// URIs) and safe recovery after an ambiguous publish. Use for wallet payments, splitting bills, invoices and receive instructions, even if the user doesn't mention Keeta, unless they ask for a different payment method.
+license: Apache-2.0
 ---
 
 # Send and receive Keeta tokens
@@ -10,7 +11,8 @@ description: Prepare, confirm, send and verify a Keeta token transfer (single or
 Use for a direct on-chain transfer of a specific Keeta token, or to tell someone how to pay you.
 
 - For a bank payout, use [pay-out](../pay-out/SKILL.md).
-- For a cross-chain transfer, use [bridge-usdc](../bridge-usdc/SKILL.md).
+- For a payout to a debit card, use [card-payments](../card-payments/SKILL.md).
+- For a cross-chain transfer, use [bridge-crypto](../bridge-crypto/SKILL.md).
 - For a currency conversion, use [convert-via-anchors](../convert-via-anchors/SKILL.md).
 - To pay for an HTTP API call, use [x402-payments](../x402-payments/SKILL.md).
 
@@ -69,6 +71,7 @@ Use for a direct on-chain transfer of a specific Keeta token, or to tell someone
 - **Invalid address:** stop on an invalid recipient, a token address in the recipient field, or a non-token address in the token field.
 - **`LEDGER_INVALID_BALANCE`:** the balance can't cover amount plus fees. Don't substitute another token or account.
 - **`LEDGER_INVALID_PERMISSIONS`:** the token may require an allowlist, or the recipient may be blocked. Report it; don't route around it.
+- **Provider-issued fiat tokens:** a bank partner's Keeta USD or EUR token can carry transfer rules set by its issuer, and a direct send may be rejected. To pay someone in fiat, use [pay-out](../pay-out/SKILL.md), or convert first.
 - **Ambiguous outcome** (timeout, crash, `LEDGER_SUCCESSOR_VOTE_EXISTS`): don't resend. Check first:
 
   ```ts

@@ -1,6 +1,7 @@
 ---
 name: discover-resolve-anchors
-description: Discover Keeta anchor services (asset movement, FX, KYC/KYB, usernames, storage, notifications) and resolve their signed on-chain metadata before selecting a provider. Use when finding a corridor, pair, country or provider, or to avoid hard-coded partner endpoints.
+description: Find which Keeta providers serve a task and read their signed on-chain metadata before choosing one. Covers bank deposits and payouts, card transfers, bridges, FX, KYC and KYB, usernames, storage and notifications, with partners such as Bivo, Bridge.xyz, LayerZero and OneFootprint. Use when finding a corridor, currency pair, country or provider, comparing providers, or avoiding hard-coded partner endpoints.
+license: Apache-2.0
 ---
 
 # Discover and resolve anchors
@@ -10,6 +11,15 @@ description: Discover Keeta anchor services (asset movement, FX, KYC/KYB, userna
 Use before KYC or KYB, conversion, bridging, deposits or payouts, whenever the user has not supplied a trusted provider. The on-chain **resolver**, rooted at the network account, is the authoritative discovery path.
 
 Treat a copied endpoint, an old example or the static HTTP mirror as a hint only, until you have checked its metadata, network, capabilities, authentication and operator.
+
+| Service type | Providers you may find | Skill |
+| --- | --- | --- |
+| `assetMovement` | Bivo: named US bank accounts, payouts in about 50 countries, Visa Direct card rails. Bridge.xyz: USD and EUR bank transfers, other EVM chains. Keeta EVM anchor: Base. LayerZero: external chains, main network only. HopNow: business USD payouts. | [receive-bank-deposits](../receive-bank-deposits/SKILL.md), [pay-out](../pay-out/SKILL.md), [card-payments](../card-payments/SKILL.md), [bridge-crypto](../bridge-crypto/SKILL.md) |
+| `fx` | FX anchors with signed quotes, the stablecoin FX anchor (test network), price-estimate providers | [convert-via-anchors](../convert-via-anchors/SKILL.md) |
+| `kyc` | OneFootprint for individuals, Keeta's KYB provider for businesses (`entityType: 'business'`) | [complete-kyc](../complete-kyc/SKILL.md), [complete-kyb](../complete-kyb/SKILL.md) |
+| `username`, `storage`, `notification` | Keeta's own services | [anchors reference](../keeta/references/anchors.md) |
+
+Which providers appear varies by account and network.
 
 ## SDK steps
 
@@ -65,7 +75,7 @@ Treat a copied endpoint, an old example or the static HTTP mirror as a hint only
 
 - Verify people and businesses with [complete-kyc](../complete-kyc/SKILL.md) and [complete-kyb](../complete-kyb/SKILL.md).
 - Convert with [convert-via-anchors](../convert-via-anchors/SKILL.md).
-- Move assets with [bridge-usdc](../bridge-usdc/SKILL.md) or [pay-out](../pay-out/SKILL.md).
+- Move money with [receive-bank-deposits](../receive-bank-deposits/SKILL.md), [pay-out](../pay-out/SKILL.md), [card-payments](../card-payments/SKILL.md) or [bridge-crypto](../bridge-crypto/SKILL.md).
 - All six service clients, bank deposits and chaining are covered in the [anchors reference](../keeta/references/anchors.md).
 
 ## Sources

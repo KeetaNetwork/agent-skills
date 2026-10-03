@@ -1,6 +1,7 @@
 ---
 name: complete-kyb
-description: Verify a business (KYB) through a Keeta KYC anchor using entityType 'business'. Discover business-capable providers, start the hosted verification for an authorized person, poll status (manual review can take days), attach the business certificate, and share organization attributes. Use when an organization, not an individual, must be verified.
+description: Verify a business (KYB) on Keeta through Keeta's KYB provider, which covers companies incorporated in about 30 countries. Discover business-capable providers with entityType 'business', start the hosted verification for an authorized person, poll status (manual review can take days), attach the business certificate, and share organization attributes with providers such as HopNow. Use when a company, not an individual, needs a verified identity for payments, payouts or stablecoin settlement, even if the user doesn't mention Keeta.
+license: Apache-2.0
 ---
 
 # Complete business verification (KYB)
@@ -12,6 +13,9 @@ Use when the account owner or the payout beneficiary is a legal entity.
 KYB runs through the same `KYC.Client` as individual KYC, with `entityType: 'business'`. This needs `@keetanetwork/anchor` 0.0.99 or later. Business-capable providers are returned **only** when you pass `entityType: 'business'`; without it, discovery filters for individual providers.
 
 The Swift, Rust and C# SDKs don't support `entityType` yet.
+
+- **Provider.** Keeta's KYB provider verifies companies incorporated in about 30 countries, including the US, the UK, Canada, Australia, much of Western Europe, Singapore, Hong Kong, Japan, India, Brazil and Mexico. Availability varies by network: `getSupportedCountries('business')` returns an empty list where no KYB provider is listed.
+- **Who needs it.** Business providers ask for organization attributes. HopNow, which pays out USD instantly from USDC or USDT ([pay-out](../pay-out/SKILL.md)), asks for `organizationName`, `tradeName`, `legalForm`, `email`, `incorporation`, `website` and `entityType`. Bivo and Bridge.xyz bank features serve individuals.
 
 ## SDK steps
 

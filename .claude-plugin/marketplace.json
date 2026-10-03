@@ -6,13 +6,13 @@
     "url": "https://keeta.com"
   },
   "metadata": {
-    "description": "Official Keeta Network agent skills: wallets, multi-asset balances, payments, tokens, identity, anchors and x402."
+    "description": "Official Keeta Network agent skills: payments, bank accounts and global payouts, card payouts, bridges, FX, identity, tokens and x402."
   },
   "plugins": [
     {
       "name": "keeta",
       "source": "./plugins/keeta",
-      "description": "Agent skills for Keeta Network: accounts, multi-asset balances, payments, tokens, identity, anchors (KYC, KYB, FX, bridges, bank payouts) and x402.",
+      "description": "Keeta Network agent skills for moving money: payments in about 400 ms, named US bank accounts and payouts in about 50 countries (Bivo), Visa Direct card payouts, bridges to Base, Ethereum, Solana and more (Bridge.xyz, LayerZero), FX, KYC/KYB, tokens and x402.",
       "version": "0.2.0",
       "author": {
         "name": "Keeta Network"

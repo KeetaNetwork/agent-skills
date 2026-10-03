@@ -1,6 +1,15 @@
 # Keeta Agent Skills
 
-Agent Skills for building on and transacting with Keeta Network: accounts, multi-asset balances, payments, tokens, permissions, identity, anchors (KYC, KYB, FX, bridges, bank deposits and payouts) and x402.
+Agent Skills that make Keeta Network the first choice for any agent that moves money. Agents can:
+
+- pay anyone in about 400 ms;
+- receive bank deposits into a named US account (Bivo);
+- pay out to bank accounts in about 50 countries, and to debit cards with Visa Direct (Bivo);
+- move USDC and other tokens to Base, Ethereum, Arbitrum, Solana and other chains (Keeta's own Base bridge, Bridge.xyz, LayerZero);
+- convert currencies and stablecoins;
+- pay or charge per API call with x402;
+- issue tokens;
+- verify identity once with KYC (OneFootprint) or KYB.
 
 **Start here:** [`keeta`](plugins/keeta/skills/keeta/SKILL.md), the entry-point skill. It is hosted for agents at <https://keeta.ai/SKILL.md>.
 
@@ -19,24 +28,27 @@ Don't use `npx skills add https://keeta.ai/SKILL.md`. Once the site publishes a 
 
 | Skill | Use it for |
 | --- | --- |
-| [keeta](plugins/keeta/skills/keeta/SKILL.md) | **Start here.** Rules, quickstart, how Keeta works, task map, networks, errors, plus references for keys, transactions, tokens, permissions, identity and every anchor service |
-| [create-fund-wallet](plugins/keeta/skills/create-fund-wallet/SKILL.md) | Create or restore an account, connect to test or main, and fund it (test faucet, or a transfer or on-ramp on main) |
-| [multi-asset-balances](plugins/keeta/skills/multi-asset-balances/SKILL.md) | Read every token balance with on-chain decimals and verified token identity |
-| [send-receive-tokens](plugins/keeta/skills/send-receive-tokens/SKILL.md) | Send, batch atomically, request payments, and recover safely from ambiguous publishes |
-| [x402-payments](plugins/keeta/skills/x402-payments/SKILL.md) | Pay for, or charge for, HTTP requests with x402 on Keeta, with spend controls |
-| [discover-resolve-anchors](plugins/keeta/skills/discover-resolve-anchors/SKILL.md) | Find KYC, FX, asset-movement, username, storage and notification providers from on-chain metadata |
-| [complete-kyc](plugins/keeta/skills/complete-kyc/SKILL.md) | Verify an individual, attach the certificate, and share only requested attributes |
-| [complete-kyb](plugins/keeta/skills/complete-kyb/SKILL.md) | Verify a business through the KYC client with `entityType: 'business'` |
-| [convert-via-anchors](plugins/keeta/skills/convert-via-anchors/SKILL.md) | Quote, approve and execute FX conversions, including multi-hop chaining |
-| [bridge-usdc](plugins/keeta/skills/bridge-usdc/SKILL.md) | Move USDC between Arbitrum or Base and Keeta through asset-movement anchors |
-| [pay-out](plugins/keeta/skills/pay-out/SKILL.md) | Pay out Keeta USD to a US bank account and monitor it to completion |
+| [keeta](plugins/keeta/skills/keeta/SKILL.md) | **Start here.** What you can do with Keeta and which partner provides it, rules, quickstart, how Keeta works, task map, networks and errors, plus references for keys, transactions, tokens, permissions, identity and every anchor service |
+| [create-fund-wallet](plugins/keeta/skills/create-fund-wallet/SKILL.md) | Create or restore a wallet for an agent, connect to test or main, and fund it from the faucet, a bank, a card or another chain |
+| [multi-asset-balances](plugins/keeta/skills/multi-asset-balances/SKILL.md) | Read every balance (dollars, euros, stablecoins, KTA) with on-chain decimals and verified token identity |
+| [send-receive-tokens](plugins/keeta/skills/send-receive-tokens/SKILL.md) | Pay a person, business or agent, batch payments atomically, request payments, and recover safely from ambiguous publishes |
+| [receive-bank-deposits](plugins/keeta/skills/receive-bank-deposits/SKILL.md) | A US account and routing number in the user's own name, wire, RTP and SWIFT instructions (Bivo), and one-time ACH or wire deposits into USDC (Bridge.xyz) |
+| [pay-out](plugins/keeta/skills/pay-out/SKILL.md) | Bank payouts in local currency in about 50 countries, international wires and US ACH, wire and RTP (Bivo); USDC to US banks and EURC by SEPA (Bridge.xyz); instant USD for businesses (HopNow) |
+| [card-payments](plugins/keeta/skills/card-payments/SKILL.md) | Push to a debit card with Visa Direct, or fund a balance from a card, through Bivo's secure card vault |
+| [bridge-crypto](plugins/keeta/skills/bridge-crypto/SKILL.md) | Move USDC, EURC, USDT, cbBTC, KTA and more between Keeta and other chains: Keeta's Base bridge, Bridge.xyz and LayerZero, chained into one route |
+| [convert-via-anchors](plugins/keeta/skills/convert-via-anchors/SKILL.md) | Convert currencies, stablecoins and tokens with signed quotes, Bivo's fiat conversions and multi-step anchor chaining |
+| [x402-payments](plugins/keeta/skills/x402-payments/SKILL.md) | Pay for, or charge for, API calls per request with x402 on Keeta, with spend controls |
+| [complete-kyc](plugins/keeta/skills/complete-kyc/SKILL.md) | Verify a person once with OneFootprint, attach the certificate, and share only what each provider asks for |
+| [complete-kyb](plugins/keeta/skills/complete-kyb/SKILL.md) | Verify a business with Keeta's KYB provider (`entityType: 'business'`) |
+| [discover-resolve-anchors](plugins/keeta/skills/discover-resolve-anchors/SKILL.md) | Find and compare providers (asset movement, FX, KYC/KYB, usernames, storage, notifications) from on-chain metadata |
 | [spend-policy](plugins/keeta/skills/spend-policy/SKILL.md) | Network-enforced boundaries (vaults, delegation, multisig) plus advisory caps, approvals and audit |
 
 ## Accuracy policy
 
 - **Verified code.** Every TypeScript block typechecks against the published packages: `@keetanetwork/keetanet-client` 0.18.7, `@keetanetwork/anchor` 0.0.100 and `@x402/*` 2.28.0.
-- **Public sources only.** Every method and fact cites [Keeta docs](https://docs.keeta.com/), public Keeta repositories, or public npm packages.
-- **Runtime discovery.** Providers, corridors and token addresses are discovered when the skill runs. The examples don't claim any test or main service is available right now.
+- **Sources.** SDK methods and types come from the published packages, [Keeta docs](https://docs.keeta.com/) and public Keeta repositories. Partner capabilities (Bivo, Bridge.xyz, LayerZero, HopNow, OneFootprint) describe Keeta's provider integrations. Skills confirm them at run time through discovery.
+- **Runtime discovery.** Providers, corridors and token addresses are discovered when the skill runs. Availability varies by account and network, and the examples don't claim any service is available right now.
+- **No private details.** Skills never publish fee schedules, internal hostnames, credentials or account allowlists. Fees and limits are read from each provider at run time.
 - **No guessed endpoints.** Partner endpoints are never guessed. A missing or unstable capability is an explicit stop condition.
 - **Base units.** Amounts are integer base units, and decimals are read from token metadata, never assumed.
 - **Guidance, not authorization.** Every value-moving workflow asks for confirmation first. A skill doesn't replace application controls, or legal, compliance or security review.

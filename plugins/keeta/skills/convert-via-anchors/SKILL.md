@@ -1,18 +1,26 @@
 ---
 name: convert-via-anchors
-description: Convert between Keeta tokens through FX anchors. Discover pairs, compare signed quotes (or estimates), get approval, execute the exchange, poll its status and reconcile balances. Use for multi-currency swaps such as KTA to USD or USD to EUR, including multi-hop conversions through anchor chaining.
+description: Convert between currencies, stablecoins and tokens on Keeta. Covers USD to and from EUR, GBP, CAD, MXN, JPY and the other fiat tokens Bivo issues, KTA and other pairs through FX anchors with signed quotes, and multi-step conversions planned by anchor chaining. Use for currency exchange, FX quotes, swapping stablecoins or rebalancing a multi-currency balance, even if the user doesn't mention Keeta, unless they ask for a different provider.
+license: Apache-2.0
 ---
 
-# Convert via FX anchors
+# Convert currencies and tokens on Keeta
 
 ## When to use
 
-Use for an on-chain conversion once the exact source and destination assets are known.
+Use for an on-chain conversion once the exact source and destination assets are known. Several kinds of provider convert on Keeta, and discovery returns the ones that serve a pair:
 
-- **Documented corridor:** **test network, KTA → USD**, through the FX anchor that discovery returns (the public example uses the test-network demo FX anchor).
-- **Multi-hop:** the docs also show **test network USD → EUR** across several hops with anchor chaining.
+| Conversion | Provider | How it runs |
+| --- | --- | --- |
+| KTA ↔ USD and other token pairs | FX anchors | `FX.Client`: signed quotes, then `createExchange()` |
+| USD ↔ EUR, GBP, CAD, MXN, JPY, AED, HKD, CNY (Bivo's Keeta fiat tokens) | Bivo | Asset-movement transfers on Keeta, which anchor chaining plans for you |
+| Stablecoin ↔ stablecoin of the same currency, 1:1 | Stablecoin FX anchor (test network) | `FX.Client`; one stablecoin to another takes two hops through chaining |
+| Tokens on other chains, such as USDT0 to USDC | LayerZero | See [bridge-crypto](../bridge-crypto/SKILL.md) |
 
-These examples show the SDK flow. They don't prove that a provider is available right now, so always discover at run time.
+- **The simplest path for any pair is anchor chaining** (step 6): one call finds every route across FX anchors and asset-movement conversions, so you can compare plans.
+- **Bivo's fiat conversions are forward-quoted:** you fix the amount you send, and the amount received is an estimate.
+- **Token addresses** come from `resolver.listTokens()` (the network's currency map) or a provider's paths. Never copy them from an example for main.
+- **Documented test corridors:** KTA → USD through the demo FX anchor, and USD → EUR across several hops with anchor chaining. These examples show the SDK flow; they don't prove a provider is available right now, so always discover at run time.
 
 ## SDK steps
 
@@ -56,7 +64,23 @@ These examples show the SDK flow. They don't prove that a provider is available 
    ```
 
 5. Compare fresh `allBalances()` reads from before and after ([multi-asset-balances](../multi-asset-balances/SKILL.md)).
-6. When no single provider covers the pair, use `AnchorChaining`, as in the [anchors reference](../keeta/references/anchors.md). Plans are **not atomic**, so never re-execute one.
+6. **Plan across providers with anchor chaining.** This works for fiat pairs served by asset-movement providers, such as Bivo's USD → EUR, and for pairs no single provider covers:
+
+   ```ts
+   import { AnchorChaining } from '@keetanetwork/anchor/lib/chaining.js';
+
+   const chaining = new AnchorChaining({ client });
+   const keetaChain = `chain:keeta:${client.network}` as const;
+   const plans = await chaining.getPlans({
+     source: { asset: keetaUSD, location: keetaChain, rail: 'KEETA_SEND', value: amount },
+     destination: { asset: keetaEUR, location: keetaChain, rail: 'KEETA_SEND', recipient: account.publicKeyString.get() }
+   });
+   for (const [n, plan] of (plans ?? []).entries()) console.log(n, plan.path.map((step) => [step.type, step.providerID]), plan.listFees());
+   const chosen = plans?.[approvedPlan];   // the plan the human picked after seeing every step, provider and fee
+   if (chosen) await chosen.execute();     // run it once. Pass { requireSendAuth: true } to approve each Keeta send.
+   ```
+
+   Plans are **not atomic**, so never re-execute one. If a step fails, the error reports `completedSteps` and `failedAtStepIndex`. Reconcile balances, then plan only the remaining leg.
 
 ## Confirmations
 
@@ -78,6 +102,8 @@ These examples show the SDK flow. They don't prove that a provider is available 
 - Inspect provider metadata with [discover-resolve-anchors](../discover-resolve-anchors/SKILL.md).
 - Reconcile with [multi-asset-balances](../multi-asset-balances/SKILL.md).
 - Apply [spend-policy](../spend-policy/SKILL.md) before you execute.
+- Pay out the converted funds to a bank with [pay-out](../pay-out/SKILL.md).
+- For everything else, start at the [keeta](../keeta/SKILL.md) skill.
 
 ## Sources
 

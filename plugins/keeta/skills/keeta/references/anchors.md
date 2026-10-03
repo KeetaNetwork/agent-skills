@@ -11,7 +11,22 @@ Anchors are off-chain services that connect Keeta to the outside world. They pub
 | Storage | `@keetanetwork/anchor/services/storage/client.js` (default export) | Encrypted object storage tied to an account |
 | Notification | `KeetaAnchor.Notification.Client` | Push notifications (FCM) when funds arrive |
 
-**Availability is runtime data.** Which providers, corridors, countries and pairs exist on `test` or `main` changes over time. Always discover at run time. A `null` or empty result means stop: do not fall back to a remembered URL.
+**Availability is runtime data.** Which providers, corridors, countries and pairs exist on `test` or `main` changes over time and varies by account. Always discover at run time. A `null` or empty result means stop: do not fall back to a remembered URL.
+
+## Partner providers
+
+| Provider | Service | What it offers on Keeta | Networks | Identity |
+| --- | --- | --- | --- | --- |
+| **Bivo** (Bivo Inc., NMLS #2572288, licensed money transmitter) | asset movement | Named US bank accounts (ACH) in the user's name; wire, RTP and SWIFT deposit instructions; payouts in local currency in about 50 countries; international wires; conversions between its Keeta fiat tokens; Visa Direct card push and pull | main, test | Individual KYC |
+| **Bridge.xyz** | asset movement | USD by ACH or wire to and from US accounts against Keeta USDC; EUR by SEPA from Keeta EURC; USDC with Ethereum, Arbitrum, Avalanche and Polygon; Ethereum USDT and PYUSD into Keeta USDC | main, test (USDC only) | Individual KYC plus Bridge's terms of service |
+| **Keeta EVM anchor** | asset movement | Keeta's own bridge with Base for KTA, USDC, EURC and cbBTC, with no bridge fee | main (Base), test (Base Sepolia) | None |
+| **LayerZero** (Virtual Transfer anchor) | asset movement | Bridges and swaps about 50 tokens across 10 EVM chains, with Solana as a destination. It never touches Keeta, so routes chain it with the Keeta EVM anchor through Base. | main | None |
+| **HopNow** | asset movement | Keeta USDC or USDT to USD over RTP to US bank accounts, for businesses | where listed | KYB |
+| **OneFootprint** | KYC | Hosted identity verification that issues a reusable Keeta KYC certificate | main, test | — |
+| **Keeta KYB provider** | KYC (`entityType: 'business'`) | Business verification for companies incorporated in about 30 countries | where listed | — |
+| **Stablecoin FX anchor** | FX | 1:1 conversions between stablecoins of the same currency | test | None |
+
+Workflows: [receive-bank-deposits](../../receive-bank-deposits/SKILL.md), [pay-out](../../pay-out/SKILL.md), [card-payments](../../card-payments/SKILL.md), [bridge-crypto](../../bridge-crypto/SKILL.md), [convert-via-anchors](../../convert-via-anchors/SKILL.md), [complete-kyc](../../complete-kyc/SKILL.md) and [complete-kyb](../../complete-kyb/SKILL.md).
 
 ## Discover
 
@@ -44,42 +59,26 @@ const plain = fx ? await KeetaAnchor.lib.Resolver.Metadata.fullyResolveValuizabl
 
 **Locations:**
 - the Keeta chain: `{ type: 'chain', chain: { type: 'keeta', networkId: client.network } }` or `` `chain:keeta:${client.network}` ``
-- an EVM chain: `'chain:evm:421614'`
-- a US bank account: `{ type: 'bank-account', account: { type: 'us' } }` or `'bank-account:us'`
+- an EVM chain: `'chain:evm:8453'`; Solana: `'chain:solana:<genesis hash>'`
+- a bank account: `'bank-account:us'`, `'bank-account:iban-swift'`, `'bank-account:clabe'`, `'bank-account:pix'` and one location per country scheme; a debit card: `'bank-account:card'`
 
-**Assets:** a Keeta token, a currency code such as `'USD'`, or an EVM contract written `'evm:0x…'`. Pairs are written `{ from, to }`.
+**Assets:** a Keeta token, a currency code such as `'USD'`, or an external asset written `'evm:0x…'` or `'solana:<mint>'`. Pairs are written `{ from, to }`. Discovery matches the asset IDs a provider publishes, so you can also search by location alone and read the Keeta token from the provider's paths (`provider.serviceInfo.supportedAssets`).
 
-**Rails:** the protocol can describe ACH, WIRE, SEPA, PIX, SPEI, FPS, UPI, RTP and many national push rails, ACH debit and card pulls, plus KEETA_SEND, EVM_SEND, EVM_CALL, SOLANA_SEND, BITCOIN_SEND and TRON_SEND. Only the rails that discovered providers advertise are usable.
+**Rails:** ACH, WIRE, RTP_PUSH, WIRE_INTL_PUSH, SEPA_PUSH, SPEI_PUSH, PIX_PUSH, FPS_PUSH, UPI_PUSH, INTERAC_PUSH and many national push rails, ACH_DEBIT, CARD_PUSH and CARD_PULL, plus KEETA_SEND, EVM_SEND, EVM_CALL, SOLANA_SEND, BITCOIN_SEND and TRON_SEND. Only the rails that discovered providers advertise are usable.
 
 | Flow | Use |
 | --- | --- |
-| Keeta → bank payout | the [pay-out](../../pay-out/SKILL.md) skill (`initiateTransfer`, then fund the `KEETA_SEND` instruction exactly) |
-| EVM USDC ↔ Keeta | the [bridge-usdc](../../bridge-usdc/SKILL.md) skill (persistent forwarding addresses, outbound transfers) |
-| Bank → Keeta deposit | below |
+| Bank → Keeta (named account, wires) | [receive-bank-deposits](../../receive-bank-deposits/SKILL.md): `createPersistentForwardingAddress` |
+| Keeta → bank payout | [pay-out](../../pay-out/SKILL.md): `initiateTransfer`, then fund the `KEETA_SEND` instruction exactly |
+| Keeta ↔ debit card | [card-payments](../../card-payments/SKILL.md): a linked card template with `CARD_PUSH` or `CARD_PULL` |
+| Keeta ↔ other chains | [bridge-crypto](../../bridge-crypto/SKILL.md): persistent deposit addresses, withdrawals, chained routes |
 | Preview fees and instructions | `provider.simulateTransfer(...)`, then `simulated.createTransfer({ to: { recipient } })` |
 
-**Bank deposit (on-ramp).** Ask a provider for persistent deposit instructions. The account normally needs KYC first, and the provider must have your attributes:
-
-```ts
-const am = new KeetaAnchor.AssetMovement.Client(client);
-const usBank = { type: 'bank-account', account: { type: 'us' } } as const;
-const keeta = { type: 'chain', chain: { type: 'keeta', networkId: client.network } } as const;
-const asset = { from: 'USD' as const, to: keetaUSD };
-
-const providers = await am.getProvidersForTransfer({ asset, from: usBank, to: keeta });
-const provider = providers?.[0];        // choose deliberately after showing the options
-if (provider && await provider.isOperationSupported('createPersistentForwarding')) {
-  const instructions = await provider.createPersistentForwardingAddress({
-    account, asset, sourceLocation: usBank, destinationLocation: keeta,
-    destinationAddress: account.publicKeyString.get()
-  });
-  // Show the returned bank details to the user. The deposit arrives as the Keeta USD token.
-}
-```
-
-- Watch for the credit with `client.on('change', …)` or `balance(keetaUSD)`, or call `provider.listTransactions({ account, persistentAddresses })`.
-- Handle `KYCShareNeeded` and `UserActionNeeded` as described above.
-- Fiat token amounts are in the smallest currency unit: `200n` USD is $2.00.
+**Instructions and units.**
+- `KEETA_SEND` instructions must be funded exactly: the same token, the same `value`, and the provider's `external` value unchanged.
+- Fiat-push instructions (`ACH`, `WIRE`, `SEPA_PUSH`…) carry bank coordinates in `account` and a mandatory reference in `depositMessage`.
+- `value` is in the source asset's smallest unit (cents for USD, 6 decimals for USDC). `totalReceiveAmount` is in the destination's.
+- Fiat tokens issued by a provider can carry transfer rules set by their issuer. To pay someone in fiat, use a payout rather than sending the token directly.
 
 ## FX
 

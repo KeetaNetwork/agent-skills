@@ -1,6 +1,7 @@
 ---
 name: complete-kyc
-description: Verify an individual through a Keeta KYC anchor. Discover a provider, start the hosted verification for a human to complete, poll status, retrieve the certificate, attach it on-chain with consent, and share only requested attributes with anchors. Use when a wallet or an asset-movement provider requires KYC.
+description: Verify a person's identity (KYC) once on Keeta and reuse it across providers. Discover the KYC provider (OneFootprint), start the hosted verification that the person completes, attach the resulting certificate to their account with consent, and share only the attributes a provider asks for, such as Bivo or Bridge.xyz (including Bridge's terms-of-service step). Use when someone must verify their identity to get a bank account, receive deposits, pay out or bridge, or when a provider raises KYCShareNeeded, even if they don't mention Keeta.
+license: Apache-2.0
 ---
 
 # Complete KYC through an anchor
@@ -9,7 +10,14 @@ description: Verify an individual through a Keeta KYC anchor. Discover a provide
 
 Use when an individual's account needs a reusable Keeta KYC certificate, or when an asset-movement provider raises `KYCShareNeeded` or `AdditionalKYCNeeded`. For a company, use [complete-kyb](../complete-kyb/SKILL.md).
 
-Providers are runtime metadata. The docs show a test-network sandbox with a Footprint provider and a basic demo provider, but select only from what discovery returns. The person completes identity steps in the provider's hosted page. An agent never fills in identity answers or uploads documents for them.
+- **Verify once, reuse everywhere.** The certificate is issued under Keeta's KYC root, and providers such as Bivo and Bridge.xyz accept it. One verification serves many providers, and each one receives only the attributes it asks for. Some add a step of their own, such as Bridge's terms of service.
+- **Provider.** OneFootprint verifies individuals on Keeta and needs a country code. The test network also has a basic demo provider, and lists OneFootprint as `Footprint`. Select only from what discovery returns.
+- **The person does the identity steps.** They complete them in the provider's hosted page. An agent never fills in identity answers or uploads documents for them.
+
+| Provider asking | Typical attributes | Extra step |
+| --- | --- | --- |
+| Bivo (bank accounts, payouts, cards) | name, date of birth, address, phone, email, ID document details | Review is asynchronous, often under an hour. Then add the provider's certificate and grant `SEND_ON_BEHALF` on the USD token, with approval. |
+| Bridge.xyz (USDC and EURC bank transfers, other EVM chains) | name, date of birth, address (with state in the US), tax ID (SSN in the US) | The person accepts Bridge's terms of service at `tosFlow.url` |
 
 ## SDK steps
 
@@ -57,7 +65,9 @@ Providers are runtime metadata. The docs show a test-network sandbox with a Foot
    ```
 
 5. Verify with `await client.getCertificates()`.
-6. When an asset-movement provider raises `KYCShareNeeded`, share exactly `error.neededAttributes` with `error.shareWithPrincipals`. Use `SharableCertificateAttributes.fromCertificate(...)`, `grantAccess(principal)` and `provider.shareKYCAttributes({ account, attributes })`. Full code is in the [identity reference](../keeta/references/identity.md).
+6. When an asset-movement provider raises `KYCShareNeeded`, share exactly `error.neededAttributes` with `error.shareWithPrincipals`. Use `SharableCertificateAttributes.fromCertificate(...)`, `grantAccess(principal)` and `provider.shareKYCAttributes({ account, attributes })`. The full code is in the [identity reference](../keeta/references/identity.md).
+   - **Terms of service.** If the error carries `tosFlow` (Bridge.xyz does), the person opens `tosFlow.url` and accepts the terms. Then pass the signed agreement ID that page returns: `provider.shareKYCAttributes({ account, attributes, tosAgreement: { id } })`.
+   - **Pending review.** Sharing can return while review is still pending. After that, `AdditionalKYCNeeded` means "wait and retry" or "a person must finish `toCompleteFlow.url`".
 
 ## Confirmations
 
@@ -77,7 +87,7 @@ Providers are runtime metadata. The docs show a test-network sandbox with a Foot
 
 - Inspect providers with [discover-resolve-anchors](../discover-resolve-anchors/SKILL.md).
 - Verify a legal entity with [complete-kyb](../complete-kyb/SKILL.md).
-- After identity steps are done, continue with [pay-out](../pay-out/SKILL.md) or [bridge-usdc](../bridge-usdc/SKILL.md).
+- After identity steps are done, continue with [receive-bank-deposits](../receive-bank-deposits/SKILL.md), [pay-out](../pay-out/SKILL.md), [card-payments](../card-payments/SKILL.md) or [bridge-crypto](../bridge-crypto/SKILL.md).
 
 ## Sources
 

@@ -1,6 +1,7 @@
 ---
 name: spend-policy
-description: Put real and advisory limits around an agent that can move value on Keeta. Use network-enforced boundaries (a dedicated funded account or vault, token-scoped SEND_ON_BEHALF delegation, multisig co-signing), then add application checks (per-payment and rolling caps, allowlists, approvals, audit) that fail closed. Use before letting an agent quote, convert, bridge, send, pay out or pay for x402 requests.
+description: "Keep an agent's spending safe on Keeta. Start with network-enforced limits: a dedicated funded account or vault, token-scoped SEND_ON_BEHALF delegation, multisig co-signing. Then add application checks that fail closed: per-payment and rolling caps, allowlists, approvals, audit. Use before letting an agent quote, convert, bridge, send, pay out, pay a card or pay for x402 requests, or when a user asks how to cap or control what an agent can spend."
+license: Apache-2.0
 ---
 
 # Apply a spend policy
@@ -62,7 +63,7 @@ Use before any agent can propose or execute value movement: sends, conversions, 
 
 ## Related skills
 
-- Apply this to [send-receive-tokens](../send-receive-tokens/SKILL.md), [convert-via-anchors](../convert-via-anchors/SKILL.md), [bridge-usdc](../bridge-usdc/SKILL.md), [pay-out](../pay-out/SKILL.md) and [x402-payments](../x402-payments/SKILL.md).
+- Apply this to [send-receive-tokens](../send-receive-tokens/SKILL.md), [convert-via-anchors](../convert-via-anchors/SKILL.md), [bridge-crypto](../bridge-crypto/SKILL.md), [pay-out](../pay-out/SKILL.md), [card-payments](../card-payments/SKILL.md) and [x402-payments](../x402-payments/SKILL.md).
 - Get fresh preflight state from [multi-asset-balances](../multi-asset-balances/SKILL.md).
 
 ## Sources

@@ -1,6 +1,7 @@
 ---
 name: multi-asset-balances
-description: Read and reconcile every token balance on a Keeta account (or a storage account it controls) with exact token identities, on-chain decimals and base units, and flag look-alike tokens. Use for portfolio views, preflight checks before a send or conversion, and confirming settlement afterwards.
+description: Read and reconcile every balance on a Keeta account (dollars, euros, stablecoins, KTA or any token), or a storage account it controls, with exact token identities, on-chain decimals and base units, and flag look-alike tokens. Use for portfolio views, for checking funds before a payment, conversion or payout, and for confirming that a deposit or transfer settled.
+license: Apache-2.0
 ---
 
 # Read multi-asset balances

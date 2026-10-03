@@ -47,6 +47,12 @@ await provider.shareKYCAttributes({ account, attributes: sharable });
 
 Opening a certificate with `subjectKey: account` decrypts its sensitive attributes locally. Keep the decrypted values out of logs, prompts and on-chain fields.
 
+**Terms of service.** When `KYCShareNeeded` includes `tosFlow`, as Bridge.xyz's does, a person accepts the provider's terms at `tosFlow.url` first. The share must then carry the agreement ID that page returns:
+
+```ts
+await provider.shareKYCAttributes({ account, attributes: sharable, tosAgreement: { id: signedAgreementId } });
+```
+
 ## Certificate-gated anchors
 
 Username, storage and notification anchors can require a certificate from accepted issuers. They then fail with `KeetaAnchorCertificateRequiredError`, which you can import from `@keetanetwork/anchor/lib/error.js`:

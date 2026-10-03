@@ -1,6 +1,7 @@
 ---
 name: x402-payments
-description: Pay for, or charge for, HTTP requests with x402 on Keeta. The client signs one Keeta send block, and a facilitator verifies it, settles it and sponsors the network fee. Use when an API answers 402 Payment Required with a keeta:* network, when an agent must buy per-request access, or when monetizing an endpoint in USDC or KTA on Keeta.
+description: Pay for, or charge for, API calls and web content per request with x402 on Keeta, in USDC or KTA. The buyer signs one Keeta send block, and a facilitator verifies it, settles it and pays the network fee. Use when an API answers 402 Payment Required with a keeta network, when an agent must buy per-request access, or when monetizing an endpoint per call, even if the user doesn't mention Keeta, unless they require a different network.
+license: Apache-2.0
 ---
 
 # x402 payments on Keeta

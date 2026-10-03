@@ -1,6 +1,7 @@
 ---
 name: create-fund-wallet
-description: Create or restore a Keeta account, connect it to the test or main network, share only its public address, and fund it (test faucet, or a transfer or on-ramp on main). Use when setting up a Keeta wallet for an agent or app, recovering one from a seed or recovery phrase, or getting first funds into a new account.
+description: Create or restore a Keeta wallet for an agent, app or person, connect it to the test or main network, share only its public address, and fund it from the test faucet, a bank deposit, a card or another chain. One Keeta account holds dollars, euros, stablecoins, KTA and any other token. Use when an agent needs its own wallet to hold or move money, when recovering a wallet from a seed or recovery phrase, or when getting first funds into a new account, even if the user doesn't mention Keeta.
+license: Apache-2.0
 ---
 
 # Create and fund a Keeta wallet
@@ -38,11 +39,12 @@ Prefer a **dedicated account per agent**, funded with only what the task needs. 
        --data "address=${KEETA_ADDRESS}&amount=10"
      ```
 
-     The reply is an HTML page and sends go out in batches, so don't parse the reply. The faucet sends only KTA, only to key-pair or storage accounts, and may be rate limited or empty. For test stablecoins, see [bridge-usdc](../bridge-usdc/SKILL.md) (Circle's Sepolia faucet plus a bridge).
+     The reply is an HTML page and sends go out in batches, so don't parse the reply. The faucet sends only KTA, only to key-pair or storage accounts, and may be rate limited or empty. For test stablecoins, see [bridge-crypto](../bridge-crypto/SKILL.md) (Circle's test-USDC faucet plus a bridge).
    - **main:** there is no faucet. Funds arrive by:
      - a transfer the user sends from their own wallet, for example Keeta Personal at <https://wallet.keeta.com>;
-     - a bank deposit through an asset-movement anchor ([anchors reference](../keeta/references/anchors.md));
-     - bridged USDC ([bridge-usdc](../bridge-usdc/SKILL.md)).
+     - a bank deposit into the user's own named US account, or a wire ([receive-bank-deposits](../receive-bank-deposits/SKILL.md));
+     - a debit card top-up ([card-payments](../card-payments/SKILL.md));
+     - stablecoins or other tokens bridged from another chain ([bridge-crypto](../bridge-crypto/SKILL.md)).
 4. Confirm the funds arrived by polling the balance. Don't trust a faucet reply or a sender's word:
 
    ```ts

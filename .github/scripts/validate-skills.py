@@ -16,7 +16,8 @@ MARKETPLACE = ROOT / ".claude-plugin" / "marketplace.json"
 MAIN_SKILL = "keeta"
 EXPECTED_SKILLS = {
     MAIN_SKILL,
-    "bridge-usdc",
+    "bridge-crypto",
+    "card-payments",
     "complete-kyb",
     "complete-kyc",
     "convert-via-anchors",
@@ -24,6 +25,7 @@ EXPECTED_SKILLS = {
     "discover-resolve-anchors",
     "multi-asset-balances",
     "pay-out",
+    "receive-bank-deposits",
     "send-receive-tokens",
     "spend-policy",
     "x402-payments",
@@ -35,7 +37,7 @@ REQUIRED_SECTIONS = {
     "failures",
     "related skills",
 }
-MAIN_SKILL_SECTION_PREFIXES = ("rules", "quickstart", "task map", "networks", "reference files")
+MAIN_SKILL_SECTION_PREFIXES = ("what you can do", "rules", "quickstart", "task map", "networks", "reference files")
 ALLOWED_FRONTMATTER = {"name", "description", "license", "compatibility", "metadata", "allowed-tools"}
 NAME_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 LINK_PATTERN = re.compile(r"\]\(([^)\s]+)\)")
@@ -68,8 +70,23 @@ def parse_frontmatter(text: str, path: Path, errors: list[str]) -> dict[str, str
             fail(f"{path}: unsupported frontmatter line {line!r}", errors)
             continue
         key, value = line.split(":", 1)
-        data[key.strip()] = value.strip().strip("\"'")
+        data[key.strip()] = scalar(value.strip(), path, key.strip(), errors)
     return data
+
+
+def scalar(value: str, path: Path, key: str, errors: list[str]) -> str:
+    """Read a one-line YAML scalar, and reject plain values that YAML would misparse."""
+    if value.startswith('"'):
+        try:
+            return str(json.loads(value))
+        except json.JSONDecodeError:
+            fail(f"{path}: {key} is not a valid double-quoted string", errors)
+            return value.strip('"')
+    if value.startswith("'"):
+        return value[1:-1].replace("''", "'")
+    if ": " in value or " #" in value or (value and value[0] in "[]{}&*!|>%@`,"):
+        fail(f"{path}: quote the {key} value; YAML cannot read ': ', ' #' or a leading indicator in a plain value", errors)
+    return value
 
 
 def headings(text: str) -> set[str]:
