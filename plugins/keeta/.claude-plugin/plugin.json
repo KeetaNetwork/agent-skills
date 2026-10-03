@@ -1,0 +1,13 @@
+{
+  "name": "keeta",
+  "version": "0.2.0",
+  "description": "Agent skills for Keeta Network: accounts, multi-asset balances, payments, tokens, identity, anchors (KYC, KYB, FX, bridges, bank payouts) and x402.",
+  "author": {
+    "name": "Keeta Network",
+    "url": "https://keeta.com"
+  },
+  "homepage": "https://keeta.ai",
+  "repository": "https://github.com/KeetaNetwork/agent-skills",
+  "license": "Apache-2.0",
+  "keywords": ["keeta", "keetanet", "payments", "stablecoins", "anchors", "x402", "agent-skills"]
+}

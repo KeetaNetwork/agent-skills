@@ -41,6 +41,8 @@ npm install @keetanetwork/keetanet-client @x402/core @x402/keeta @x402/fetch @x4
    // Load the seed from your secret store. Never print, log, or commit it.
    const account = KeetaNet.lib.Account.fromSeed(process.env.KEETA_SEED!, 0);
    const signer = toClientKeetaSigner(account); // opens a UserClient; destroy it when done
+   // KTA cap in base units. Derive it from KTA's on-chain decimalPlaces; never assume the decimals.
+   const ktaCapBaseUnits = "1000000";
 
    try {
      const client = new x402Client()
@@ -48,8 +50,8 @@ npm install @keetanetwork/keetanet-client @x402/core @x402/keeta @x402/fetch @x4
        .setSpendControls({
          maxAmountPerPayment: "$0.05", // per-payment cap for default assets (USDC)
          allowedAssets: [
-           // Opt in to KTA with an atomic cap: 1_000_000 = 0.001 KTA (9 decimals)
-           { network: KEETA_TESTNET_CAIP2, asset: KTA_TESTNET_ADDRESS, maxAmountPerPayment: "1000000" },
+           // Opt in to KTA explicitly, with an atomic (base-unit) cap
+           { network: KEETA_TESTNET_CAIP2, asset: KTA_TESTNET_ADDRESS, maxAmountPerPayment: ktaCapBaseUnits },
          ],
        })
        .onBeforePaymentCreation(async ({ selectedRequirements: req }) => {
@@ -71,7 +73,7 @@ npm install @keetanetwork/keetanet-client @x402/core @x402/keeta @x402/fetch @x4
 
    `requestApproval` stands for your own human-approval or [spend-policy](../spend-policy/SKILL.md) check.
 
-3. Know the defaults. Without `setSpendControls`, the client accepts only the default asset (Keeta USDC, 6 decimals), capped at `$1` per payment. A KTA-priced option is filtered out unless you opt in under `allowedAssets`. Use `KEETA_MAINNET_CAIP2` and `KTA_MAINNET_ADDRESS` on main.
+3. Know the defaults. Without `setSpendControls`, the client accepts only the default asset (Keeta USDC, which `@x402/keeta` prices at 6 decimals), capped at `$1` per payment. A KTA-priced option is filtered out unless you opt in under `allowedAssets`. Read KTA's decimals from its token metadata (see the `keeta` skill); published values have differed. Use `KEETA_MAINNET_CAIP2` and `KTA_MAINNET_ADDRESS` on main.
 4. Read `result.paymentStatus`. Its values are `settled`, `settle_failed`, `payment_required` or `none`.
 5. Pay **sequentially** from each account. Keeta account chains are ordered, so one account cannot sign concurrent payments. Queue requests, or spread them across several funded accounts when you need parallelism.
 

@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
+  "name": "keeta",
+  "owner": {
+    "name": "Keeta Network",
+    "url": "https://keeta.com"
+  },
+  "metadata": {
+    "description": "Official Keeta Network agent skills: wallets, multi-asset balances, payments, tokens, identity, anchors and x402."
+  },
+  "plugins": [
+    {
+      "name": "keeta",
+      "source": "./plugins/keeta",
+      "description": "Agent skills for Keeta Network: accounts, multi-asset balances, payments, tokens, identity, anchors (KYC, KYB, FX, bridges, bank payouts) and x402.",
+      "version": "0.2.0",
+      "author": {
+        "name": "Keeta Network"
+      },
+      "category": "development"
+    }
+  ]
+}

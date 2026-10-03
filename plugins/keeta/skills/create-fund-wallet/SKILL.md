@@ -1,55 +1,86 @@
 ---
 name: create-fund-wallet
-description: Create or restore a Keeta signer, connect it to a named network, expose only its public address, and prepare a safe funding request. Use when setting up a Keeta wallet or funding a new account.
+description: Create or restore a Keeta account, connect it to the test or main network, share only its public address, and fund it (test faucet, or a transfer or on-ramp on main). Use when setting up a Keeta wallet for an agent or app, recovering one from a seed or recovery phrase, or getting first funds into a new account.
 ---
 
 # Create and fund a Keeta wallet
 
 ## When to use
 
-Use for a new wallet, deterministic account recovery, or preparing an address to receive a known Keeta-native token. Ask whether the user intends `test` or `main`; never infer the network from an address or previous conversation.
+Use for a new agent or app account, for recovering an account from its seed or recovery phrase, or for getting a new account its first funds. Ask whether the user means `test` or `main`. Never infer the network from an address or an earlier conversation: the same key has the same address on both networks.
+
+Prefer a **dedicated account per agent**, funded with only what the task needs. Use a user's personal wallet only if the user explicitly hands over its recovery phrase for this purpose.
 
 ## SDK steps
 
-1. Install and import `@keetanetwork/keetanet-client`.
-2. Generate a seed only for a new wallet:
+1. Install the client: `npm install @keetanetwork/keetanet-client`.
+2. Create or restore the account, then connect:
 
    ```ts
    import * as KeetaNet from '@keetanetwork/keetanet-client';
 
-   const seed = KeetaNet.lib.Account.generateRandomSeed({ asString: true });
-   const account = KeetaNet.lib.Account.fromSeed(seed, 0);
-   const userClient = KeetaNet.UserClient.fromNetwork('test', account);
-   const address = account.publicKeyString.get();
+   const { Account } = KeetaNet.lib;
+   // New wallet: generate once, store it in your secret manager, never print it.
+   // Recovery: load the stored seed instead.
+   const seed = process.env.KEETA_SEED ?? Account.generateRandomSeed({ asString: true });
+   const account = Account.fromSeed(seed, 0);                  // index 0; use other indexes for more accounts
+   const client = KeetaNet.UserClient.fromNetwork('test', account); // or 'main' when the user says so
+   const address = account.publicKeyString.get();              // share only this
    ```
 
-3. For recovery, load the seed from an approved secret store and call `Account.fromSeed(seed, index)`. Do not print, log, commit, or transmit the seed.
-4. Confirm the public address, network, token address, and expected base-unit amount before requesting funds from a known sender.
-5. After the sender reports completion, verify with `await userClient.balance(token)` or `await userClient.allBalances()`.
+   To restore from a recovery phrase, which is also how Keeta Personal derives accounts, run `const seed = await Account.seedFromPassphrase(process.env.KEETA_PHRASE!, { asString: true })` and then `Account.fromSeed(seed, 0)`. The SDK rejects short passphrases.
+3. Fund the account:
+   - **test:** ask the faucet for test KTA. Send the header exactly as written: a `;charset` suffix is rejected.
 
-There is no documented universal funding method. Faucets are environment-specific services, not wallet creation APIs. Do not guess a faucet URL or claim that a new account is funded.
+     ```bash
+     curl -sS -X POST https://faucet.test.keeta.com/ \
+       -H 'Content-Type: application/x-www-form-urlencoded' \
+       --data "address=${KEETA_ADDRESS}&amount=10"
+     ```
+
+     The reply is an HTML page and sends go out in batches, so don't parse the reply. The faucet sends only KTA, only to key-pair or storage accounts, and may be rate limited or empty. For test stablecoins, see [bridge-usdc](../bridge-usdc/SKILL.md) (Circle's Sepolia faucet plus a bridge).
+   - **main:** there is no faucet. Funds arrive by:
+     - a transfer the user sends from their own wallet, for example Keeta Personal at <https://wallet.keeta.com>;
+     - a bank deposit through an asset-movement anchor ([anchors reference](../keeta/references/anchors.md));
+     - bridged USDC ([bridge-usdc](../bridge-usdc/SKILL.md)).
+4. Confirm the funds arrived by polling the balance. Don't trust a faucet reply or a sender's word:
+
+   ```ts
+   const before = await client.balance(client.baseToken);
+   // ...request funds, then:
+   for (let attempt = 0; attempt < 20; attempt++) {
+     if ((await client.balance(client.baseToken)) > before) break;
+     await KeetaNet.lib.Utils.Helper.asleep(15_000);
+   }
+   ```
+
+5. Report the network, the address, an explorer link (`https://explorer.test.keeta.com/account/<address>` or `https://explorer.keeta.com/account/<address>`), and the balance in base units. Add a decimal amount only after you read the token's `decimalPlaces` ([multi-asset-balances](../multi-asset-balances/SKILL.md)).
+6. Call `await client.destroy()` when you are done.
 
 ## Confirmations
 
-- Confirm `test` or `main` before constructing `UserClient`.
-- Confirm whether this is a new seed or recovery of an existing seed and index.
-- Show only the public address to the user.
-- Confirm the exact token identifier and base-unit amount before sharing a funding request.
+- Confirm `test` or `main` before you build the client.
+- Confirm whether this is a new seed or a recovery, and which index.
+- Show only the public address. Never show the seed or phrase, even when the user asks to "see the wallet".
+- Before asking someone to fund the account, confirm the token address and the expected base-unit amount.
 
 ## Failures
 
-- Stop if secure seed storage is unavailable.
-- If `fromNetwork` cannot connect, report the selected network and error; do not silently switch networks.
-- If the balance remains unchanged, return the address, token, and observed balance. Do not resubmit an unknown transfer.
-- A paused or unavailable test network is not evidence that account creation failed; local key derivation and network funding are separate steps.
+- No secure place to store the seed: stop before you generate one.
+- `fromNetwork` or a balance read fails (`CLIENT_NO_REPS_AVAILABLE`): report the network and the error. Do not switch networks.
+- The balance has not changed after a few minutes: return the address, token and observed balance. Don't ask the faucet again in a loop.
+- A network outage does not mean account creation failed. Key derivation is local, and funding is a separate step.
 
 ## Related skills
 
-- Use [multi-asset-balances](../multi-asset-balances/SKILL.md) to inspect funds.
-- Use [send-receive-tokens](../send-receive-tokens/SKILL.md) for a transfer.
-- Apply [spend-policy](../spend-policy/SKILL.md) before enabling agent-initiated value movement.
+- Read balances with [multi-asset-balances](../multi-asset-balances/SKILL.md).
+- Send funds with [send-receive-tokens](../send-receive-tokens/SKILL.md).
+- Set limits before an agent moves value: [spend-policy](../spend-policy/SKILL.md).
+- For the full map of what Keeta can do, start at the [keeta](../keeta/SKILL.md) skill.
 
 ## Sources
 
 - [Create Your First Account](https://docs.keeta.com/introduction/create-your-first-account)
-- [`@keetanetwork/keetanet-client` getting started](https://github.com/KeetaNetwork/keetanet-client/blob/main/docs/GETTING-STARTED.md)
+- [Start Developing](https://docs.keeta.com/introduction/start-developing)
+- [Official links: wallet, explorer, faucet](https://docs.keeta.com/other-documentation/official-links)
+- [Faucet request helper in the public examples](https://github.com/KeetaNetwork/keetanet-examples/blob/main/src/helper.ts)
