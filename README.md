@@ -55,11 +55,15 @@ Don't use `npx skills add https://keeta.ai/SKILL.md`. Once the site publishes a 
 
 ## Hosting on keeta.ai
 
-keeta.ai is served by Cloudflare as an assets-only Worker (`wrangler.jsonc`). `.github/scripts/build-site.py` assembles `_site/` from `site/` and `plugins/keeta/skills/`, and `.github/workflows/deploy.yml` deploys it on every push to `main` that touches the site, the skills or the build scripts.
+keeta.ai is the Cloudflare Pages project `agent-skills`, connected to this repository. Pages builds every push. `main` deploys to keeta.ai, and other branches and pull requests get preview URLs.
 
-Any host must run the build and serve `_site/`, because `site/` alone has no skill files. For Cloudflare Pages:
-- **Build command:** `python3 .github/scripts/build-site.py`
-- **Build output directory:** `_site`
+The build turns `site/` and `plugins/keeta/skills/` into `_site/`, the folder Pages serves. `site/` alone has no skill files, so a deployment that skips the build serves the page but returns the 404 page for `/SKILL.md`, the skills and the indexes.
+
+| Setting | Value | Where it's set |
+| --- | --- | --- |
+| Build command | `python3 .github/scripts/build-site.py` | Pages dashboard |
+| Build output directory | `_site` | `wrangler.toml` |
+| Production branch | `main` | Pages dashboard |
 
 | Path | Content |
 | --- | --- |
@@ -72,26 +76,23 @@ Any host must run the build and serve `_site/`, because `site/` alone has no ski
 | `/.well-known/skills/index.json` | legacy discovery index, for older CLI versions |
 | `/.well-known/agent-skills/<name>/…` | every skill's files |
 
-- **Response headers.** `site/_headers` lets any origin fetch the skills, the llms files and the indexes, so browser-based agents can read them. Cloudflare applies the file and doesn't publish it.
+- **Response headers.** `site/_headers` lets any origin fetch the skills, the llms files and the indexes, so browser-based agents can read them. Pages applies the file and doesn't publish it.
+- **Not found.** Pages serves `404.html` with status 404 for any path that doesn't exist.
 - **Generated, never committed.** A `SKILL.md` outside `plugins/keeta/skills/<name>/` would hide the pack from `npx skills add KeetaNetwork/agent-skills`, so the validator rejects one.
 
 **One-time setup:**
 
-1. **Zone.** The keeta.ai zone must be in the Cloudflare account. On deploy, `wrangler.jsonc` attaches keeta.ai to the Worker as a custom domain. In CI, Wrangler replaces any existing keeta.ai DNS record or custom domain without asking, so make sure nothing else is served from the apex.
-2. **API token.** Create a token from the **Edit Cloudflare Workers** template, scoped to that account and the keeta.ai zone. If the custom-domain step fails with an authentication error, also give the token **Zone → DNS → Edit** on keeta.ai.
-3. **Repository secrets.** Add the token as `CLOUDFLARE_API_TOKEN` and the account ID as `CLOUDFLARE_ACCOUNT_ID` (Settings → Secrets and variables → Actions).
-4. **First deploy.** Run the **Deploy keeta.ai to Cloudflare** workflow, or push to `main`.
-
-The site is also served at `keeta-ai.<your-subdomain>.workers.dev`, for checks before DNS moves.
+1. **Build.** In the Cloudflare dashboard, open Workers & Pages → `agent-skills` → Settings → Build. Set the build command above, with framework preset None and the root directory left blank.
+2. **Domain.** Under Custom domains, add `keeta.ai`. If the keeta.ai zone is in the same Cloudflare account, Pages creates the DNS record.
+3. **Deploy.** Retry the latest deployment, or push to `main`.
 
 Build and check locally:
 
 ```bash
 python3 .github/scripts/validate-skills.py
-python3 .github/scripts/build-site.py _site
-npx wrangler@4.147.0 deploy --dry-run    # checks the deploy config without credentials
-npx wrangler@4.147.0 dev &                # serves _site/ the way Cloudflare does, on http://localhost:8787
-npx skills add http://localhost:8787 --list
+python3 .github/scripts/build-site.py
+npx wrangler@4.147.0 pages dev &          # serves _site/ the way Pages does, on http://localhost:8788
+npx skills add http://localhost:8788 --list
 ```
 
 ## Repository layout
@@ -103,7 +104,7 @@ npx skills add http://localhost:8787 --list
 | `.claude-plugin/marketplace.json` | the marketplace that lists the plugin |
 | `site/` | the static catalog and 404 page, plus `_headers` for Cloudflare |
 | `site/assets/` | the official Keeta wordmark and app icon, the link-preview image, and self-hosted Geist fonts (SIL Open Font License, in `fonts/OFL.txt`) |
-| `wrangler.jsonc` | the Cloudflare Worker that serves keeta.ai |
+| `wrangler.toml` | Cloudflare Pages settings: the project name and the `_site` output directory |
 
 ## License
 

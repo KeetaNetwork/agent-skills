@@ -28,10 +28,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - name: Check the Cloudflare deploy config
-        env:
-          WRANGLER_SEND_METRICS: "false"
-        run: npx --yes wrangler@4.147.0 deploy --dry-run
+      - name: Check the Pages output directory matches the build
+        run: grep -qx 'pages_build_output_dir = "./_site"' wrangler.toml
       - name: Install every skill from the built site with the skills CLI
         env:
           DISABLE_TELEMETRY: "1"
