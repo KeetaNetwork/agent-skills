@@ -212,7 +212,8 @@ def build(out: Path) -> None:
     ]
     (out / "llms.txt").write_text("\n".join(lines), encoding="utf-8")
 
-    print(f"Built {out.relative_to(ROOT) if out.is_relative_to(ROOT) else out}: {len(catalog)} skills")
+    shown = out.relative_to(ROOT) if ROOT in out.parents else out
+    print(f"Built {shown}: {len(catalog)} skills with Python {sys.version.split()[0]}")
 
 
 if __name__ == "__main__":
