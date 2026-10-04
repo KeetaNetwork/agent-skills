@@ -114,7 +114,7 @@ Use when money moves between a Keeta balance and **the user's own debit card**:
 
 ## Related skills
 
-- Bank payouts in about 50 countries: [pay-out](../pay-out/SKILL.md).
+- Bank payouts in more than 60 countries: [pay-out](../pay-out/SKILL.md).
 - Bank deposits and Bivo onboarding: [receive-bank-deposits](../receive-bank-deposits/SKILL.md).
 - For everything else, start at the [keeta](../keeta/SKILL.md) skill.
 

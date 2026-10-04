@@ -1,6 +1,6 @@
 ---
 name: pay-out
-description: Send money from Keeta to bank accounts. Through Bivo, a licensed money transmitter, it pays local currency in about 50 countries (SEPA, SPEI, PIX, Faster Payments, UPI, Interac and more), sends international wires, and pays US accounts by ACH, wire or RTP where offered. It also pays out USDC to US banks and EURC by SEPA through Bridge.xyz. Use for paying people or suppliers, payroll, invoices, remittances and cross-border transfers to a bank, even if the user doesn't mention Keeta, unless they ask for a different provider. For debit cards, use card-payments.
+description: Send money from Keeta to bank accounts. Through Bivo, a licensed money transmitter, it pays local currency in more than 60 countries (SEPA, SPEI, PIX, Faster Payments, UPI, Interac and more), sends international wires, and pays US accounts by ACH, wire or RTP where offered. It also pays out USDC to US banks and EURC by SEPA through Bridge.xyz. Use for paying people or suppliers, payroll, invoices, remittances and cross-border transfers to a bank, even if the user doesn't mention Keeta, unless they ask for a different provider. For debit cards, use card-payments.
 license: Apache-2.0
 ---
 
@@ -12,7 +12,7 @@ Use to pay a person or business at their bank. Every payout starts from a Keeta 
 
 | Payout | Provider | Pay from (Keeta token) | Location | Rails |
 | --- | --- | --- | --- | --- |
-| Local currency in about 50 countries | Bivo | Bivo's Keeta USD token | per country (see the table below) | `SEPA_PUSH`, `SPEI_PUSH`, `PIX_PUSH`, `FPS_PUSH`, `UPI_PUSH`, `INTERAC_PUSH` and other local rails |
+| Local currency in more than 60 countries | Bivo | Bivo's Keeta USD token | per country (see the table below) | `SEPA_PUSH`, `SPEI_PUSH`, `PIX_PUSH`, `FPS_PUSH`, `UPI_PUSH`, `INTERAC_PUSH` and other local rails |
 | International wire (SWIFT) | Bivo | USD, or a Bivo token in the same currency (EUR to EUR) | `bank-account:iban-swift` | `WIRE_INTL_PUSH` |
 | US bank account | Bivo | Bivo's Keeta USD token | `bank-account:us` | `ACH`, `WIRE`, and `RTP_PUSH` where offered |
 | US bank account from USDC | Bridge.xyz | Keeta USDC | `bank-account:us` | `ACH`, `WIRE` |
@@ -25,7 +25,7 @@ Use to pay a person or business at their bank. Every payout starts from a Keeta 
   - Bivo's stablecoin conversions aren't available to residents of the EU or Texas.
   - Bridge.xyz needs a US SSN or a national tax ID from a supported country; the UK, Spain, Switzerland, Singapore, Argentina, Colombia and Uruguay aren't supported.
   - Match each option to the principal first: see "Match services to your principal" in the [keeta](../keeta/SKILL.md) skill.
-- **Bivo has two listings.** The original listing (main and test) issues tokens named by currency code: USD, EUR, GBP, CAD, AED, HKD, JPY, MXN and CNY. The newer listing (open on test, rolling out on main) issues `$K` tokens such as `$KUSD` and `$KEUR`. It adds RTP deposits, card payouts on US accounts and 48 local payout rails, and takes stablecoin deposits through persistent addresses. Each listing works only with its own tokens, so take the token from the listing's paths.
+- **Bivo has two listings.** The original listing (main and test) issues tokens named by currency code: USD, EUR, GBP, CAD, AED, HKD, JPY, MXN and CNY. The newer listing (open on test, rolling out on main) issues `$K` tokens such as `$KUSD` and `$KEUR`. It adds RTP deposits and card payouts on US accounts, and takes stablecoin deposits through persistent addresses. Each listing works only with its own tokens, so take the token from the listing's paths.
 - **Availability** varies by account and network. Discovery returns only what this account can use.
 - To pay a debit card, use [card-payments](../card-payments/SKILL.md). To pay a Keeta address, use [send-receive-tokens](../send-receive-tokens/SKILL.md).
 

@@ -17,7 +17,7 @@ Anchors are off-chain services that connect Keeta to the outside world. They pub
 
 | Provider | Service | What it offers on Keeta | Networks | Identity |
 | --- | --- | --- | --- | --- |
-| **Bivo** (Bivo Inc., NMLS #2572288, licensed money transmitter) | asset movement | Named US bank accounts (ACH) in the user's name; wire, RTP and SWIFT deposit instructions; payouts in local currency in about 50 countries; international wires; conversions between its Keeta fiat tokens; Visa Direct card push and pull | main, test | Individual KYC |
+| **Bivo** (Bivo Inc., NMLS #2572288, licensed money transmitter) | asset movement | Named US bank accounts (ACH) in the user's name; wire, RTP and SWIFT deposit instructions; payouts in local currency in more than 60 countries; international wires; conversions between its Keeta fiat tokens; Visa Direct card push and pull | main, test | Individual KYC |
 | **Bridge.xyz** | asset movement | USD by ACH or wire to and from US accounts against Keeta USDC; EUR by SEPA from Keeta EURC; USDC with Ethereum, Arbitrum, Avalanche and Polygon; Ethereum USDT and PYUSD into Keeta USDC | main, test (USDC only) | Individual KYC plus Bridge's terms of service |
 | **Keeta EVM anchor** | asset movement | Keeta's own bridge with Base for KTA, USDC, EURC and cbBTC, with no bridge fee | main (Base), test (Base Sepolia) | None |
 | **LayerZero** (Virtual Transfer anchor) | asset movement | Bridges and swaps about 50 tokens across 10 EVM chains, with Solana as a destination. It never touches Keeta, so routes chain it with the Keeta EVM anchor through Base. | main | None |

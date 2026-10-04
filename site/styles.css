@@ -550,37 +550,49 @@ h1 em {
 }
 
 .rail {
+  display: flex;
+  flex-direction: column;
   min-width: 0;
+  margin: 0;
   padding-top: 20px;
   border-top: 1px solid var(--line);
 }
 
-.rail span {
-  display: block;
-  margin-bottom: 40px;
-  color: var(--accent);
-  font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: 500;
-}
-
-.rail strong,
-.rail small {
-  display: block;
-}
-
-.rail strong {
+.rail dt {
   margin-bottom: 8px;
   font-size: 16px;
   font-weight: 500;
   line-height: 24px;
 }
 
-.rail small {
+.rail dd {
+  margin: 0;
+}
+
+/* The figure reads after its label but shows above it. */
+.rail .rail-figure {
+  order: -1;
+  margin-bottom: 12px;
+  font-family: var(--font-mono);
+  font-size: 36px;
+  font-weight: 500;
+  line-height: 40px;
+  letter-spacing: -0.04em;
+}
+
+.rail-detail {
   color: var(--text-secondary);
   font-family: var(--font-mono);
   font-size: 11px;
   line-height: 16px;
+}
+
+.wedge > .reach-note {
+  grid-column: 1 / -1;
+  margin: -20px 0 0;
+  color: var(--text-tertiary);
+  font-size: 12px;
+  line-height: 18px;
 }
 
 /* Catalog */
@@ -1130,8 +1142,8 @@ h1 em {
     grid-column: 1;
   }
 
-  .rail span {
-    margin-bottom: 22px;
+  .wedge > .reach-note {
+    margin-top: 0;
   }
 
   .catalog,
