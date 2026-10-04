@@ -14,7 +14,7 @@ Treat a copied endpoint, an old example or the static HTTP mirror as a hint only
 
 | Service type | Providers you may find | Skill |
 | --- | --- | --- |
-| `assetMovement` | Bivo: named US bank accounts, payouts in about 50 countries, Visa Direct card rails. Bridge.xyz: USD and EUR bank transfers, other EVM chains. Keeta EVM anchor: Base. LayerZero: external chains, main network only. | [receive-bank-deposits](../receive-bank-deposits/SKILL.md), [pay-out](../pay-out/SKILL.md), [card-payments](../card-payments/SKILL.md), [bridge-crypto](../bridge-crypto/SKILL.md) |
+| `assetMovement` | Bivo: named US bank accounts, payouts in more than 60 countries, Visa Direct card rails. Bridge.xyz: USD and EUR bank transfers, other EVM chains. Keeta EVM anchor: Base. LayerZero: external chains, main network only. | [receive-bank-deposits](../receive-bank-deposits/SKILL.md), [pay-out](../pay-out/SKILL.md), [card-payments](../card-payments/SKILL.md), [bridge-crypto](../bridge-crypto/SKILL.md) |
 | `fx` | FX anchors with signed quotes, the stablecoin FX anchor (test network), price-estimate providers | [convert-via-anchors](../convert-via-anchors/SKILL.md) |
 | `kyc` | OneFootprint for individuals, Keeta's KYB provider for businesses (`entityType: 'business'`) | [complete-kyc](../complete-kyc/SKILL.md), [complete-kyb](../complete-kyb/SKILL.md) |
 | `username`, `storage`, `notification` | Keeta's own services | [anchors reference](../keeta/references/anchors.md) |

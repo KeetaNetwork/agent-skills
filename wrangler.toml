@@ -1,0 +1,6 @@
+# Cloudflare Pages configuration for keeta.ai (the "agent-skills" Pages project).
+# Pages reads this file from the repository and serves the build output in _site/.
+# The build command is set in the Pages dashboard: python3 .github/scripts/build-site.py
+name = "agent-skills"
+pages_build_output_dir = "./_site"
+compatibility_date = "2026-10-01"

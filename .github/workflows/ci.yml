@@ -19,17 +19,17 @@ jobs:
         run: python3 .github/scripts/build-site.py _site
       - name: Check hosted entry points
         run: |
-          test -s _site/index.html && test -s _site/styles.css && test -s _site/app.js
-          test -s _site/SKILL.md && test -s _site/skill.md && test -s _site/llms.txt
+          test -s _site/index.html && test -s _site/404.html && test -s _site/styles.css && test -s _site/app.js
+          test -s _site/assets/og-image.png && test -s _site/assets/fonts/Geist-Regular.woff2
+          test -s _site/SKILL.md && test -s _site/skill.md && test -s _site/llms.txt && test -s _site/llms-full.txt
+          test -s _site/skills/keeta/SKILL.md && test -s _site/skills/keeta/references/anchors.md
           test -s _site/.well-known/agent-skills/index.json
           test -s _site/.well-known/skills/index.json
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - name: Check the Cloudflare deploy config
-        env:
-          WRANGLER_SEND_METRICS: "false"
-        run: npx --yes wrangler@4.147.0 deploy --dry-run
+      - name: Check the Pages output directory matches the build
+        run: grep -qx 'pages_build_output_dir = "./_site"' wrangler.toml
       - name: Install every skill from the built site with the skills CLI
         env:
           DISABLE_TELEMETRY: "1"

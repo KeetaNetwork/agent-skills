@@ -1,5 +1,5 @@
 # Cloudflare response headers for keeta.ai. This file configures the server and is not published.
-# Skills, indexes and llms.txt allow any origin, so browser-based agents can fetch them.
+# Skills, indexes and the llms files allow any origin, so browser-based agents can fetch them.
 
 /*
   X-Content-Type-Options: nosniff
@@ -14,5 +14,14 @@
 /llms.txt
   Access-Control-Allow-Origin: *
 
+/llms-full.txt
+  Access-Control-Allow-Origin: *
+
+/skills/*
+  Access-Control-Allow-Origin: *
+
 /.well-known/*
   Access-Control-Allow-Origin: *
+
+/assets/fonts/*
+  Cache-Control: public, max-age=31536000, immutable
