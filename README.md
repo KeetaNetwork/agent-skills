@@ -57,16 +57,22 @@ Don't use `npx skills add https://keeta.ai/SKILL.md`. Once the site publishes a 
 
 keeta.ai is served by Cloudflare as an assets-only Worker (`wrangler.jsonc`). `.github/scripts/build-site.py` assembles `_site/` from `site/` and `plugins/keeta/skills/`, and `.github/workflows/deploy.yml` deploys it on every push to `main` that touches the site, the skills or the build scripts.
 
+Any host must run the build and serve `_site/`, because `site/` alone has no skill files. For Cloudflare Pages:
+- **Build command:** `python3 .github/scripts/build-site.py`
+- **Build output directory:** `_site`
+
 | Path | Content |
 | --- | --- |
 | `/` | the catalog page |
 | `/SKILL.md` and `/skill.md` | the `keeta` skill, with links rewritten to absolute URLs |
+| `/skills/<name>/SKILL.md` | every skill and its reference files at a short URL; the catalog links here |
 | `/llms.txt` | a plain index for LLMs |
+| `/llms-full.txt` | every `SKILL.md` in one file, with links rewritten to absolute URLs |
 | `/.well-known/agent-skills/index.json` | skill discovery index v0.2.0, used by `npx skills add https://keeta.ai` |
 | `/.well-known/skills/index.json` | legacy discovery index, for older CLI versions |
 | `/.well-known/agent-skills/<name>/…` | every skill's files |
 
-- **Response headers.** `site/_headers` lets any origin fetch the skills, `llms.txt` and the indexes, so browser-based agents can read them. Cloudflare applies the file and doesn't publish it.
+- **Response headers.** `site/_headers` lets any origin fetch the skills, the llms files and the indexes, so browser-based agents can read them. Cloudflare applies the file and doesn't publish it.
 - **Generated, never committed.** A `SKILL.md` outside `plugins/keeta/skills/<name>/` would hide the pack from `npx skills add KeetaNetwork/agent-skills`, so the validator rejects one.
 
 **One-time setup:**

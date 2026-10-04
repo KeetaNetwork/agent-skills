@@ -719,6 +719,26 @@ h1 em {
   transition: transform 160ms ease;
 }
 
+.catalog-source {
+  margin: 20px 0 0;
+  color: var(--text-secondary);
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.catalog-source a {
+  border-radius: 4px;
+  text-decoration: underline;
+  text-decoration-color: var(--line-strong);
+  text-underline-offset: 4px;
+  transition: color 160ms ease, text-decoration-color 160ms ease;
+}
+
+.catalog-source a:hover {
+  color: var(--text-primary);
+  text-decoration-color: var(--accent);
+}
+
 /* Partners */
 
 .partners {

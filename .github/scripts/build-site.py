@@ -8,7 +8,9 @@ Output layout:
     assets/                                       wordmark, app icon, preview image, Geist fonts (SIL OFL)
     _headers                                      Cloudflare response headers (CORS for agents); not served
     SKILL.md, skill.md                            the main `keeta` skill, links made absolute
+    skills/<name>/...                             every skill directory at a short URL, the primary link
     llms.txt                                      plain index for LLMs and web agents
+    llms-full.txt                                 every SKILL.md in one file, links made absolute
     .well-known/agent-skills/index.json           discovery index v0.2.0 (type/url/digest)
     .well-known/agent-skills/<name>/...           every skill directory
     .well-known/agent-skills/<name>.zip           multi-file skills, SKILL.md at the zip root
@@ -25,6 +27,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import posixpath
 import re
 import shutil
 import sys
@@ -36,6 +39,8 @@ SKILLS_ROOT = ROOT / "plugins" / "keeta" / "skills"
 SITE_SOURCE = ROOT / "site"
 SITE_URL = "https://keeta.ai"
 MAIN_SKILL = "keeta"
+SKILLS_PATH = "skills"
+GITHUB_URL = "https://github.com/KeetaNetwork/agent-skills"
 WELL_KNOWN = ".well-known/agent-skills"
 LEGACY_WELL_KNOWN = ".well-known/skills"
 SCHEMA_V2 = "https://schemas.agentskills.io/discovery/0.2.0/schema.json"
@@ -85,19 +90,17 @@ def deterministic_zip(skill_dir: Path, files: list[str]) -> bytes:
     return buffer.getvalue()
 
 
-def absolutize_links(markdown: str) -> str:
-    """Rewrite the main skill's relative links so they work from https://keeta.ai/SKILL.md."""
-    base = f"{SITE_URL}/{WELL_KNOWN}"
+def absolutize_links(markdown: str, skill: str) -> str:
+    """Point a skill's relative links at https://keeta.ai/skills/, so the text works from any URL."""
 
     def rewrite(match: re.Match[str]) -> str:
         target = match.group(2)
         if re.match(r"^[a-z]+:", target) or target.startswith("#"):
             return match.group(0)
-        if target.startswith("../"):
-            url = f"{base}/{target[3:]}"
-        else:
-            url = f"{base}/{MAIN_SKILL}/{target}"
-        return f"{match.group(1)}{url}{match.group(3)}"
+        path = posixpath.normpath(posixpath.join(skill, target))
+        if path.startswith(".."):
+            raise SystemExit(f"{skill}/SKILL.md: link {target!r} leaves the skills directory")
+        return f"{match.group(1)}{SITE_URL}/{SKILLS_PATH}/{path}{match.group(3)}"
 
     return LINK_PATTERN.sub(rewrite, markdown)
 
@@ -121,7 +124,7 @@ def build(out: Path) -> None:
             raise SystemExit(f"{skill_dir}: description must be 1-1024 characters")
 
         files = skill_files(skill_dir)
-        for well_known in (WELL_KNOWN, LEGACY_WELL_KNOWN):
+        for well_known in (SKILLS_PATH, WELL_KNOWN, LEGACY_WELL_KNOWN):
             for rel in files:
                 target = out / well_known / name / rel
                 target.parent.mkdir(parents=True, exist_ok=True)
@@ -160,9 +163,22 @@ def build(out: Path) -> None:
     )
 
     main_text = (SKILLS_ROOT / MAIN_SKILL / "SKILL.md").read_text(encoding="utf-8")
-    hosted = absolutize_links(main_text)
+    hosted = absolutize_links(main_text, MAIN_SKILL)
     for filename in ("SKILL.md", "skill.md"):
         (out / filename).write_text(hosted, encoding="utf-8")
+
+    ordered = sorted(catalog, key=lambda item: (item[0] != MAIN_SKILL, item[0]))
+    full = [
+        "# Keeta agent skills",
+        "",
+        f"Every Keeta agent skill in one file. Each one is also served on its own at {SITE_URL}/{SKILLS_PATH}/<name>/SKILL.md.",
+        f"Source: {GITHUB_URL}",
+    ]
+    for name, _ in ordered:
+        text = (SKILLS_ROOT / name / "SKILL.md").read_text(encoding="utf-8")
+        url = f"{SITE_URL}/{SKILLS_PATH}/{name}/SKILL.md"
+        full += ["", f'<skill name="{name}" url="{url}">', absolutize_links(text, name).rstrip("\n"), "</skill>"]
+    (out / "llms-full.txt").write_text("\n".join(full) + "\n", encoding="utf-8")
 
     lines = [
         "# Keeta",
@@ -180,13 +196,18 @@ def build(out: Path) -> None:
         "## Skills",
         "",
     ]
-    for name, description in sorted(catalog, key=lambda item: item[0] != MAIN_SKILL):
-        lines.append(f"- [{name}]({SITE_URL}/{WELL_KNOWN}/{name}/SKILL.md): {description}")
+    for name, description in ordered:
+        lines.append(f"- [{name}]({SITE_URL}/{SKILLS_PATH}/{name}/SKILL.md): {description}")
     lines += [
         "",
         "## Machine-readable",
         "",
+        f"- [Every skill in one file]({SITE_URL}/llms-full.txt)",
         f"- [Skill discovery index]({SITE_URL}/{WELL_KNOWN}/index.json)",
+        "",
+        "## Optional",
+        "",
+        f"- [Source on GitHub]({GITHUB_URL})",
         "",
     ]
     (out / "llms.txt").write_text("\n".join(lines), encoding="utf-8")
