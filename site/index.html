@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta
       name="description"
-      content="Agent skills that make Keeta the first choice for moving money: wallets, payments, named bank accounts, payouts in about 50 countries, Visa Direct card payouts, bridges, FX, identity, and x402."
+      content="Agent skills for moving money on Keeta: wallets, payments, named bank accounts, payouts in about 50 countries, Visa Direct card payouts, bridges, FX, identity, and x402."
     />
     <meta name="theme-color" content="#ffffff" />
     <meta name="color-scheme" content="light" />
@@ -68,10 +68,9 @@
         <p class="eyebrow"><span aria-hidden="true"></span>Open agent skill pack</p>
         <h1>Give agents a<br /><em>multi-currency wallet.</em></h1>
         <p class="hero-copy">
-          Verified Keeta playbooks that let agents pay anyone, get paid by
-          bank transfer, pay out to banks in about 50 countries and to debit
-          cards, bridge across chains, convert currencies, and pay per API
-          call—built for review before execution.
+          With these skills, agents can pay anyone, get paid by bank transfer,
+          pay out to banks in about 50 countries and to debit cards, bridge
+          across chains, convert currencies, and pay per API call.
         </p>
 
         <div class="install" id="install">
@@ -106,9 +105,9 @@
         </div>
 
         <dl class="hero-meta">
-          <div><dt>verified skills</dt><dd>14</dd></div>
+          <div><dt>skills</dt><dd>14</dd></div>
           <div><dt>payout countries</dt><dd>~50</dd></div>
-          <div><dt>invented APIs</dt><dd>0</dd></div>
+          <div><dt>settlement</dt><dd>400<span class="unit">ms</span></dd></div>
         </dl>
       </section>
 
@@ -147,9 +146,9 @@
             <h2>From empty wallet to external settlement.</h2>
           </div>
           <p>
-            Load only the skill the task needs. Every playbook includes
-            confirmations, failure stops, related workflows, and primary
-            sources.
+            Agents start with the Keeta skill, then load the skill each task
+            needs. Before money moves or identity is shared, the agent asks
+            the user to confirm.
           </p>
         </div>
 
@@ -179,7 +178,7 @@
           <a class="skill-card" data-category="wallet" href="https://github.com/KeetaNetwork/agent-skills/blob/main/plugins/keeta/skills/multi-asset-balances/SKILL.md">
             <div class="card-top"><span class="number">02</span><span class="tag">Wallet</span></div>
             <h3>Multi-asset balances</h3>
-            <p>Read every balance—dollars, euros, stablecoins, KTA—with on-chain decimals and verified identity.</p>
+            <p>Read every balance—dollars, euros, stablecoins, KTA—with on-chain decimals, and flag look-alike tokens.</p>
             <span class="card-link">Read skill <span aria-hidden="true">↗</span></span>
           </a>
           <a class="skill-card" data-category="wallet" href="https://github.com/KeetaNetwork/agent-skills/blob/main/plugins/keeta/skills/send-receive-tokens/SKILL.md">
@@ -257,24 +256,48 @@
         </div>
       </section>
 
-      <section class="principles">
-        <p class="section-kicker">Built for trust</p>
-        <h2>Agents prepare.<br />Humans approve.</h2>
-        <div class="principle-grid">
+      <section class="partners" id="partners">
+        <div class="section-heading">
+          <div>
+            <p class="section-kicker">Partners</p>
+            <h2>The partners behind every rail.</h2>
+          </div>
+          <p>
+            Agents find each provider through on-chain discovery, so there are
+            no partner API keys to manage. Availability depends on the user’s
+            country and account.
+          </p>
+        </div>
+        <div class="partner-grid">
           <article>
-            <span>01</span>
-            <h3>Verified, public APIs</h3>
-            <p>Every code block typechecks against the published Keeta SDKs and links to public docs or source.</p>
+            <span>Banks</span>
+            <h3>Bivo</h3>
+            <p>A US bank account in the user’s own name, wire and SWIFT deposits, and bank payouts in about 50 countries.</p>
           </article>
           <article>
-            <span>02</span>
-            <h3>Unknown means stop</h3>
-            <p>Missing partner contracts and unavailable corridors stay visible as explicit gaps.</p>
+            <span>Cards</span>
+            <h3>Visa Direct</h3>
+            <p>Pay out to, or top up from, the user’s own debit card through Bivo, where the app offers secure card entry.</p>
           </article>
           <article>
-            <span>03</span>
-            <h3>Confirmation first</h3>
-            <p>Identity disclosure, quotes, recipients, and money movement return to a human.</p>
+            <span>Banks &amp; chains</span>
+            <h3>Bridge.xyz</h3>
+            <p>USDC to and from US bank accounts, EURC to SEPA, and USDC on Ethereum, Arbitrum, Avalanche, and Polygon.</p>
+          </article>
+          <article>
+            <span>Chains</span>
+            <h3>Keeta Base bridge</h3>
+            <p>KTA, USDC, EURC, and cbBTC between Keeta and Base, one to one, with no KYC.</p>
+          </article>
+          <article>
+            <span>Chains</span>
+            <h3>LayerZero</h3>
+            <p>About 50 tokens on 10 EVM chains, plus withdrawals to Solana, routed to Keeta through Base.</p>
+          </article>
+          <article>
+            <span>Identity</span>
+            <h3>OneFootprint</h3>
+            <p>Verifies a person once. Providers accept the resulting Keeta certificate, and each sees only what it asks for.</p>
           </article>
         </div>
       </section>

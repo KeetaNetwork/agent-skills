@@ -4,7 +4,10 @@
  * pages with #f8f8f8 washes, #dddddd hairlines, coral for accents and calls to action,
  * blue as the secondary accent. Charcoal is a text colour only, never a surface.
  * keeta.com sets headings in Surt Expanded, which is not publicly licensed, so type
- * uses Geist and Geist Mono, as Keeta's apps do.
+ * uses Geist and Geist Mono, as Keeta's apps do. Sizes and line heights follow the
+ * type scale in Keeta's Figma Foundation library, which web-ui v2 also uses
+ * (text-6xl 56/64 down to text-sm 14/20). Overlines follow web-ui v2: Geist Mono,
+ * medium, uppercase, 0.05em tracking.
  */
 
 @font-face {
@@ -282,7 +285,7 @@ img {
 .hero,
 .wedge,
 .catalog,
-.principles,
+.partners,
 .final-cta,
 .site-footer {
   padding-right: var(--gutter);
@@ -332,7 +335,7 @@ img {
   font-size: 11px;
   font-weight: 500;
   line-height: 16px;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
 }
 
@@ -357,8 +360,8 @@ h1 {
   max-width: 820px;
   margin-bottom: 24px;
   color: var(--text-tertiary);
-  font-size: clamp(44px, 5.2vw, 72px);
-  line-height: 1.04;
+  font-size: 56px;
+  line-height: 64px;
   letter-spacing: -0.03em;
 }
 
@@ -373,8 +376,8 @@ h1 em {
   max-width: 520px;
   margin-bottom: 44px;
   color: var(--text-secondary);
-  font-size: 17px;
-  line-height: 1.6;
+  font-size: 18px;
+  line-height: 28px;
 }
 
 /* Install box and command rows */
@@ -400,7 +403,7 @@ h1 em {
   font-size: 10px;
   font-weight: 500;
   line-height: 16px;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
 }
 
@@ -491,16 +494,25 @@ h1 em {
 .hero-meta dd {
   margin: 0;
   font-family: var(--font-mono);
-  font-size: 30px;
+  font-size: 36px;
   font-weight: 500;
   line-height: 40px;
   letter-spacing: -0.04em;
+}
+
+.hero-meta .unit {
+  margin-left: 4px;
+  color: var(--text-secondary);
+  font-size: 16px;
+  line-height: 1;
+  letter-spacing: 0;
 }
 
 .hero-meta dt {
   margin-top: 4px;
   color: var(--text-tertiary);
   font-size: 13px;
+  line-height: 20px;
 }
 
 /* Why Keeta */
@@ -522,19 +534,19 @@ h1 em {
 
 .wedge h2,
 .catalog h2,
-.principles h2,
+.partners h2,
 .final-cta h2 {
   margin: 0;
-  font-size: clamp(32px, 3.6vw, 48px);
-  line-height: 1.1;
+  font-size: 40px;
+  line-height: 48px;
 }
 
 .wedge > p {
   align-self: end;
   margin: 0 0 4px;
   color: var(--text-secondary);
-  font-size: 15px;
-  line-height: 1.65;
+  font-size: 16px;
+  line-height: 24px;
 }
 
 .rail {
@@ -559,15 +571,16 @@ h1 em {
 
 .rail strong {
   margin-bottom: 8px;
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 500;
+  line-height: 24px;
 }
 
 .rail small {
   color: var(--text-secondary);
   font-family: var(--font-mono);
   font-size: 11px;
-  line-height: 1.55;
+  line-height: 16px;
 }
 
 /* Catalog */
@@ -588,8 +601,8 @@ h1 em {
 .section-heading > p {
   margin-bottom: 4px;
   color: var(--text-secondary);
-  font-size: 15px;
-  line-height: 1.65;
+  font-size: 16px;
+  line-height: 24px;
 }
 
 .filters {
@@ -693,7 +706,7 @@ h1 em {
   font-size: 9px;
   font-weight: 500;
   line-height: 14px;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
 }
 
@@ -707,7 +720,7 @@ h1 em {
   margin-bottom: 28px;
   color: var(--text-secondary);
   font-size: 13px;
-  line-height: 1.62;
+  line-height: 20px;
 }
 
 .card-link {
@@ -721,7 +734,8 @@ h1 em {
   font-family: var(--font-mono);
   font-size: 10px;
   font-weight: 500;
-  letter-spacing: 0.1em;
+  line-height: 16px;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
 }
 
@@ -732,9 +746,9 @@ h1 em {
   transition: transform 160ms ease;
 }
 
-/* Principles */
+/* Partners */
 
-.principles {
+.partners {
   padding-top: 104px;
   padding-bottom: 104px;
   border-top: 1px solid var(--line);
@@ -742,35 +756,51 @@ h1 em {
   background: var(--surface-wash);
 }
 
-.principle-grid {
+.partner-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 40px;
-  margin-top: 68px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 48px 40px;
+  margin-top: 64px;
 }
 
-.principle-grid article {
+.partner-grid article {
   padding-top: 20px;
   border-top: 1px solid var(--line);
 }
 
-.principle-grid article > span {
-  color: var(--accent);
+.partner-grid article > span {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-secondary);
   font-family: var(--font-mono);
   font-size: 11px;
   font-weight: 500;
+  line-height: 16px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
 }
 
-.principle-grid h3 {
-  margin: 36px 0 10px;
-  font-size: 18px;
+.partner-grid article > span::before {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  content: "";
 }
 
-.principle-grid p {
+.partner-grid h3 {
+  margin: 32px 0 8px;
+  font-size: 20px;
+  line-height: 28px;
+}
+
+.partner-grid p {
+  max-width: 360px;
   margin: 0;
   color: var(--text-secondary);
-  font-size: 13px;
-  line-height: 1.62;
+  font-size: 14px;
+  line-height: 24px;
 }
 
 /* Final call to action */
@@ -833,7 +863,7 @@ h1 em {
 .footer-intro p {
   max-width: 280px;
   margin: 16px 0 0;
-  line-height: 1.6;
+  line-height: 20px;
 }
 
 .footer-brand .wordmark {
@@ -859,7 +889,8 @@ h1 em {
   font-family: var(--font-mono);
   font-size: 10px;
   font-weight: 500;
-  letter-spacing: 0.1em;
+  line-height: 16px;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
 }
 
@@ -891,6 +922,7 @@ h1 em {
 
 .not-found h1 {
   margin-bottom: 20px;
+  color: var(--text-primary);
 }
 
 .not-found .final-links {
@@ -912,8 +944,14 @@ h1 em {
     --arc-width: clamp(300px, 40vw, 380px);
   }
 
-  .skill-grid {
-    grid-template-columns: repeat(2, 1fr);
+  h1 {
+    font-size: 48px;
+    line-height: 56px;
+  }
+
+  .skill-grid,
+  .partner-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .section-heading {
@@ -945,7 +983,7 @@ h1 em {
     border-bottom: 1px solid var(--line);
     background: var(--surface);
     box-shadow: var(--shadow-card);
-    font-size: 15px;
+    font-size: 16px;
   }
 
   .nav.is-open nav {
@@ -993,8 +1031,22 @@ h1 em {
     max-width: none;
   }
 
+  h1 {
+    font-size: 40px;
+    line-height: 48px;
+  }
+
+  .wedge h2,
+  .catalog h2,
+  .partners h2,
+  .final-cta h2 {
+    font-size: 32px;
+    line-height: 36px;
+  }
+
   .hero-copy {
     font-size: 16px;
+    line-height: 24px;
   }
 
   .install {
@@ -1044,12 +1096,17 @@ h1 em {
   }
 
   .hero-meta dd {
-    font-size: 26px;
-    line-height: 34px;
+    font-size: 32px;
+    line-height: 36px;
+  }
+
+  .hero-meta .unit {
+    font-size: 14px;
   }
 
   .hero-meta dt {
     font-size: 12px;
+    line-height: 18px;
   }
 
   .wedge {
@@ -1070,13 +1127,13 @@ h1 em {
   }
 
   .catalog,
-  .principles {
+  .partners {
     padding-top: 72px;
     padding-bottom: 72px;
   }
 
   .skill-grid,
-  .principle-grid {
+  .partner-grid {
     grid-template-columns: 1fr;
   }
 
@@ -1084,13 +1141,13 @@ h1 em {
     min-height: 240px;
   }
 
-  .principle-grid {
+  .partner-grid {
     gap: 28px;
     margin-top: 44px;
   }
 
-  .principle-grid h3 {
-    margin-top: 24px;
+  .partner-grid h3 {
+    margin-top: 20px;
   }
 
   .final-cta {
