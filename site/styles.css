@@ -63,10 +63,6 @@
   --accent: #ff886d;
   --accent-hover: #ff7557;
   --focus: #3f62b9;
-  --blue: #7091df;
-  --light-blue: #cae0e3;
-  --arc-wash: #f5f5f5;
-  --arc-peach: #fbbeb0;
   --radius-md: 8px;
   --radius-lg: 12px;
   --radius-full: 9999px;
@@ -292,39 +288,10 @@ img {
   padding-left: var(--gutter);
 }
 
-.hero,
-.not-found {
-  --arc-width: clamp(340px, 42vw, 600px);
-}
-
 .hero {
-  position: relative;
-  overflow-x: clip;
   padding-top: 112px;
   padding-bottom: 104px;
   background: var(--surface);
-}
-
-.hero-arc {
-  position: absolute;
-  right: var(--gutter);
-  bottom: 0;
-  z-index: 0;
-  width: var(--arc-width);
-  height: calc(var(--arc-width) / 2);
-  border-radius: 999px 999px 0 0;
-  background: conic-gradient(
-    from 270deg at 50% 100%,
-    var(--blue) 0deg,
-    var(--light-blue) 63deg,
-    var(--arc-wash) 90deg,
-    var(--arc-peach) 117deg,
-    var(--accent) 180deg,
-    transparent 180deg
-  );
-  -webkit-mask: radial-gradient(farthest-side at 50% 100%, transparent 0 85.8%, #000 86.3% 100%);
-  mask: radial-gradient(farthest-side at 50% 100%, transparent 0 85.8%, #000 86.3% 100%);
-  pointer-events: none;
 }
 
 .eyebrow,
@@ -340,8 +307,6 @@ img {
 }
 
 .eyebrow {
-  position: relative;
-  z-index: 1;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -355,8 +320,6 @@ img {
 }
 
 h1 {
-  position: relative;
-  z-index: 1;
   max-width: 820px;
   margin-bottom: 24px;
   color: var(--text-tertiary);
@@ -371,8 +334,6 @@ h1 em {
 }
 
 .hero-copy {
-  position: relative;
-  z-index: 1;
   max-width: 520px;
   margin-bottom: 44px;
   color: var(--text-secondary);
@@ -383,8 +344,6 @@ h1 em {
 /* Install box and command rows */
 
 .install {
-  position: relative;
-  z-index: 1;
   max-width: 700px;
   padding: 12px;
   border: 1px solid var(--line);
@@ -475,8 +434,6 @@ h1 em {
 }
 
 .hero-meta {
-  position: relative;
-  z-index: 1;
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 190px));
   max-width: 570px;
@@ -926,10 +883,8 @@ h1 em {
 /* Not found page */
 
 .not-found {
-  position: relative;
   min-height: calc(100vh - var(--nav-height) - 240px);
   padding: 120px var(--gutter);
-  overflow-x: clip;
 }
 
 .not-found h1 {
@@ -944,26 +899,7 @@ h1 em {
 
 /* Breakpoints follow the design system: xl 1280px, lg 1024px, md 768px, xs 480px. */
 
-@media (max-width: 1279px) {
-  /* Below 1280px the arc sits under the content: reserve its height and center it. */
-  .hero,
-  .not-found {
-    padding-bottom: calc(var(--arc-width) / 2 + 40px);
-  }
-
-  .hero-arc {
-    right: 0;
-    left: 0;
-    margin: 0 auto;
-  }
-}
-
 @media (max-width: 1023px) {
-  .hero,
-  .not-found {
-    --arc-width: clamp(300px, 40vw, 380px);
-  }
-
   h1 {
     font-size: 48px;
     line-height: 56px;
@@ -1034,17 +970,9 @@ h1 em {
     display: none;
   }
 
-  .hero,
-  .not-found {
-    --arc-width: min(300px, 76vw);
-  }
-
   .hero {
     padding-top: 64px;
-  }
-
-  .hero-arc {
-    opacity: 0.8;
+    padding-bottom: 72px;
   }
 
   .hero-meta {
@@ -1186,6 +1114,7 @@ h1 em {
 
   .not-found {
     padding-top: 72px;
+    padding-bottom: 72px;
   }
 }
 
