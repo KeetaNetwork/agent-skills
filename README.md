@@ -95,7 +95,8 @@ npx skills add http://localhost:8787 --list
 | `plugins/keeta/skills/` | the skills ([Agent Skills specification](https://agentskills.io/specification)) |
 | `plugins/keeta/.claude-plugin/plugin.json` | the Claude Code plugin manifest |
 | `.claude-plugin/marketplace.json` | the marketplace that lists the plugin |
-| `site/` | the static catalog, plus `_headers` for Cloudflare |
+| `site/` | the static catalog and 404 page, plus `_headers` for Cloudflare |
+| `site/assets/` | the official Keeta wordmark and app icon, the link-preview image, and self-hosted Geist fonts (SIL Open Font License, in `fonts/OFL.txt`) |
 | `wrangler.jsonc` | the Cloudflare Worker that serves keeta.ai |
 
 ## License

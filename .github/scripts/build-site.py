@@ -4,7 +4,8 @@
 Usage: python3 .github/scripts/build-site.py [OUT_DIR]   (default: _site)
 
 Output layout:
-    index.html, styles.css, app.js, assets/       copied from site/
+    index.html, 404.html, styles.css, app.js     copied from site/
+    assets/                                       wordmark, app icon, preview image, Geist fonts (SIL OFL)
     _headers                                      Cloudflare response headers (CORS for agents); not served
     SKILL.md, skill.md                            the main `keeta` skill, links made absolute
     llms.txt                                      plain index for LLMs and web agents

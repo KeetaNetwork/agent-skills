@@ -19,7 +19,8 @@ jobs:
         run: python3 .github/scripts/build-site.py _site
       - name: Check hosted entry points
         run: |
-          test -s _site/index.html && test -s _site/styles.css && test -s _site/app.js
+          test -s _site/index.html && test -s _site/404.html && test -s _site/styles.css && test -s _site/app.js
+          test -s _site/assets/og-image.png && test -s _site/assets/fonts/Geist-Regular.woff2
           test -s _site/SKILL.md && test -s _site/skill.md && test -s _site/llms.txt
           test -s _site/.well-known/agent-skills/index.json
           test -s _site/.well-known/skills/index.json

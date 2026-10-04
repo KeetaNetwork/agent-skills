@@ -6,7 +6,7 @@
   "assets": {
     "directory": "./_site",
     "html_handling": "auto-trailing-slash",
-    "not_found_handling": "none"
+    "not_found_handling": "404-page"
   },
   // Attaches keeta.ai to this Worker on deploy. The keeta.ai zone must be in the same
   // Cloudflare account. In CI, Wrangler replaces any existing keeta.ai DNS record or
