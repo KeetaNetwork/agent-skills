@@ -71,7 +71,8 @@ if (header && menuToggle) {
     setMenu(!header.classList.contains("is-open"));
   });
 
-  for (const link of header.querySelectorAll("nav a")) {
+  // Every header link closes the menu, including the brand and the CTA outside the nav.
+  for (const link of header.querySelectorAll("a")) {
     link.addEventListener("click", () => setMenu(false));
   }
 
