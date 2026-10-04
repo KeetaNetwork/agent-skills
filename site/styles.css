@@ -544,6 +544,10 @@ h1 em {
   line-height: 16px;
 }
 
+.rail-detail + .rail-detail {
+  margin-top: 4px;
+}
+
 .wedge > .reach-note {
   grid-column: 1 / -1;
   margin: -20px 0 0;
