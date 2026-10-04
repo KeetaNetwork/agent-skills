@@ -933,8 +933,16 @@ h1 em {
 /* Breakpoints follow the design system: xl 1280px, lg 1024px, md 768px, xs 480px. */
 
 @media (max-width: 1279px) {
-  .hero {
+  /* Below 1280px the arc sits under the content: reserve its height and center it. */
+  .hero,
+  .not-found {
     padding-bottom: calc(var(--arc-width) / 2 + 40px);
+  }
+
+  .hero-arc {
+    right: 0;
+    left: 0;
+    margin: 0 auto;
   }
 }
 
@@ -1166,7 +1174,6 @@ h1 em {
 
   .not-found {
     padding-top: 72px;
-    padding-bottom: 72px;
   }
 }
 
