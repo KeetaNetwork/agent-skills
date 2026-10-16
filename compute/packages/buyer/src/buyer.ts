@@ -74,6 +74,7 @@ export interface BuyerDeps {
 	queue: SerialQueue;
 	verify: Verifier;
 	log: Log;
+	/** Records a job's latest state in the store's jobs, before it returns: follow-ups read them to count each job's spend once. */
 	onJob: (job: JobSummary) => void;
 	fetchImpl?: typeof fetch;
 	/** Counts a prompt exactly with its model's pinned tokenizer; without it (or a pin), prompts are priced by their size. */
@@ -475,6 +476,11 @@ export class Buyer {
 	 */
 	private record(ticket: SignedTicket, receipt: SignedReceipt, delivery: Delivery, summary: JobSummary): void {
 		const r = receipt.receipt;
+		const settled = this.recorded(ticket.ticket.jobId)?.status;
+		if (settled === 'paid' || settled === 'failed') {
+			/* A follow-up read how the job settled while this receipt was on its way, and counted what was billed then. */
+			return;
+		}
 		const invalid = this.checkReceipt(ticket, receipt, null);
 		if (invalid) {
 			this.deps.log('warn', `job ${ticket.ticket.jobId}: ${invalid}; the control plane refunds the escrow`);
@@ -517,6 +523,11 @@ export class Buyer {
 		return null;
 	}
 
+	/** A job as this node last recorded it (onJob keeps the store's jobs). */
+	private recorded(jobId: string): JobSummary | undefined {
+		return this.deps.store.state.jobs.find((j) => j.jobId === jobId && j.role === 'buyer');
+	}
+
 	/** Give back a quote or ticket this buyer will not use. Best effort: unused tickets also lapse on their own. */
 	private async cancel(jobId: string): Promise<void> {
 		await this.deps.control.post(this.deps.spend, `/v1/jobs/${jobId}/cancel`, {}).catch(() => undefined);
@@ -527,7 +538,8 @@ export class Buyer {
 	 * escrows the control plane has not confirmed (a ticket issued for one now
 	 * is handed back, so it is refunded), and update recent jobs from how
 	 * they settled. Overlapping calls (the wallet timer, a hang-up, the app)
-	 * share one run, so a job's outcome is counted once.
+	 * share one run, and a job's spend is counted either here or when its
+	 * request records the receipt, whichever comes first, never both.
 	 */
 	followUp(): Promise<{ reported: number; settled: number }> {
 		if (!this.following) {
@@ -571,9 +583,11 @@ export class Buyer {
 			return { reported, settled: 0 };
 		}
 		let settled = 0;
-		for (const summary of open) {
-			const job = jobs.find((j) => j.jobId === summary.jobId);
-			if (!job?.settlement?.blockHash) {
+		for (const { jobId } of open) {
+			const job = jobs.find((j) => j.jobId === jobId);
+			/* Read the job again: its request may have recorded the receipt, and counted it, while the jobs were being fetched. */
+			const summary = this.recorded(jobId);
+			if (!job?.settlement?.blockHash || (summary?.status !== 'running' && summary?.status !== 'completed')) {
 				continue;
 			}
 			settled++;
