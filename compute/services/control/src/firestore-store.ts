@@ -115,6 +115,12 @@ export class FirestoreStore implements Store {
 		return snap.docs.map((doc) => doc.data() as JobRecord);
 	}
 
+	async listScheduledByNode(nodeKey: string, ticketIssuedAfter: number) {
+		/* Unlimited: tickets are issued only into free slots, so a node has at most its capacity of these. */
+		const snap = await this.jobs().where('nodeKey', '==', nodeKey).where('status', '==', 'scheduled').where('ticketIssuedAt', '>', ticketIssuedAfter).get();
+		return snap.docs.map((doc) => doc.data() as JobRecord);
+	}
+
 	async listJobsByStatus(status: JobStatus, createdBefore: number, limit: number) {
 		const snap = await this.jobs().where('status', '==', status).where('createdAt', '<', createdBefore).orderBy('createdAt', 'asc').limit(limit).get();
 		return snap.docs.map((doc) => doc.data() as JobRecord);

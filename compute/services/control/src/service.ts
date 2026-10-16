@@ -333,8 +333,8 @@ export class ControlService {
 		const reported = Number.isInteger(load?.active) ? Math.max(0, Number(load?.active)) : 0;
 		const capacity = Number.isInteger(load?.capacity) ? Math.min(64, Math.max(1, Number(load?.capacity))) : 1;
 		const now = this.now();
-		/* Count tickets for this node that have not started yet, so a heartbeat never frees their slots. */
-		const ticketed = (await this.store.listJobsByNode(nodeKey, 100)).filter((j) => holdsSlotAt(j, now)).length;
+		/* Count every ticket still holding one of this node's slots, however many newer jobs it has, so a heartbeat never frees them. */
+		const ticketed = (await this.store.listScheduledByNode(nodeKey, now - TICKET_TTL_MS)).filter((j) => holdsSlotAt(j, now)).length;
 		const active = Math.max(reported, ticketed);
 
 		const record = await this.store.updateProvider(nodeKey, (current) => {

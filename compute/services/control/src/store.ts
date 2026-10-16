@@ -36,6 +36,8 @@ export interface Store {
 	updateJob(jobId: string, update: (job: JobRecord) => JobRecord): Promise<JobRecord>;
 	listJobsByBuyer(buyer: string, limit: number): Promise<JobRecord[]>;
 	listJobsByNode(nodeKey: string, limit: number): Promise<JobRecord[]>;
+	/** A node's jobs still scheduled whose tickets were issued after `ticketIssuedAfter`: every ticket that can still hold one of its slots, uncapped. */
+	listScheduledByNode(nodeKey: string, ticketIssuedAfter: number): Promise<JobRecord[]>;
 	listJobsByStatus(status: JobStatus, createdBefore: number, limit: number): Promise<JobRecord[]>;
 	/** Escrowed jobs whose settlement is decided but not yet paid out (`payoutDue`). */
 	listPayoutsDue(limit: number): Promise<JobRecord[]>;
@@ -139,6 +141,10 @@ export class MemoryStore implements Store {
 
 	async listJobsByNode(nodeKey: string, limit: number) {
 		return [...this.jobs.values()].filter((j) => j.nodeKey === nodeKey).sort((a, b) => b.createdAt - a.createdAt).slice(0, limit).map(clone);
+	}
+
+	async listScheduledByNode(nodeKey: string, ticketIssuedAfter: number) {
+		return [...this.jobs.values()].filter((j) => j.nodeKey === nodeKey && j.status === 'scheduled' && (j.ticketIssuedAt ?? 0) > ticketIssuedAfter).map(clone);
 	}
 
 	async listJobsByStatus(status: JobStatus, createdBefore: number, limit: number) {

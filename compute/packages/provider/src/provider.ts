@@ -160,7 +160,8 @@ export class Provider {
 				return 'outside-schedule';
 			}
 		}
-		if (policy.schedule.mode === 'idle' && conditions.idleSeconds < (policy.schedule.idleMinutes ?? 10) * 60 && this.active.size === 0) {
+		/* The operator is back: stop taking jobs now, as the other schedules do. A running job still finishes (readyOffers keeps its model up). */
+		if (policy.schedule.mode === 'idle' && conditions.idleSeconds < (policy.schedule.idleMinutes ?? 10) * 60) {
 			return 'outside-schedule';
 		}
 		if (!this.deps.models.models.some((m) => m.offer.offered)) {
@@ -192,7 +193,10 @@ export class Provider {
 					continue;
 				}
 				if (!serve) {
-					this.deps.runtime.stop(model.modelId);
+					/* A model server stays up while jobs run, and stops at the first heartbeat after they finish. */
+					if (this.active.size === 0) {
+						this.deps.runtime.stop(model.modelId);
+					}
 					continue;
 				}
 				try {

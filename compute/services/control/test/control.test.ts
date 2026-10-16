@@ -834,6 +834,26 @@ test('a heartbeat keeps ticketed slots held, and a buyer hand-back or provider f
 	assert.equal((await job()).status, 200, 'a job the provider rejected frees its slot');
 });
 
+test('a heartbeat counts every ticket holding a slot, however many newer jobs the provider has', async () => {
+	const h = harness();
+	const { node } = await registerMac(h);
+	const beat = () => h.call(node, 'POST', '/v1/providers/heartbeat', { status: 'online', offers: [offer('qwen3-8b')], load: { active: 0, capacity: 1 } });
+	await beat();
+	/* A buyer parks a quote on the idle provider and buries it under a hundred newer quotes it cancels. */
+	const buyer = newBuyer();
+	const parked = await quote(h, buyer);
+	for (let i = 0; i < 101; i++) {
+		h.advance(1);
+		const buried = await quote(h, buyer);
+		assert.equal((await h.call(buyer.signer, 'POST', `/v1/jobs/${buried.quote.jobId}/cancel`, {})).status, 200);
+	}
+	const blockHash = await h.ledger.publish(buyer.account, [{ to: parked.quote.settlement, amount: BigInt(parked.quote.maxCost), token: parked.quote.token, external: parked.quote.jobId }]);
+	assert.equal((await h.call(buyer.signer, 'POST', `/v1/jobs/${parked.quote.jobId}/escrow`, { blockHash })).status, 200);
+	await beat();
+	assert.equal((await h.store.getProvider(node.publicKey))!.load.active, 1, 'the parked ticket still holds the only slot');
+	assert.equal((await h.call(newBuyer().signer, 'POST', '/v1/jobs', { network: 'test', model: 'qwen3-8b', ...LIMITS })).status, 503);
+});
+
 test('machines under 32 GB register but are never scheduled', async () => {
 	const h = harness();
 	const { node } = await registerMac(h, 16);
