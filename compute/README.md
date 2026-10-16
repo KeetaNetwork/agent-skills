@@ -74,7 +74,7 @@ npm run build:linux-arm64
 
 ## Live tests
 
-`npm run test:live` runs `test/live/*.test.ts` one file at a time against the **Keeta test network**. Only the model is a fake (an OpenAI-compatible server that answers "Hello from Keeta"), unless `LIVE_MODEL_URL` points at a real one. Without a funding account every live test is skipped with a message saying what to set.
+`npm run test:live` runs `test/live/*.test.ts` one file at a time against the **Keeta test network**. Only the model is a fake (an OpenAI-compatible server that answers "Hello from Keeta"), unless `LIVE_MODEL_URL` points at a real one. `KEETA_LIVE_SKIP=1` skips every live test.
 
 | File | What only the network can show |
 | --- | --- |
@@ -92,8 +92,8 @@ The payment checks for app jobs (`fundAppBuyer`, `watchSettlement`) live in `tes
 ```bash
 cd compute
 npm ci
-export KEETA_TESTNET_SEED=...          # hex seed of the funding account (or KEETA_TESTNET_PASSPHRASE="24 words")
-npm run test:live
+npm run test:live                      # spends from the suite's fixed test-network account
+# KEETA_TESTNET_SEED=... (or KEETA_TESTNET_PASSPHRASE="24 words") uses another funding account instead
 ```
 
 Add `KC_TEST_LOG=1` to see the agent and `wrangler dev` logs. The suite refuses to start if `KEETA_LIVE_NETWORK` is set to anything but `test`; it never touches main-network funds.
@@ -108,13 +108,18 @@ LIVE_MODEL_URL=http://127.0.0.1:8080/v1 LIVE_MODEL_NAME=live-model npm run test:
 
 ### Fund the account
 
-1. Create a test-network account and keep its seed in a secret store (see the `create-fund-wallet` skill). Only its address is ever shown.
-2. Test USDC (`keeta_apna75yhhvnv4ei7ape55hndk4yepno7a7i2mhtiwahiygixjcnmvswxhnmnk`) cannot be automated: get it from Circle's test-USDC faucet and bridge it to the account (see the `bridge-crypto` skill). 1 test USDC covers hundreds of runs.
-3. Give it some KTA for fees: `curl -sS -X POST https://faucet.test.keeta.com/ -H 'Content-Type: application/x-www-form-urlencoded' --data "address=keeta_...&amount=10"`. 20 KTA or more is comfortable.
+The suite funds itself from a fixed test-network account whose seed is in `test/live/support.ts`:
+
+`keeta_aabpcmdf36xopdmazjtbjlhh4zoyfg7pscd2avvcs3fcflpcica5wqeh375fmci`
+
+The seed is public on purpose, so anyone can top the account up and run the suite. It must only ever hold test-network coins. The same seed gives the same address on the main network, so never send it real funds; the suite refuses to run anywhere but the test network.
+
+1. Test USDC (`keeta_apna75yhhvnv4ei7ape55hndk4yepno7a7i2mhtiwahiygixjcnmvswxhnmnk`) comes from Circle's test-USDC faucet bridged to the account (see the `bridge-crypto` skill). 1 test USDC covers hundreds of runs.
+2. KTA for fees: `curl -sS -X POST https://faucet.test.keeta.com/ -H 'Content-Type: application/x-www-form-urlencoded' --data "address=keeta_aabpcmdf36xopdmazjtbjlhh4zoyfg7pscd2avvcs3fcflpcica5wqeh375fmci&amount=10"`. 20 KTA or more is comfortable.
 
 ### In CI
 
-`.github/workflows/compute-live.yml` runs the suite nightly, on manual dispatch, and on pull requests that touch `compute/`. It reads the repository secret **`KEETA_TESTNET_SEED`** (or `KEETA_TESTNET_PASSPHRASE`) and skips cleanly when the secret is not available, as on pull requests from forks. A concurrency group keeps two runs from spending the funding account at once. A manual run with `model: llama` starts llama.cpp's server container with Qwen2.5 0.5B (about 400 MB from Hugging Face) and runs the same suite against it.
+`.github/workflows/compute-live.yml` runs the suite nightly, on manual dispatch, and on pull requests that touch `compute/`. It spends from the fixed test account above; the optional repository secret `KEETA_TESTNET_SEED` (or `KEETA_TESTNET_PASSPHRASE`) swaps in another. Pull requests from forks don't run it. A concurrency group keeps two runs from spending the funding account at once. A manual run with `model: llama` starts llama.cpp's server container with Qwen2.5 0.5B (about 400 MB from Hugging Face) and runs the same suite against it.
 
 ## Deploy
 

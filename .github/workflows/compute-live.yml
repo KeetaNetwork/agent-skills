@@ -1,7 +1,8 @@
 # Keeta Compute against the live Keeta test network: real ledger sends, the
 # relay Worker under wrangler dev, and x402 through the real facilitator.
-# Needs the repository secret KEETA_TESTNET_SEED (or KEETA_TESTNET_PASSPHRASE):
-# a test-network account holding test USDC and some KTA. See compute/README.md.
+# Spends from the suite's fixed test-network account (compute/test/live/support.ts),
+# which must hold test USDC and some KTA; the optional repository secret
+# KEETA_TESTNET_SEED (or KEETA_TESTNET_PASSPHRASE) swaps in another. See compute/README.md.
 name: Compute live (test network)
 
 on:
@@ -29,42 +30,31 @@ concurrency:
 
 jobs:
   live:
+    # Pull requests from forks don't spend the shared test account.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 45
     defaults:
       run:
         working-directory: compute
     env:
-      # GitHub masks these in logs; the suite never prints them.
+      # Optional overrides of the fixed test account; GitHub masks them in logs.
       KEETA_TESTNET_SEED: ${{ secrets.KEETA_TESTNET_SEED }}
       KEETA_TESTNET_PASSPHRASE: ${{ secrets.KEETA_TESTNET_PASSPHRASE }}
       KEETA_LIVE_NETWORK: test
       LLAMA_HF_REPO: Qwen/Qwen2.5-0.5B-Instruct-GGUF
       LLAMA_HF_FILE: qwen2.5-0.5b-instruct-q4_k_m.gguf
     steps:
-      - name: Check for the funding secret
-        id: secret
-        working-directory: .
-        run: |
-          if [ -n "$KEETA_TESTNET_SEED" ] || [ -n "$KEETA_TESTNET_PASSPHRASE" ]; then
-            echo "available=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "available=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::KEETA_TESTNET_SEED is not available to this run (fork pull requests never get secrets); skipping the live suite."
-          fi
       - uses: actions/checkout@v4
-        if: steps.secret.outputs.available == 'true'
       - uses: actions/setup-node@v4
-        if: steps.secret.outputs.available == 'true'
         with:
           node-version: "22"
           cache: npm
           cache-dependency-path: compute/package-lock.json
       - name: Install
-        if: steps.secret.outputs.available == 'true'
         run: npm ci
       - name: Start llama.cpp with a small model
-        if: steps.secret.outputs.available == 'true' && github.event_name == 'workflow_dispatch' && inputs.model == 'llama'
+        if: github.event_name == 'workflow_dispatch' && inputs.model == 'llama'
         run: |
           mkdir -p "$HOME/.cache/llama.cpp"
           docker run -d --name llama -p 8080:8080 -v "$HOME/.cache/llama.cpp:/root/.cache/llama.cpp" \
@@ -79,7 +69,6 @@ jobs:
           echo "LIVE_MODEL_URL=http://127.0.0.1:8080/v1" >> "$GITHUB_ENV"
           echo "LIVE_MODEL_NAME=live-model" >> "$GITHUB_ENV"
       - name: Live suite
-        if: steps.secret.outputs.available == 'true'
         run: npm run test:live
       - name: llama.cpp log
         if: failure() && github.event_name == 'workflow_dispatch' && inputs.model == 'llama'

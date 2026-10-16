@@ -2,10 +2,10 @@
  * Shared set-up for the live suite: the pre-funded test-network account,
  * fresh accounts topped up from it, and the sweep that returns what is left.
  *
- * Only the Keeta test network is used. The funding account comes from
- * KEETA_TESTNET_SEED (hex seed) or KEETA_TESTNET_PASSPHRASE (24 words) and
- * must hold test USDC and some KTA; see compute/README.md. Its seed and
- * passphrase are never printed.
+ * Only the Keeta test network is used. The funding account is the fixed
+ * test-network account below, unless KEETA_TESTNET_SEED (hex seed) or
+ * KEETA_TESTNET_PASSPHRASE (24 words) names another. It must hold test USDC
+ * and some KTA; see compute/README.md.
  */
 
 import * as KeetaNet from '@keetanetwork/keetanet-client';
@@ -30,11 +30,16 @@ if (configuredNetwork !== 'test') {
 	throw new Error(`KEETA_LIVE_NETWORK is "${configuredNetwork}": the live suite runs only on the Keeta test network and never touches main-network funds`);
 }
 
-/** Why the live tests are skipped, or false when they can run. */
-export const skipLive: string | false =
-	process.env.KEETA_TESTNET_SEED || process.env.KEETA_TESTNET_PASSPHRASE
-		? false
-		: 'live tests need a funded Keeta test-network account: set KEETA_TESTNET_SEED (hex seed) or KEETA_TESTNET_PASSPHRASE (24 words); see compute/README.md';
+/**
+ * The suite's own test-network funding account, keeta_aabpcmdf36xopdmazjtbjlhh4zoyfg7pscd2avvcs3fcflpcica5wqeh375fmci.
+ * This seed is public on purpose so anyone can fund and run the suite: it only
+ * ever holds test-network coins. The same seed gives the same address on the
+ * main network, so never send it real funds; the suite refuses to run there.
+ */
+const PUBLIC_TESTNET_SEED = 'A3804FE8F609371B7C9C2AC2923D3056386218129E013F319A8CB73308469629';
+
+/** Why the live tests are skipped, or false when they can run. KEETA_LIVE_SKIP=1 skips them. */
+export const skipLive: string | false = process.env.KEETA_LIVE_SKIP === '1' ? 'KEETA_LIVE_SKIP is set' : false;
 
 let announced = false;
 export function announceSkip(): void {
@@ -56,10 +61,7 @@ async function fundingSeed(): Promise<string | ArrayBuffer> {
 		return seed;
 	}
 	const phrase = process.env.KEETA_TESTNET_PASSPHRASE?.trim();
-	if (!phrase) {
-		throw new Error(skipLive || 'no funding account configured');
-	}
-	return Account.seedFromPassphrase(phrase);
+	return phrase ? Account.seedFromPassphrase(phrase) : PUBLIC_TESTNET_SEED;
 }
 
 export function freshAccount(): KeetaAccount {
