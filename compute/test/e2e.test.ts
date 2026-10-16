@@ -403,6 +403,7 @@ test('a buyer buys credits with a stablecoin, escrows each job at ticket time, a
 	assert.equal(paidHungUp.settlement!.reason, 'delivered', 'the relay recorded the text it forwarded before the hang-up');
 	assert.equal(paidHungUp.receipt!.receipt.finishReason, 'cancelled');
 	assert.equal(paidHungUp.receipt!.receipt.outputTokens, 1, 'billed only for the one piece delivered');
+	assert.equal(paidHungUp.receipt!.receipt.inputTokens, paidHungUp.maxInputTokens, 'the prompt was read in full: input is billed at the bound the ticket priced, not an estimate');
 	const hungUpBill = BigInt(paidHungUp.receipt!.receipt.amount);
 	assert.equal(ledger.sendsFor(hungUpJob, spendKey).length, 1, 'one escrow send per job');
 	const hungUpPayout = ledger.sendsFor(hungUpJob, SETTLEMENT);

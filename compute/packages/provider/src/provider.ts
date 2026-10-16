@@ -9,13 +9,11 @@ import {
 	canonicalJSON,
 	findAsset,
 	chunkText,
-	estimateTokens,
 	findCatalogModel,
 	assertChatRequest,
 	jobAuthMessage,
 	jobCost,
 	maxOutputTokensFor,
-	promptText,
 	promptTokenBound,
 	receiptMessage,
 	sha256Hex,
@@ -527,8 +525,14 @@ export class Provider {
 			await bill({ ...result, finishReason: controller.signal.aborted ? 'cancelled' : result.finishReason });
 		} catch (error) {
 			if (controller.signal.aborted && delivered) {
-				/* The buyer hung up after receiving text: bill what was sent instead of failing the job unpaid. */
-				await bill({ inputTokens: estimateTokens(promptText(envelope.request)), outputTokens: deliveredChunks, text: delivered, finishReason: 'cancelled' }).catch((billError: Error) =>
+				/*
+				 * The buyer hung up after receiving text: bill what was sent instead of
+				 * failing the job unpaid. The model's prompt count only arrives at the end
+				 * of the stream, and the prompt was already read in full, so the input is
+				 * billed at the bound the ticket priced and the buyer escrowed; an estimate
+				 * would let a dense prompt (CJK, say) pay for a fraction of its tokens.
+				 */
+				await bill({ inputTokens: promptTokenBound(envelope.request), outputTokens: deliveredChunks, text: delivered, finishReason: 'cancelled' }).catch((billError: Error) =>
 					this.deps.log('warn', `could not bill cancelled job ${ticket.jobId}: ${billError.message}`)
 				);
 				return;
