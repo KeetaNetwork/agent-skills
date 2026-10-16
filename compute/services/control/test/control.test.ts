@@ -521,8 +521,18 @@ test('Linux nodes with their own wallet register with a link proof and can pair 
 	const nested = await h.call(helper, 'POST', '/v1/pairing', { codeHash: await pairingCodeHash(generatePairingCode()) });
 	assert.equal(nested.status, 403);
 	assert.match(JSON.stringify(nested.body), /Mac or Linux node/);
-	assert.equal((await h.call(helper, 'POST', '/v1/providers/register', { network: 'test', kind: 'linux', hardware: linux, payTo: operator.publicKey })).status, 400);
+	assert.equal((await h.call(helper, 'POST', '/v1/providers/register', { network: 'test', kind: 'linux', hardware: linux, payTo: operator.publicKey })).status, 403);
 	assert.equal((await h.call(newSigner(), 'POST', '/v1/providers/register', { network: 'test', kind: 'linux-box', hardware: linux })).status, 400);
+
+	/* Nor turn itself into a full node with a wallet of its own, which would drop its master's payTo and allowlist. */
+	const own = newSigner();
+	const ownIssuedAt = h.now();
+	const ownLink = await own.sign(operatorLinkMessage({ nodeKey: helper.publicKey, payTo: own.publicKey, network: 'test', issuedAt: ownIssuedAt }));
+	const breakaway = await h.call(helper, 'POST', '/v1/providers/register', { network: 'test', kind: 'linux', hardware: linux, payTo: own.publicKey, link: { issuedAt: ownIssuedAt, signature: ownLink } });
+	assert.equal(breakaway.status, 403);
+	const stillHelper = (await h.store.getProvider(helper.publicKey))!;
+	assert.equal(stillHelper.masterNodeKey, node.publicKey);
+	assert.equal(stillHelper.payTo, operator.publicKey);
 });
 
 test('sweep expires unused tickets and confirms late payments', async () => {

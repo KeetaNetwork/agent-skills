@@ -38,9 +38,10 @@ jobs:
       run:
         working-directory: compute
     env:
-      # Optional overrides of the fixed test account; GitHub masks them in logs.
-      KEETA_TESTNET_SEED: ${{ secrets.KEETA_TESTNET_SEED }}
-      KEETA_TESTNET_PASSPHRASE: ${{ secrets.KEETA_TESTNET_PASSPHRASE }}
+      # Optional overrides of the fixed test account. Pull requests run their own
+      # code, so they never get these and always use the fixed public account.
+      KEETA_TESTNET_SEED: ${{ github.event_name != 'pull_request' && secrets.KEETA_TESTNET_SEED || '' }}
+      KEETA_TESTNET_PASSPHRASE: ${{ github.event_name != 'pull_request' && secrets.KEETA_TESTNET_PASSPHRASE || '' }}
       KEETA_LIVE_NETWORK: test
       LLAMA_HF_REPO: Qwen/Qwen2.5-0.5B-Instruct-GGUF
       LLAMA_HF_FILE: qwen2.5-0.5b-instruct-q4_k_m.gguf

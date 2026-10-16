@@ -158,6 +158,10 @@ export class ControlService {
 
 		let payTo: string;
 		let masterNodeKey: string | undefined;
+		if (existing?.kind === 'linux-helper' && kind !== 'linux-helper') {
+			/* A paired helper stays bound to its master (its wallet and allowlist) until the master revokes it. */
+			throw new ForbiddenError('this node is paired as a helper; its master must revoke it before it can register on its own');
+		}
 		if (kind === 'mac' || kind === 'linux') {
 			/* Full nodes (the macOS app, the Linux CLI) pay their own operator, proven by its signature. */
 			payTo = assertKeetaAddress(body.payTo, 'payTo');

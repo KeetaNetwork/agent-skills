@@ -77,6 +77,7 @@ const encoder = new TextEncoder();
 export class Buyer {
 	private server: Server | null = null;
 	private port = 0;
+	private readonly accepting = new Set<string>();
 
 	constructor(private readonly deps: BuyerDeps) {}
 
@@ -316,6 +317,22 @@ export class Buyer {
 	/** Check a receipt against the ticket and the text received, then queue its payment. */
 	private async accept(ticket: SignedTicket, receipt: SignedReceipt, maxCost: bigint, delivery: Delivery, summary: JobSummary): Promise<void> {
 		const t = ticket.ticket;
+		/* One payment per job: overlapping receipt chases (two hang-ups, a hang-up and a settle) can reach here together. */
+		const state = this.deps.store.state;
+		const settled = state.unpaid.some((u) => u.jobId === t.jobId) || state.jobs.some((j) => j.jobId === t.jobId && j.role === 'buyer' && (j.status === 'completed' || j.status === 'paid'));
+		if (settled || this.accepting.has(t.jobId)) {
+			return;
+		}
+		this.accepting.add(t.jobId);
+		try {
+			await this.acceptOnce(ticket, receipt, maxCost, delivery, summary);
+		} finally {
+			this.accepting.delete(t.jobId);
+		}
+	}
+
+	private async acceptOnce(ticket: SignedTicket, receipt: SignedReceipt, maxCost: bigint, delivery: Delivery, summary: JobSummary): Promise<void> {
+		const t = ticket.ticket;
 		const problem = this.checkReceipt(ticket, receipt, maxCost, delivery);
 		if (problem) {
 			/* The relay's record of what it forwarded wins over this buyer's copy (text in flight at a hang-up). */
@@ -415,10 +432,15 @@ export class Buyer {
 	private pay(unpaid: UnpaidReceipt): Promise<boolean> {
 		const { ledger, queue, store, control, spend, spendAccount } = this.deps;
 		return queue.run(spend.publicKey, async () => {
+			/* Read the stored entry inside the queue: an earlier run may have paid it or recorded its block already. */
+			const current = store.state.unpaid.find((u) => u.jobId === unpaid.jobId);
+			if (!current) {
+				return true;
+			}
 			try {
-				let blockHash = unpaid.blockHash;
+				let blockHash = current.blockHash;
 				if (!blockHash) {
-					blockHash = await ledger.send(spendAccount, unpaid.payTo, BigInt(unpaid.amount), 'usdc', unpaid.jobId);
+					blockHash = await ledger.send(spendAccount, current.payTo, BigInt(current.amount), 'usdc', current.jobId);
 					store.update((s) => {
 						const entry = s.unpaid.find((u) => u.jobId === unpaid.jobId);
 						if (entry) {
@@ -426,7 +448,7 @@ export class Buyer {
 						}
 					});
 				}
-				await control.post(spend, `/v1/jobs/${unpaid.jobId}/payment`, { blockHash, receipt: unpaid.receipt });
+				await control.post(spend, `/v1/jobs/${unpaid.jobId}/payment`, { blockHash, receipt: current.receipt });
 				store.update((s) => {
 					s.unpaid = s.unpaid.filter((u) => u.jobId !== unpaid.jobId);
 					const job = s.jobs.find((j) => j.jobId === unpaid.jobId && j.role === 'buyer');

@@ -328,7 +328,9 @@ test('a buyer runs a job on a Mac provider and a paired Linux helper, and pays e
 		seen += new TextDecoder().decode((await reader.read()).value);
 	}
 	hangUp.abort();
+	/* Settle runs overlap the hang-up's own receipt chase; the receipt is still paid once. */
 	const paidHungUp = await until('the hung-up job to be paid', async () => {
+		await Promise.all([1, 2, 3].map(() => buyer.rpc['buyer.settle']!({})));
 		const job = await control.store.getJob(hungUpJob);
 		return job?.status === 'paid' ? job : null;
 	}, 20_000);
@@ -336,6 +338,7 @@ test('a buyer runs a job on a Mac provider and a paired Linux helper, and pays e
 	assert.equal(paidHungUp.receipt!.receipt.outputTokens, 1, 'billed only for the one piece delivered');
 	/* The control plane marks the job paid before the buyer hears back and clears its own record. */
 	await until('the buyer to clear its unpaid receipt', async () => (await buyer.rpc['buyer.status']!({})).unpaid === 0);
+	assert.equal(ledger.sends.filter((s) => s.reference === hungUpJob).length, 1, 'one ledger send per receipt');
 
 	/* Linux helper: pair by code, approve on the Mac, serve the same model. */
 	const helperDir = tmp('helper');
