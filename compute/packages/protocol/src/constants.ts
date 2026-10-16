@@ -36,6 +36,13 @@ export const HEARTBEAT_INTERVAL_MS = 30_000;
 /** How long a scheduled job's ticket is valid for the buyer to start it. */
 export const TICKET_TTL_MS = 60_000;
 
+/**
+ * A router job is prepaid with x402: the node accepts it and holds a slot,
+ * and runs it only once the router has settled the payment. An accepted job
+ * not started within this long is dropped, and its slot freed.
+ */
+export const PREPAID_START_TIMEOUT_MS = 30_000;
+
 /** How long an app job's quote stands while the buyer escrows credits for it. It holds no provider slot. */
 export const QUOTE_TTL_MS = 60_000;
 

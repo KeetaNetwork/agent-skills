@@ -82,7 +82,7 @@
 <ol>
 <li>Send the request with no payment. The router picks a provider and answers <code>402 Payment Required</code> with a <code>PAYMENT-REQUIRED</code> header: base64 JSON, x402 version 2.</li>
 <li>Your client signs one Keeta send block for <code>amount</code> to <code>payTo</code> and retries the same request with the <code>PAYMENT-SIGNATURE</code> header. The block is signed, not published.</li>
-<li>The router has the x402 facilitator verify the block and settle it on Keeta, then runs the job and returns the completion.</li>
+<li>The router has the x402 facilitator verify the block. The provider checks the quote and reserves a slot for the job, the facilitator settles the payment on Keeta, and only then does the provider run the job. If the provider is offline, busy or refuses the quote, nothing is settled and you are not charged.</li>
 </ol>
 <p>The payment goes straight to the serving provider's address. The router never holds the funds.</p>
 <p>Example 402:</p>
@@ -131,7 +131,7 @@ payment-required: eyJ4NDAyVmVyc2lvbiI6Mi...</code></pre>
 <p>When no provider can take a request, keeta.ai may answer it from its own capacity so paid requests still get an answer. keeta.ai turns this on per model and sets its price.</p>
 <ul>
 <li>The 402 quote then shows keeta.ai's own address as <code>payTo</code>. Network providers are always tried first.</li>
-<li>You are charged only once text has streamed, as with providers.</li>
+<li>The payment settles before keeta.ai starts the request. If the upstream provider then fails, the payment stays settled.</li>
 <li>keeta.ai may run these requests through an upstream inference provider. It forwards only the standard chat fields and asks for upstream providers that do not collect prompt data.</li>
 <li>These responses have no provider receipt, because no network provider ran the job.</li>
 </ul>
@@ -205,7 +205,7 @@ try {
 <tr><td>400</td><td class="wrap">Invalid request: malformed JSON or fields the router does not accept</td></tr>
 <tr><td>402</td><td class="wrap">Payment required, or the payment failed verification or settlement</td></tr>
 <tr><td>404</td><td class="wrap">Unknown model</td></tr>
-<tr><td>502</td><td class="wrap">The provider failed. If it failed before streaming started, the payment is not settled.</td></tr>
+<tr><td>502</td><td class="wrap">The provider failed. If it failed before it accepted the job, the payment is not settled and the message says so. If it failed after the job started, the payment was settled, and the <code>PAYMENT-RESPONSE</code> header shows it.</td></tr>
 <tr><td>503</td><td class="wrap">No provider is available for the model now. Retry after the <code>Retry-After</code> header.</td></tr>
 </tbody>
 </table>

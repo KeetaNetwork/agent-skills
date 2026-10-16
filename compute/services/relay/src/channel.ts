@@ -27,6 +27,8 @@ interface Pending {
 	abandonedAt?: number;
 	/** The one delivery record post for this job, once started. */
 	attesting: Promise<void> | null;
+	/** Router jobs only: the provider holds a slot for it and waits for `start`. */
+	accepted?: boolean;
 }
 
 interface ChannelEnv {
@@ -51,6 +53,9 @@ export class ProviderChannel {
 		}
 		if (url.pathname === '/run' && request.method === 'POST') {
 			return this.run((await request.json()) as JobEnvelope, request.signal);
+		}
+		if (url.pathname === '/start' && request.method === 'POST') {
+			return this.start(((await request.json()) as { jobId: string }).jobId);
 		}
 		if (url.pathname === '/status') {
 			return Response.json({ online: this.socket !== null, inflight: this.pending.size });
@@ -140,6 +145,15 @@ export class ProviderChannel {
 		return new Response(readable, { headers: { 'content-type': 'text/event-stream', 'cache-control': 'no-store' } });
 	}
 
+	/** The router settled a prepaid job's payment: tell the provider holding it to run it. */
+	private start(jobId: string): Response {
+		const entry = [...this.pending.entries()].find(([, e]) => e.jobId === jobId && e.accepted && !e.closed);
+		if (!entry || !this.send({ type: 'start', id: entry[0] })) {
+			return Response.json({ error: { code: 'not_accepted', message: 'the provider is not holding this job' } }, { status: 409 });
+		}
+		return Response.json({ started: true });
+	}
+
 	private onFrame(data: unknown) {
 		let frame: ProviderFrame;
 		try {
@@ -155,7 +169,12 @@ export class ProviderChannel {
 			return;
 		}
 		clearTimeout(entry.timer);
-		if (frame.type === 'chunk') {
+		if (frame.type === 'accepted') {
+			/* The provider drops the job itself if the router never starts it; this only bounds a provider that goes quiet. */
+			entry.accepted = true;
+			entry.timer = setTimeout(() => this.finish(frame.id, 'timeout', 'the provider stopped responding'), IDLE_FRAME_TIMEOUT_MS);
+			void entry.writer.write(sseEvent('keeta.accepted', {})).catch(() => this.close(frame.id));
+		} else if (frame.type === 'chunk') {
 			entry.timer = setTimeout(() => this.finish(frame.id, 'timeout', 'the provider stopped responding'), IDLE_FRAME_TIMEOUT_MS);
 			if (entry.delivered !== null) {
 				entry.delivered += chunkText(frame.data);

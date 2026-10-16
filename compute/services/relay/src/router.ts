@@ -7,14 +7,16 @@
  *
  * Flow: quote (control plane schedules a provider and signs a prepaid
  * ticket) → 402 with the ticket inside the requirements → client signs a
- * send → verify with the facilitator → run on the provider → settle once the
- * first token arrives (a provider that fails before streaming is never paid)
- * → stream or aggregate, with the provider's signed receipt attached.
+ * send → verify with the facilitator → the provider checks the ticket and
+ * holds a slot → settle → the provider runs the job → stream or aggregate,
+ * with the provider's signed receipt attached. Verify only simulates the
+ * send, so nothing runs before it settles; a provider that is offline, busy
+ * or refuses the ticket is never paid.
  *
  * When no provider is free, the control plane may quote a fallback ticket
- * instead: paid to keeta.ai's own account and run on OpenRouter, with the
- * same pay-after-first-text rule. Fallback responses carry no upstream
- * markers: chunks are rebuilt in the plain OpenAI shape.
+ * instead: paid to keeta.ai's own account, settled, then run on OpenRouter.
+ * Fallback responses carry no upstream markers: chunks are rebuilt in the
+ * plain OpenAI shape.
  */
 
 import {
@@ -31,10 +33,10 @@ import {
 	type FallbackRoute,
 	type JobEnvelope,
 	type NetworkName,
+	type JobTicket,
 	type SignedTicket,
 	readRelayEvents,
 	aggregateCompletion,
-	chunkText,
 	type RelayEvent
 } from '@keeta-compute/protocol';
 
@@ -67,8 +69,10 @@ export interface RouterDeps {
 	routerSecret: string;
 	relaySecret: string;
 	gateway: PaymentGateway;
-	/** Runs an envelope on its provider's channel; returns the relay SSE response. */
+	/** Runs an envelope on its provider's channel; returns the relay SSE response. A prepaid job waits there, accepted, for startJob. */
 	runJob(envelope: JobEnvelope, signal: AbortSignal): Promise<Response>;
+	/** Starts an accepted prepaid job once its payment settled; false when the provider no longer holds it. */
+	startJob(ticket: JobTicket): Promise<boolean>;
 	/** OpenRouter credentials for fallback jobs (jobs the control plane records with a `fallback` route). Fallback is off without it. */
 	openRouter?: { apiKey: string; baseUrl?: string };
 	fetch?: typeof fetch;
@@ -220,7 +224,12 @@ export function createRouter(deps: RouterDeps) {
 			return errorResponse(402, 'payment_invalid', verified.invalidReason ?? 'the payment did not verify');
 		}
 
+		/* Verify only simulated the send, so a payer could still spend it elsewhere: nothing runs until the payment settles. */
+		const upstreamAbort = new AbortController();
+		const stopUpstream = () => upstreamAbort.abort();
+		request.signal.addEventListener('abort', stopUpstream, { once: true });
 		let events: AsyncGenerator<RelayEvent>;
+		let settled: string;
 		/* keeta.ai serves the job itself (node = buyer = coordinator) only on a fallback quote; its route stays server-side, off the ticket buyers see. */
 		if (ticket.nodeKey === ticket.buyer) {
 			if (!deps.openRouter) {
@@ -233,53 +242,46 @@ export function createRouter(deps: RouterDeps) {
 			if (!route) {
 				return errorResponse(502, 'control_unavailable', 'the job could not be started; you were not charged', { 'retry-after': '2' });
 			}
-			const upstream = await runOnOpenRouter(deps.openRouter, route.model, body, ticket.maxOutputTokens, request.signal, doFetch).catch(() => null);
+			const paid = await settle();
+			if (paid instanceof Response) {
+				return paid;
+			}
+			settled = paid;
+			const upstream = await runOnOpenRouter(deps.openRouter, route.model, body, ticket.maxOutputTokens, upstreamAbort.signal, doFetch).catch(() => null);
 			if (!upstream?.ok || !upstream.body) {
-				return errorResponse(502, 'provider_unavailable', 'the provider could not take the job; you were not charged', { 'retry-after': '2' });
+				return errorResponse(502, 'provider_unavailable', 'the job could not be run after its payment settled', { 'payment-response': settled });
 			}
 			events = readOpenRouterEvents(upstream.body, ticket.modelId, ticket.jobId);
 		} else {
 			const envelope: JobEnvelope = { ticket: signed, request: { ...body, stream: true, stream_options: { include_usage: true } } };
-			const upstream = await deps.runJob(envelope, request.signal);
+			const upstream = await deps.runJob(envelope, upstreamAbort.signal);
 			if (!upstream.ok || !upstream.body) {
 				return errorResponse(502, 'provider_unavailable', 'the provider could not take the job; you were not charged', { 'retry-after': '2' });
 			}
 			events = readRelayEvents(upstream.body);
-		}
-
-		/* Pay the provider only once it has produced text: hold back events until the first chunk that carries some. */
-		const held: RelayEvent[] = [];
-		let failure: string | null = 'the provider closed the stream';
-		/* Read with next(): breaking out of for-await would close the generator. */
-		for (let step = await events.next(); !step.done; step = await events.next()) {
-			const event = step.value;
-			held.push(event);
-			if (event.type === 'error') {
-				failure = event.message;
-				break;
+			/* The provider checks the ticket and holds a slot first; anything else (a refusal, or output before the payment settled) is not paid. */
+			const first = await events.next();
+			if (first.done || first.value.type !== 'accepted') {
+				stopUpstream();
+				const reason = !first.done && first.value.type === 'error' ? first.value.message : 'the provider did not accept the job';
+				return errorResponse(502, 'provider_unavailable', `${reason}; you were not charged`, { 'retry-after': '2' });
 			}
-			if (event.type === 'chunk' && chunkText(event.data) !== '') {
-				failure = null;
-				break;
+			const paid = await settle();
+			if (paid instanceof Response) {
+				stopUpstream();
+				return paid;
 			}
-		}
-		async function* all(): AsyncGenerator<RelayEvent> {
-			yield* held;
-			if (failure === null) {
-				yield* events;
+			settled = paid;
+			if (!(await deps.startJob(ticket).catch(() => false))) {
+				stopUpstream();
+				return errorResponse(502, 'provider_failed', 'the provider dropped the job after its payment settled', { 'payment-response': settled });
 			}
 		}
 
 		if (!body.stream) {
-			/* A non-streaming caller waits for the whole answer anyway, so settle only for a complete one. */
-			const aggregate = failure === null ? await aggregateCompletion(all(), body.model) : null;
-			const error = failure ?? aggregate?.error ?? null;
-			if (error || !aggregate) {
-				return errorResponse(502, 'provider_failed', `${error ?? 'the provider returned no output'}; you were not charged`);
-			}
-			const settled = await settle();
-			if (settled instanceof Response) {
-				return settled;
+			const aggregate = await aggregateCompletion(events, body.model);
+			if (aggregate.error) {
+				return errorResponse(502, 'provider_failed', `${aggregate.error}; the payment had settled when the job started`, { 'payment-response': settled });
 			}
 			const headers: Record<string, string> = { 'payment-response': settled };
 			if (aggregate.receipt) {
@@ -288,21 +290,14 @@ export function createRouter(deps: RouterDeps) {
 			return Response.json(aggregate.completion, { headers });
 		}
 
-		if (failure !== null) {
-			return errorResponse(502, 'provider_failed', `${failure}; you were not charged`);
-		}
-		const settled = await settle();
-		if (settled instanceof Response) {
-			return settled;
-		}
 		const stream = new ReadableStream<Uint8Array>({
 			async start(controller) {
-				for await (const event of all()) {
+				for await (const event of events) {
 					if (event.type === 'chunk') {
 						controller.enqueue(encoder.encode(`data: ${JSON.stringify(event.data)}\n\n`));
 					} else if (event.type === 'receipt') {
 						controller.enqueue(encoder.encode(`event: keeta.receipt\ndata: ${JSON.stringify(event.receipt)}\n\n`));
-					} else {
+					} else if (event.type === 'error') {
 						controller.enqueue(encoder.encode(`event: keeta.error\ndata: ${JSON.stringify({ code: event.code, message: event.message })}\n\n`));
 					}
 				}

@@ -119,6 +119,7 @@ export default {
 				relaySecret: env.RELAY_SECRET,
 				gateway: x402Gateway(env, network),
 				runJob: (envelope, signal) => channel(env, envelope.ticket.ticket.nodeKey).fetch('https://channel/run', { method: 'POST', body: JSON.stringify(envelope), signal }),
+				startJob: async (ticket) => (await channel(env, ticket.nodeKey).fetch('https://channel/start', { method: 'POST', body: JSON.stringify({ jobId: ticket.jobId }) })).ok,
 				...(env.OPENROUTER_API_KEY ? { openRouter: { apiKey: env.OPENROUTER_API_KEY } } : {})
 			});
 			if (url.pathname === '/v1/models' && request.method === 'GET') {

@@ -53,7 +53,9 @@ export function sseEvent(event: string, data: unknown): Uint8Array {
 export type RelayEvent =
 	| { type: 'chunk'; data: Record<string, unknown> }
 	| { type: 'receipt'; receipt: SignedReceipt }
-	| { type: 'error'; code: string; message: string };
+	| { type: 'error'; code: string; message: string }
+	/* A prepaid job holds its slot and waits for the router to settle its payment. */
+	| { type: 'accepted' };
 
 /** Parse a relay SSE body into events. */
 export async function* readRelayEvents(body: ReadableStream<Uint8Array>): AsyncGenerator<RelayEvent> {
@@ -104,6 +106,9 @@ function parseEvent(raw: string): RelayEvent | null {
 	if (name === 'keeta.error') {
 		return { type: 'error', code: String(payload.code ?? 'error'), message: String(payload.message ?? 'provider error') };
 	}
+	if (name === 'keeta.accepted') {
+		return { type: 'accepted' };
+	}
 	return { type: 'chunk', data: payload };
 }
 
@@ -124,6 +129,9 @@ export async function aggregateCompletion(events: AsyncIterable<RelayEvent>, mod
 		}
 		if (event.type === 'error') {
 			error = event.message;
+			continue;
+		}
+		if (event.type === 'accepted') {
 			continue;
 		}
 		const chunk = event.data as { id?: string; created?: number; choices?: Array<{ delta?: { content?: string; reasoning?: string }; finish_reason?: string | null }>; usage?: Record<string, unknown> };

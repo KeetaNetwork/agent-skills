@@ -27,8 +27,36 @@ function sse(...parts: Uint8Array[]): Response {
 const chunk = (content: string, extra: Record<string, unknown> = {}) => ({ id: 'c1', created: 1, choices: [{ index: 0, delta: { content }, finish_reason: null }], ...extra });
 const receipt = { receipt: { jobId: 'job_abc' }, signature: 'ff' };
 
-function setup(options: { runJob?: () => Promise<Response>; gateway?: Partial<PaymentGateway>; ticket?: SignedTicket; openRouter?: (body: Record<string, unknown>) => Response; fallback?: { via: 'openrouter'; model: string } } = {}) {
+/** A provider on the relay as the channel shows it: it accepts the job and holds a slot, and streams `output` only once the router starts it. */
+function heldProvider(...output: Uint8Array[]) {
+	let release!: () => void;
+	const started = new Promise<void>((resolve) => (release = resolve));
+	const held = {
+		signal: null as AbortSignal | null,
+		runJob: async (_envelope: unknown, signal: AbortSignal) => {
+			held.signal = signal;
+			return new Response(
+				new ReadableStream({
+					async start(c) {
+						c.enqueue(sseEvent('keeta.accepted', {}));
+						await started;
+						output.forEach((p) => c.enqueue(p));
+						c.close();
+					}
+				}),
+				{ headers: { 'content-type': 'text/event-stream' } }
+			);
+		},
+		startJob: async () => (release(), true)
+	};
+	return held;
+}
+
+const answer = () => [sseData(chunk('Hel')), sseData(chunk('lo', { usage: { prompt_tokens: 5, completion_tokens: 2 } })), sseEvent('keeta.receipt', receipt)];
+
+function setup(options: { runJob?: (envelope: unknown, signal: AbortSignal) => Promise<Response>; startJob?: () => Promise<boolean>; gateway?: Partial<PaymentGateway>; ticket?: SignedTicket; openRouter?: (body: Record<string, unknown>) => Response; fallback?: { via: 'openrouter'; model: string } } = {}) {
 	const calls: string[] = [];
+	const provider = options.runJob ? { runJob: options.runJob, startJob: options.startJob ?? (async () => true) } : heldProvider(...answer());
 	const upstreamBodies: Array<Record<string, unknown>> = [];
 	let claims = 0;
 	const gateway: PaymentGateway = {
@@ -45,7 +73,8 @@ function setup(options: { runJob?: () => Promise<Response>; gateway?: Partial<Pa
 		routerSecret: 'router-secret',
 		relaySecret: SECRET,
 		gateway,
-		runJob: options.runJob ?? (async () => sse(sseData(chunk('Hel')), sseData(chunk('lo', { usage: { prompt_tokens: 5, completion_tokens: 2 } })), sseEvent('keeta.receipt', receipt))),
+		runJob: provider.runJob,
+		startJob: async () => (calls.push('start'), provider.startJob()),
 		...(options.openRouter ? { openRouter: { apiKey: 'or-key' } } : {}),
 		fetch: (async (url: string, init?: RequestInit) => {
 			calls.push(`${init?.method ?? 'GET'} ${url}`);
@@ -101,7 +130,7 @@ test('paid non-streaming request aggregates output, settles and returns the rece
 	assert.equal(body.choices[0]!.message.content, 'Hello');
 	assert.equal(body.usage.completion_tokens, 2);
 	assert.deepEqual(JSON.parse(atob(response.headers.get('x-keeta-receipt')!)), receipt);
-	assert.ok(calls.includes('settle'));
+	assert.deepEqual(calls.filter((c) => c === 'settle' || c === 'start'), ['settle', 'start'], 'the provider starts only once the payment settled');
 	assert.ok(calls.some((c) => c.includes('/v1/router/jobs/job_abc/settled')));
 });
 
@@ -115,29 +144,52 @@ test('streaming request passes chunks, receipt and [DONE]', async () => {
 	assert.ok(text.trimEnd().endsWith('data: [DONE]'));
 });
 
-test('a provider that fails before output is never paid', async () => {
-	const { router, calls } = setup({ runJob: async () => sse(sseEvent('keeta.error', { code: 'model_failed', message: 'model crashed' })) });
-	const header = await paymentFor(router);
-	const response = await router.chatCompletions(new Request('http://api/v1/chat/completions', { method: 'POST', body: chatBody(), headers: { 'payment-signature': header } }));
-	assert.equal(response.status, 502);
-	assert.ok(!calls.includes('settle'));
-});
-
-test('a provider is paid only after it streams text, never for empty chunks', async () => {
-	const empty = { id: 'c1', created: 1, choices: [{ index: 0, delta: { role: 'assistant' }, finish_reason: null }] };
-	for (const stream of [false, true]) {
-		const { router, calls } = setup({ runJob: async () => sse(sseData(empty), sseData({}), sseEvent('keeta.error', { code: 'model_failed', message: 'model crashed' })) });
+test('a provider that refuses the ticket, or sends output before accepting it, is never paid', async () => {
+	let upstream: AbortSignal | undefined;
+	for (const runJob of [
+		async () => sse(sseEvent('keeta.error', { code: 'busy', message: 'provider is not taking jobs right now' })),
+		async (_envelope: unknown, signal: AbortSignal) => ((upstream = signal), sse(sseData(chunk('Hel')), sseEvent('keeta.receipt', receipt)))
+	]) {
+		const { router, calls } = setup({ runJob });
 		const header = await paymentFor(router);
-		const response = await router.chatCompletions(new Request('http://api/v1/chat/completions', { method: 'POST', body: chatBody({ stream }), headers: { 'payment-signature': header } }));
+		const response = await router.chatCompletions(new Request('http://api/v1/chat/completions', { method: 'POST', body: chatBody(), headers: { 'payment-signature': header } }));
 		assert.equal(response.status, 502);
+		assert.match(((await response.json()) as { error: { message: string } }).error.message, /not charged/);
 		assert.equal(response.headers.get('payment-response'), null);
 		assert.ok(!calls.includes('settle'));
 	}
-	const { router, calls } = setup({ runJob: async () => sse(sseData(chunk('Hel')), sseEvent('keeta.error', { code: 'model_failed', message: 'model crashed' })) });
-	const header = await paymentFor(router);
-	const response = await router.chatCompletions(new Request('http://api/v1/chat/completions', { method: 'POST', body: chatBody(), headers: { 'payment-signature': header } }));
-	assert.equal(response.status, 502, 'a non-streaming answer that ends in an error is not paid');
-	assert.ok(!calls.includes('settle'));
+	assert.equal(upstream?.aborted, true, 'output sent before the payment settled is cut off');
+});
+
+test('a payer who spends the payment elsewhere after it verified gets nothing run: the held job is cancelled', async () => {
+	for (const stream of [false, true]) {
+		const held = heldProvider(...answer());
+		/* Verify passed, but the payer moved its account head before settlement. */
+		const { router, calls } = setup({ runJob: held.runJob, startJob: held.startJob, gateway: { settle: async () => ({ success: false, errorReason: 'the block no longer follows the account head' }) } });
+		const header = await paymentFor(router);
+		const response = await router.chatCompletions(new Request('http://api/v1/chat/completions', { method: 'POST', body: chatBody({ stream }), headers: { 'payment-signature': header } }));
+		assert.equal(response.status, 402);
+		assert.ok(!calls.includes('start'), 'the provider never starts');
+		assert.equal(held.signal?.aborted, true, 'and the slot it held is released');
+		assert.ok(!calls.some((c) => c.includes('/settled')));
+	}
+});
+
+test('once the payment settled and the job started, a provider failure is reported with the payment', async () => {
+	const held = heldProvider(sseData(chunk('Hel')), sseEvent('keeta.error', { code: 'model_failed', message: 'model crashed' }));
+	const { router, calls } = setup({ runJob: held.runJob, startJob: held.startJob });
+	const response = await router.chatCompletions(new Request('http://api/v1/chat/completions', { method: 'POST', body: chatBody(), headers: { 'payment-signature': await paymentFor(router) } }));
+	assert.equal(response.status, 502);
+	assert.ok(response.headers.get('payment-response'), 'the buyer sees the settled payment');
+	assert.match(((await response.json()) as { error: { message: string } }).error.message, /model crashed; the payment had settled/);
+	assert.deepEqual(calls.filter((c) => c === 'settle' || c === 'start'), ['settle', 'start']);
+
+	const dropped = heldProvider();
+	const late = setup({ runJob: dropped.runJob, startJob: async () => false });
+	const lost = await late.router.chatCompletions(new Request('http://api/v1/chat/completions', { method: 'POST', body: chatBody(), headers: { 'payment-signature': await paymentFor(late.router) } }));
+	assert.equal(lost.status, 502, 'a provider that dropped the held job before the start');
+	assert.ok(lost.headers.get('payment-response'));
+	assert.equal(dropped.signal?.aborted, true);
 });
 
 const houseTicket = () => makeTicket({ nodeKey: coordinator, buyer: coordinator });
@@ -191,13 +243,21 @@ test('one fallback payment replayed in parallel starts one upstream run', async 
 	assert.equal(upstreamBodies.length, 1, 'OpenRouter ran once');
 });
 
-test('a fallback that fails before text, or is not configured, is never paid', async () => {
+test('a fallback settles its payment before OpenRouter runs, and runs nothing when settlement fails or it is not configured', async () => {
 	const fallbackTicket = await houseTicket();
 	const failing = setup({ ticket: fallbackTicket, fallback: route, openRouter: () => new Response(`data: ${JSON.stringify({ error: { code: 502, message: 'OpenRouter: upstream down' } })}\n\n`) });
 	let response = await failing.router.chatCompletions(new Request('http://api/v1/chat/completions', { method: 'POST', body: chatBody(), headers: { 'payment-signature': await paymentFor(failing.router) } }));
 	assert.equal(response.status, 502);
 	assert.ok(!(await response.text()).includes('OpenRouter'), 'upstream error text is not passed on');
-	assert.ok(!failing.calls.includes('settle'));
+	const settledAt = failing.calls.indexOf('settle');
+	assert.ok(settledAt >= 0 && settledAt < failing.calls.findIndex((c) => c.includes('openrouter.ai')), 'settled before OpenRouter was called');
+	assert.ok(response.headers.get('payment-response'));
+
+	const unsettled = setup({ ticket: fallbackTicket, fallback: route, openRouter: () => assert.fail('OpenRouter ran unpaid'), gateway: { settle: async () => ({ success: false, errorReason: 'the block no longer follows the account head' }) } });
+	response = await unsettled.router.chatCompletions(new Request('http://api/v1/chat/completions', { method: 'POST', body: chatBody(), headers: { 'payment-signature': await paymentFor(unsettled.router) } }));
+	assert.equal(response.status, 402);
+	assert.ok(!unsettled.calls.some((c) => c.includes('openrouter.ai')));
+
 	const off = setup({ ticket: fallbackTicket, fallback: route });
 	response = await off.router.chatCompletions(new Request('http://api/v1/chat/completions', { method: 'POST', body: chatBody(), headers: { 'payment-signature': await paymentFor(off.router) } }));
 	assert.equal(response.status, 503);
@@ -206,7 +266,7 @@ test('a fallback that fails before text, or is not configured, is never paid', a
 
 test('a payment service outage answers 503 and runs nothing; a failed settlement charges nothing', async () => {
 	let ran = 0;
-	const runJob = async () => (ran++, sse(sseData(chunk('Hello', { usage: { prompt_tokens: 5, completion_tokens: 1 } })), sseEvent('keeta.receipt', receipt)));
+	const runJob = async (envelope: unknown, signal: AbortSignal) => (ran++, heldProvider(sseData(chunk('Hello', { usage: { prompt_tokens: 5, completion_tokens: 1 } })), sseEvent('keeta.receipt', receipt)).runJob(envelope, signal));
 	const down = setup({ runJob, gateway: { verify: async () => Promise.reject(new Error('facilitator unreachable')) } });
 	const paid = await down.router.chatCompletions(new Request('http://api/v1/chat/completions', { method: 'POST', body: chatBody(), headers: { 'payment-signature': await paymentFor(down.router) } }));
 	assert.equal(paid.status, 503);
@@ -217,6 +277,7 @@ test('a payment service outage answers 503 and runs nothing; a failed settlement
 	const unsettled = await failing.router.chatCompletions(new Request('http://api/v1/chat/completions', { method: 'POST', body: chatBody(), headers: { 'payment-signature': await paymentFor(failing.router) } }));
 	assert.equal(unsettled.status, 402);
 	assert.match(((await unsettled.json()) as { error: { message: string } }).error.message, /not charged/);
+	assert.ok(!failing.calls.includes('start'), 'and the provider never starts it');
 	assert.ok(!failing.calls.some((c) => c.includes('/settled')), 'an unsettled job is not reported as paid');
 });
 

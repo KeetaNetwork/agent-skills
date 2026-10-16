@@ -107,7 +107,7 @@ class RelayEmulator {
 			this.pending.delete(frame.id);
 			/* Record the delivery before the buyer sees the receipt. */
 			void this.attest(run).then(() => run.res.end(sseEvent('keeta.receipt', frame.receipt)));
-		} else {
+		} else if (frame.type === 'error') {
 			this.pending.delete(frame.id);
 			run.res.end(sseEvent('keeta.error', { code: frame.code, message: frame.message }));
 			void this.attest(run);

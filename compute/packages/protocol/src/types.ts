@@ -266,10 +266,14 @@ export type ProviderFrame =
 	| { type: 'chunk'; id: string; data: unknown }
 	| { type: 'receipt'; id: string; receipt: SignedReceipt }
 	| { type: 'error'; id: string; code: string; message: string }
+	/** A prepaid (router) job passed every check and holds a slot; it runs on `start`. */
+	| { type: 'accepted'; id: string }
 	| { type: 'pong' };
 
 export type RelayFrame =
 	| { type: 'job'; id: string; envelope: JobEnvelope }
+	/** The router settled an accepted prepaid job's payment: run it. */
+	| { type: 'start'; id: string }
 	| { type: 'cancel'; id: string }
 	| { type: 'ping' };
 

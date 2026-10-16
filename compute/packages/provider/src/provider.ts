@@ -6,6 +6,7 @@
 
 import {
 	HEARTBEAT_INTERVAL_MS,
+	PREPAID_START_TIMEOUT_MS,
 	canonicalJSON,
 	findAsset,
 	chunkText,
@@ -81,6 +82,8 @@ export class Provider {
 	private readonly active = new Map<string, AbortController>();
 	/** Running jobs the buyer hung up on (the relay's cancel), as opposed to this node stopping. */
 	private readonly hungUp = new Set<string>();
+	/** Accepted prepaid jobs waiting for the router's start, by relay run id. */
+	private readonly starts = new Map<string, () => void>();
 	/** Job ids already run or running, until shortly after their tickets expire. */
 	private readonly claimed = new Map<string, number>();
 	private readonly pendingReceipts: SignedReceipt[] = [];
@@ -366,6 +369,8 @@ export class Provider {
 				this.hungUp.add(frame.id);
 			}
 			this.active.get(frame.id)?.abort();
+		} else if (frame.type === 'start') {
+			this.starts.get(frame.id)?.();
 		} else if (frame.type === 'job') {
 			await this.runJob(frame.id, frame.envelope);
 		}
@@ -474,6 +479,19 @@ export class Provider {
 		const { model, promptTokens } = checked;
 		const controller = new AbortController();
 		this.active.set(id, controller);
+		/* A router job is prepaid with x402: hold the slot, and run nothing until the router has settled the payment. */
+		if (ticket.paymentMode === 'prepaid') {
+			const start = await this.awaitStart(id, controller.signal);
+			if (start !== 'started') {
+				this.active.delete(id);
+				this.hungUp.delete(id);
+				this.deps.onChange();
+				if (start === 'timeout') {
+					this.send({ type: 'error', id, code: 'not_started', message: 'the router did not start the job in time' });
+				}
+				return;
+			}
+		}
 		const startedAt = Date.now();
 		const summary: JobSummary = {
 			jobId: ticket.jobId,
@@ -577,6 +595,23 @@ export class Provider {
 			this.hungUp.delete(id);
 			this.deps.onChange();
 		}
+	}
+
+	/** Tell the relay a prepaid job passed every check and holds its slot, then wait for the router's start, a cancel, or the timeout. */
+	private awaitStart(id: string, signal: AbortSignal): Promise<'started' | 'cancelled' | 'timeout'> {
+		return new Promise((resolve) => {
+			const done = (outcome: 'started' | 'cancelled' | 'timeout') => {
+				clearTimeout(timer);
+				signal.removeEventListener('abort', cancelled);
+				this.starts.delete(id);
+				resolve(outcome);
+			};
+			const cancelled = () => done('cancelled');
+			const timer = setTimeout(() => done('timeout'), PREPAID_START_TIMEOUT_MS);
+			signal.addEventListener('abort', cancelled, { once: true });
+			this.starts.set(id, () => done('started'));
+			this.send({ type: 'accepted', id });
+		});
 	}
 
 	private async flushReceipts(): Promise<void> {

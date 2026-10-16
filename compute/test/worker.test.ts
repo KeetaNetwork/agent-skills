@@ -137,7 +137,7 @@ async function runJob(buyer: Signer, content: string, options: { hangUpAfter?: s
 			} else if (event.type === 'receipt') {
 				receipt = event.receipt;
 			} else {
-				assert.fail(`the job failed: ${event.code} ${event.message}`);
+				assert.fail(event.type === 'error' ? `the job failed: ${event.code} ${event.message}` : 'an app job waited for a router start');
 			}
 		}
 	} catch (error) {

@@ -38,7 +38,7 @@ Paid. OpenAI request and response format; `stream: true` is supported. Set `max_
 
 1. Send the request with no payment. The router picks a provider and answers `402 Payment Required` with a `PAYMENT-REQUIRED` header: base64 JSON, x402 version 2.
 2. Your client signs one Keeta send block for `amount` to `payTo` and retries the same request with the `PAYMENT-SIGNATURE` header. The block is signed, not published.
-3. The router has the x402 facilitator verify the block and settle it on Keeta, then runs the job and returns the completion.
+3. The router has the x402 facilitator verify the block. The provider checks the quote and reserves a slot for the job, the facilitator settles the payment on Keeta, and only then does the provider run the job. If the provider is offline, busy or refuses the quote, nothing is settled and you are not charged.
 
 The payment goes straight to the serving provider's address. The router never holds the funds.
 
@@ -100,7 +100,7 @@ You pay the maximum. Tokens not used are not refunded in this version, so keep `
 When no provider can take a request, keeta.ai may answer it from its own capacity so paid requests still get an answer. keeta.ai turns this on per model and sets its price.
 
 - The 402 quote then shows keeta.ai's own address as `payTo`. Network providers are always tried first.
-- You are charged only once text has streamed, as with providers.
+- The payment settles before keeta.ai starts the request. If the upstream provider then fails, the payment stays settled.
 - keeta.ai may run these requests through an upstream inference provider. It forwards only the standard chat fields and asks for upstream providers that do not collect prompt data.
 - These responses have no provider receipt, because no network provider ran the job.
 
@@ -185,5 +185,5 @@ try {
 | 400 | Invalid request: malformed JSON or fields the router does not accept |
 | 402 | Payment required, or the payment failed verification or settlement |
 | 404 | Unknown model |
-| 502 | The provider failed. If it failed before streaming started, the payment is not settled. |
+| 502 | The provider failed. If it failed before it accepted the job, the payment is not settled and the message says so. If it failed after the job started, the payment was settled, and the `PAYMENT-RESPONSE` header shows it. |
 | 503 | No provider is available for the model now. Retry after the `Retry-After` header. |

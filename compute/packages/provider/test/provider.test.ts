@@ -1,9 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { CATALOG, type HardwareProfile } from '@keeta-compute/protocol';
+import { CATALOG, defaultAsset, type HardwareProfile, type JobEnvelope, type ProviderFrame } from '@keeta-compute/protocol';
 import type { ControlClient } from '@keeta-compute/protocol/client';
 import type { MlxRuntime } from '@keeta-compute/runtime-mlx';
 import { ModelManager, Provider, hashDirectory, weightsHashFrom, type ProviderState, type ProviderStore } from '../src/index.ts';
@@ -125,4 +127,89 @@ test('idle-only sharing stops advertising and taking jobs once the operator is b
 	internals.active.delete('job_running');
 	await internals.beat();
 	assert.deepEqual(stopped, [model.id], 'the model server stops once the job is done');
+});
+
+test('a router job is accepted and holds its slot, and runs only once the router starts it after settling the payment', async (t) => {
+	/* An OpenAI-compatible model server that counts the requests it is asked to run. */
+	let runs = 0;
+	const server = createServer((req, res) => {
+		runs++;
+		req.resume();
+		res.writeHead(200, { 'content-type': 'text/event-stream' });
+		res.write(`data: ${JSON.stringify({ id: 'c1', created: 1, choices: [{ index: 0, delta: { content: 'Hi' }, finish_reason: 'stop' }] })}\n\n`);
+		res.end(`data: ${JSON.stringify({ id: 'c1', created: 1, choices: [], usage: { prompt_tokens: 4, completion_tokens: 1 } })}\n\ndata: [DONE]\n\n`);
+	});
+	await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+	t.after(() => server.close());
+	const baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`;
+
+	const store = memoryStore();
+	store.state.provider = { ...store.state.provider, enabled: true };
+	const models = new ModelManager(store, tempDir(t), null, () => undefined);
+	const price = { inputPerMillion: '50000', outputPerMillion: '200000' };
+	models.addExternal({ modelId: 'my-model', name: 'Mine', backend: { baseUrl, servedName: 'mine' }, weightsHash: 'a'.repeat(64), sizeBytes: 1, path: '/dev/null', contextLength: 4096, price });
+	const control = {
+		get: async () => ({ coordinatorKey: 'keeta_coordinator' }),
+		post: async () => ({ eligible: true, status: 'online', relayUrl: 'ws://127.0.0.1:1', relayToken: 'token', relayTokenExpiresAt: Date.now() + 60_000 })
+	} as unknown as ControlClient;
+	const sent: ProviderFrame[] = [];
+	/* An open relay socket that records what the provider sends. */
+	class Socket {
+		readyState = 1;
+		addEventListener() {}
+		close() {}
+		send(raw: string) {
+			sent.push(JSON.parse(raw) as ProviderFrame);
+		}
+	}
+	const node = { publicKey: 'keeta_node', sign: async () => 'signature' };
+	const provider = new Provider({
+		store,
+		control,
+		node,
+		verify: () => true,
+		models,
+		runtime: null,
+		kind: 'linux',
+		hardware: () => ({ os: 'linux', osVersion: '6.8', chip: 'x86_64', memoryBytes: 64 * 2 ** 30, freeDiskBytes: 500 * 2 ** 30 }),
+		registration: () => ({}),
+		log: () => undefined,
+		onJob: () => undefined,
+		onChange: () => undefined,
+		WebSocketImpl: Socket as unknown as typeof WebSocket,
+		localConditions: async () => ({ onBattery: false, idleSeconds: 1e9 })
+	});
+	const internals = provider as unknown as { beat(): Promise<void>; onFrame(raw: string): Promise<void>; active: Map<string, AbortController> };
+	await internals.beat();
+	assert.equal(provider.status.state, 'online');
+
+	const envelope = (jobId: string): JobEnvelope => ({
+		ticket: {
+			ticket: { v: 1, jobId, network: 'test', nodeKey: node.publicKey, modelId: 'my-model', buyer: 'keeta_coordinator', maxInputTokens: 1000, maxOutputTokens: 16, price, asset: defaultAsset('test').address, payTo: 'keeta_operator', paymentMode: 'prepaid', prepaidAmount: '1', issuedAt: Date.now(), expiresAt: Date.now() + 60_000 },
+			coordinatorSig: 'signature',
+			relayMac: 'mac'
+		},
+		request: { model: 'my-model', messages: [{ role: 'user', content: 'hi' }], max_tokens: 16 }
+	});
+	const framesFor = (id: string) => sent.filter((f) => 'id' in f && f.id === id).map((f) => f.type);
+	const settle = () => new Promise((resolve) => setTimeout(resolve, 50));
+
+	const job = internals.onFrame(JSON.stringify({ type: 'job', id: 'run_1', envelope: envelope('job_1') }));
+	await settle();
+	assert.deepEqual(framesFor('run_1'), ['accepted'], 'accepted, and nothing else yet');
+	assert.equal(runs, 0, 'the model has not been asked to run');
+	assert.equal(internals.active.size, 1, 'the job holds its slot while the payment settles');
+	await internals.onFrame(JSON.stringify({ type: 'start', id: 'run_1' }));
+	await job;
+	assert.equal(runs, 1);
+	assert.deepEqual(framesFor('run_1'), ['accepted', 'chunk', 'chunk', 'receipt']);
+
+	/* A payment that never settles: the router cancels, and the slot is freed with nothing run. */
+	const cancelled = internals.onFrame(JSON.stringify({ type: 'job', id: 'run_2', envelope: envelope('job_2') }));
+	await settle();
+	await internals.onFrame(JSON.stringify({ type: 'cancel', id: 'run_2' }));
+	await cancelled;
+	assert.deepEqual(framesFor('run_2'), ['accepted']);
+	assert.equal(runs, 1);
+	assert.equal(internals.active.size, 0);
 });
