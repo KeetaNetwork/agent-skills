@@ -6,17 +6,25 @@
  */
 
 import { spawn, execFile, type ChildProcess } from 'node:child_process';
-import { existsSync, mkdirSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
+import { MLX_REQUIREMENTS_LOCK } from './mlx-lock.ts';
 import { waitForServer, type Backend } from './openai-backend.ts';
 
 const run = promisify(execFile);
 
-/* Pinned lower bound; uv resolves the newest compatible release at install time. */
-const MLX_LM_REQUIREMENT = 'mlx-lm>=0.26,<1';
-const UV_URL = 'https://github.com/astral-sh/uv/releases/latest/download/uv-aarch64-apple-darwin.tar.gz';
+/*
+ * Everything the runtime executes is pinned: uv by version and SHA-256 (checked
+ * before it is unpacked), Python by uv's own pinned download list, and mlx-lm
+ * with its dependencies by a hash-locked requirements file.
+ */
+const UV_VERSION = '0.9.5';
+const UV_URL = `https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/uv-aarch64-apple-darwin.tar.gz`;
+const UV_SHA256 = 'dc098ff224d78ed418e121fd374f655949d2c7031a70f6f6604eaf016a130433';
+const PYTHON_VERSION = '3.12';
 const START_TIMEOUT_MS = 15 * 60_000;
 
 export type Log = (level: 'debug' | 'info' | 'warn' | 'error', message: string) => void;
@@ -68,15 +76,32 @@ export class MlxRuntime {
 		const uv = join(this.dir, 'bin', 'uv');
 		if (!existsSync(uv)) {
 			onStep('Downloading the Python package manager');
-			await run('/bin/sh', ['-c', `curl -fsSL "${UV_URL}" | tar -xz -C "${join(this.dir, 'bin')}" --strip-components 1`], { timeout: 300_000 });
+			const response = await fetch(UV_URL);
+			if (!response.ok) {
+				throw new Error(`could not download uv ${UV_VERSION}: HTTP ${response.status}`);
+			}
+			const archive = Buffer.from(await response.arrayBuffer());
+			const digest = createHash('sha256').update(archive).digest('hex');
+			if (digest !== UV_SHA256) {
+				throw new Error(`uv ${UV_VERSION} failed its checksum (got ${digest}); not installing it`);
+			}
+			const tarball = join(this.dir, 'bin', 'uv.tar.gz');
+			writeFileSync(tarball, archive);
+			try {
+				await run('/usr/bin/tar', ['-xzf', tarball, '-C', join(this.dir, 'bin'), '--strip-components', '1'], { timeout: 120_000 });
+			} finally {
+				rmSync(tarball, { force: true });
+			}
 		}
-		const env = { ...process.env, UV_PYTHON_INSTALL_DIR: join(this.dir, 'python'), UV_CACHE_DIR: join(this.dir, 'cache') };
+		const env = { ...process.env, UV_PYTHON_INSTALL_DIR: join(this.dir, 'python'), UV_CACHE_DIR: join(this.dir, 'cache'), UV_PYTHON_PREFERENCE: 'only-managed' };
 		if (!this.isInstalled()) {
 			onStep('Setting up Python');
-			await run(uv, ['venv', '--python', '3.12', join(this.dir, 'venv')], { env, timeout: 600_000 });
+			await run(uv, ['venv', '--python', PYTHON_VERSION, join(this.dir, 'venv')], { env, timeout: 600_000 });
 		}
 		onStep('Installing MLX');
-		await run(uv, ['pip', 'install', '--python', this.python, MLX_LM_REQUIREMENT], { env, timeout: 1_200_000 });
+		const lockFile = join(this.dir, 'mlx-requirements.txt');
+		writeFileSync(lockFile, MLX_REQUIREMENTS_LOCK);
+		await run(uv, ['pip', 'install', '--python', this.python, '--require-hashes', '--no-deps', '-r', lockFile], { env, timeout: 1_200_000 });
 		this.build = null;
 	}
 

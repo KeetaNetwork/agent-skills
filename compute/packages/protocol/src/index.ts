@@ -1,6 +1,7 @@
 export * from './constants.ts';
 export * from './canonical.ts';
 export * from './catalog.ts';
+export * from './catalog-pins.ts';
 export * from './hardware.ts';
 export * from './pricing.ts';
 export * from './types.ts';

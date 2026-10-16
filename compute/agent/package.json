@@ -13,7 +13,8 @@
     "start": "node --import tsx src/main.ts",
     "build:mac": "bun build src/main.ts --compile --minify --target=bun-darwin-arm64 --external bufferutil --external utf-8-validate --outfile dist/darwin-arm64/keeta-compute-agent",
     "build:linux-x64": "bun build src/main.ts --compile --minify --target=bun-linux-x64 --external bufferutil --external utf-8-validate --outfile dist/linux-x64/keeta-compute-agent",
-    "build:linux-arm64": "bun build src/main.ts --compile --minify --target=bun-linux-arm64 --external bufferutil --external utf-8-validate --outfile dist/linux-arm64/keeta-compute-agent"
+    "build:linux-arm64": "bun build src/main.ts --compile --minify --target=bun-linux-arm64 --external bufferutil --external utf-8-validate --outfile dist/linux-arm64/keeta-compute-agent",
+    "catalog:pin": "node --import tsx scripts/pin-catalog.ts"
   },
   "dependencies": {
     "@keeta-compute/protocol": "0.1.0",

@@ -125,4 +125,6 @@ test('relay rejects envelopes without a valid MAC or buyer signature', async () 
 	assert.match((await checkEnvelope(SECRET, 'job_abc', { ticket, request }, Date.now()))!, /buyer signature/);
 	assert.match((await checkEnvelope(SECRET, 'job_other', { ticket, request, buyerSig: 'aa' }, Date.now()))!, /another job/);
 	assert.match((await checkEnvelope('wrong', 'job_abc', { ticket, request, buyerSig: 'aa' }, Date.now()))!, /not issued/);
+	const quoted = await makeTicket();
+	assert.match((await checkEnvelope(SECRET, 'job_abc', { ticket: quoted, request, buyerSig: 'aa' }, Date.now()))!, /paid API/, 'a prepaid ticket from a 402 quote cannot be run directly');
 });

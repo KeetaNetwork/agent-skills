@@ -38,7 +38,11 @@ export async function checkEnvelope(secret: string, jobId: string, envelope: Job
 	if (!timingSafeEqual(signed.relayMac, await ticketMac(secret, signed.ticket))) {
 		return 'ticket was not issued by the control plane';
 	}
-	if (signed.ticket.paymentMode === 'postpay' && typeof envelope.buyerSig !== 'string') {
+	/* Prepaid tickets appear in public 402 quotes; only the router runs them, after the x402 payment verifies. */
+	if (signed.ticket.paymentMode !== 'postpay') {
+		return 'prepaid jobs run only through the paid API';
+	}
+	if (typeof envelope.buyerSig !== 'string') {
 		return 'buyer signature is required';
 	}
 	return null;

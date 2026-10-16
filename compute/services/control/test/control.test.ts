@@ -248,6 +248,11 @@ test('router quotes are prepaid to the provider and settle', async () => {
 	const payer = newSigner();
 	const settled = await h.call(null, 'POST', `/v1/router/jobs/${job.jobId}/settled`, { payer: payer.publicKey, transaction: 'tx' }, { 'x-router-secret': 'router-secret' });
 	assert.equal(settled.status, 200);
+	for (let i = 0; i < 5; i++) {
+		const unpaid = await h.call(null, 'POST', '/v1/router/quote', { network: 'test', model: 'qwen3-8b', maxInputTokens: 10, maxOutputTokens: 10 }, { 'x-router-secret': 'router-secret' });
+		assert.equal(unpaid.status, 200, 'unpaid quotes do not use up the provider');
+	}
+	assert.equal((await h.call(newSigner(), 'POST', '/v1/jobs', { network: 'test', model: 'qwen3-8b', maxInputTokens: 10, maxOutputTokens: 10 })).status, 200);
 });
 
 test('Linux helpers pair by code with check string and master approval', async () => {

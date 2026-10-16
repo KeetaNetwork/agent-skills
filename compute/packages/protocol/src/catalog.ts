@@ -4,10 +4,12 @@
  * case one click and to surface each model's license terms before an operator
  * offers it (plan §4.5, §11.9).
  *
- * `weightsHash` is filled by `npm run catalog:pin` once Keeta pins a revision.
- * Until then the agent computes the hash at install time and advertises it,
- * and buyers see it on every receipt.
+ * Revisions and `weightsHash` come from `catalog-pins.ts`. Until a model is
+ * pinned it installs from `main` on the test network only; the agent computes
+ * the hash at install time and buyers see it on every receipt.
  */
+
+import { CATALOG_PINS } from './catalog-pins.ts';
 
 export type RuntimeKind = 'mlx' | 'openai-compatible';
 
@@ -253,6 +255,14 @@ export const CATALOG: CatalogModel[] = [
 		tags: ['frontier', 'moe', 'cluster']
 	}
 ];
+
+for (const model of CATALOG) {
+	const pin = CATALOG_PINS[model.id];
+	if (pin) {
+		model.source = { ...model.source, revision: pin.revision };
+		model.weightsHash = pin.weightsHash;
+	}
+}
 
 export function findCatalogModel(id: string): CatalogModel | undefined {
 	return CATALOG.find((model) => model.id === id);

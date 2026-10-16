@@ -36,13 +36,17 @@ enum AgentClientError: LocalizedError {
 enum AgentLocator {
     static let executableName = "keeta-compute-agent"
 
-    /// `KEETA_COMPUTE_AGENT_PATH` overrides the bundled helper (useful during development).
+    /// In Debug builds only, `KEETA_COMPUTE_AGENT_PATH` overrides the bundled helper.
+    /// Release builds always run the signed helper inside the app bundle: the agent
+    /// receives passkey output and can ask the node key to sign.
     static func executableURL() -> URL? {
         let fileManager = FileManager.default
+        #if DEBUG
         if let override = ProcessInfo.processInfo.environment["KEETA_COMPUTE_AGENT_PATH"], !override.isEmpty,
            fileManager.isExecutableFile(atPath: override) {
             return URL(fileURLWithPath: override)
         }
+        #endif
         if let url = Bundle.main.url(forResource: executableName, withExtension: nil),
            fileManager.isExecutableFile(atPath: url.path) {
             return url

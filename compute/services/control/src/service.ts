@@ -196,16 +196,17 @@ export class ControlService {
 		const capacity = Number.isInteger(load?.capacity) ? Math.min(64, Math.max(1, Number(load?.capacity))) : 1;
 		const now = this.now();
 		/* Count jobs ticketed to this node that have not started yet, so a heartbeat never frees their slots. */
-		const ticketed = (await this.store.listJobsByNode(nodeKey, 100)).filter((j) => j.status === 'scheduled' && j.createdAt > now - TICKET_TTL_MS).length;
+		const ticketed = (await this.store.listJobsByNode(nodeKey, 100)).filter((j) => j.status === 'scheduled' && j.paymentMode === 'postpay' && j.createdAt > now - TICKET_TTL_MS).length;
 		const active = Math.max(reported, ticketed);
 
 		const record = await this.store.updateProvider(nodeKey, (current) => {
 			const eligible = this.isEligible(current);
+			const pinned = offers.filter((offer) => pinnedOfferOk(offer, current.network));
 			return {
 				...current,
 				status: eligible ? status : 'paused',
-				offers,
-				offeredModels: [...new Set(offers.map((o) => o.modelId))],
+				offers: pinned,
+				offeredModels: [...new Set(pinned.map((o) => o.modelId))],
 				...(access ? { access } : {}),
 				load: { active, capacity },
 				lastHeartbeat: now
@@ -351,7 +352,14 @@ export class ControlService {
 			relayMac: await ticketMac(this.config.relaySecret, ticket)
 		};
 		await this.store.putJob(job);
-		await this.store.updateProvider(chosen.provider.nodeKey, (record) => ({ ...record, load: { ...record.load, active: record.load.active + 1 } }));
+		/*
+		 * Postpay tickets hold a slot until they finish, fail or expire. Router quotes are
+		 * handed to unpaid callers in a 402, so they hold nothing: a provider's own
+		 * heartbeat count covers prepaid jobs once they actually run.
+		 */
+		if (job.paymentMode === 'postpay') {
+			await this.store.updateProvider(chosen.provider.nodeKey, (record) => ({ ...record, load: { ...record.load, active: record.load.active + 1 } }));
+		}
 		return { job, ticket: signed, provider: chosen.provider };
 	}
 
@@ -454,7 +462,7 @@ export class ControlService {
 		});
 		await this.store.updateProvider(nodeKey, (record) => ({
 			...record,
-			load: { ...record.load, active: Math.max(0, record.load.active - 1) },
+			load: { ...record.load, active: Math.max(0, record.load.active - (job.paymentMode === 'postpay' ? 1 : 0)) },
 			stats: {
 				...record.stats,
 				completed: record.stats.completed + 1,
@@ -482,7 +490,7 @@ export class ControlService {
 		});
 		await this.store.updateProvider(nodeKey, (record) => ({
 			...record,
-			load: { ...record.load, active: Math.max(0, record.load.active - 1) },
+			load: { ...record.load, active: Math.max(0, record.load.active - (job.paymentMode === 'postpay' ? 1 : 0)) },
 			stats: { ...record.stats, failed: record.stats.failed + 1 }
 		}));
 		return { job: redactJob(updated) };
@@ -582,7 +590,9 @@ export class ControlService {
 		let confirmed = 0;
 		for (const job of await this.store.listJobsByStatus('scheduled', now - TICKET_TTL_MS - 5 * 60_000, 200)) {
 			await this.store.updateJob(job.jobId, (current) => (current.status === 'scheduled' ? { ...current, status: 'expired' } : current));
-			await this.store.updateProvider(job.nodeKey, (record) => ({ ...record, load: { ...record.load, active: Math.max(0, record.load.active - 1) } }));
+			if (job.paymentMode === 'postpay') {
+				await this.store.updateProvider(job.nodeKey, (record) => ({ ...record, load: { ...record.load, active: Math.max(0, record.load.active - 1) } }));
+			}
 			expired++;
 		}
 		for (const job of await this.store.listJobsByStatus('completed', now, 200)) {
@@ -823,4 +833,16 @@ function publicProvider(record: StoredProvider): ProviderRecord {
 
 function redactJob(job: JobRecord): JobRecord {
 	return job;
+}
+
+/** A catalog offer must carry the pinned weights hash; on main, catalog models must be pinned. */
+function pinnedOfferOk(offer: Offer, network: NetworkName): boolean {
+	const model = findCatalogModel(offer.modelId);
+	if (!model) {
+		return true;
+	}
+	if (model.weightsHash) {
+		return offer.weightsHash === model.weightsHash;
+	}
+	return network !== 'main';
 }

@@ -117,6 +117,7 @@ class FakeLedger implements Ledger {
 /** Stands in for the Worker + Durable Object, using the Worker's own checks. */
 class RelayEmulator {
 	readonly sockets = new Map<string, FakeSocket>();
+	lastEnvelope: JobEnvelope | null = null;
 	private readonly pending = new Map<string, ServerResponse>();
 	readonly server = createServer((req, res) => void this.handle(req, res));
 	url = '';
@@ -177,6 +178,7 @@ class RelayEmulator {
 			res.writeHead(503).end();
 			return;
 		}
+		this.lastEnvelope = envelope;
 		const id = randomId('run');
 		this.pending.set(id, res);
 		res.writeHead(200, { 'content-type': 'text/event-stream' });
@@ -355,6 +357,10 @@ test('a buyer runs a job on a Mac provider and a paired Linux helper, and pays e
 	/* 12 in at 0.10/M + 3 out at 0.40/M rounds up to 3 base units. */
 	assert.equal(firstSend.amount, 3n);
 	assert.equal((await buyer.rpc['buyer.status']!({})).unpaid, 0);
+
+	/* Replaying a ticket that already ran is refused by the provider. */
+	const replay = await fetch(`${relay.url}/v1/jobs/${first.jobId}/run`, { method: 'POST', body: JSON.stringify(relay.lastEnvelope) });
+	assert.match(await replay.text(), /ticket_used/);
 
 	/* A request over the per-request limit is refused and its ticket handed back. */
 	await buyer.rpc['buyer.setPolicy']!({ perRequestMax: '1' });

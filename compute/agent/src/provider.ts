@@ -8,9 +8,11 @@ import {
 	HEARTBEAT_INTERVAL_MS,
 	NETWORKS,
 	canonicalJSON,
+	estimateTokens,
 	findCatalogModel,
 	jobAuthMessage,
 	jobCost,
+	promptText,
 	receiptMessage,
 	sha256Hex,
 	ticketMessage,
@@ -63,6 +65,8 @@ export class Provider {
 	private eligible = true;
 	private state: ProviderState = 'offline';
 	private readonly active = new Map<string, AbortController>();
+	/** Job ids already run or running, until shortly after their tickets expire. */
+	private readonly claimed = new Map<string, number>();
 	private readonly pendingReceipts: SignedReceipt[] = [];
 	private stopped = false;
 	private reconnectDelay = 1000;
@@ -365,6 +369,10 @@ export class Provider {
 		if (envelope.request.model !== ticket.modelId) {
 			return { code: 'invalid_request', error: 'request model does not match the ticket' };
 		}
+		/* The ticket prices at most maxInputTokens; refuse a larger prompt rather than prefill it unpaid. */
+		if (estimateTokens(promptText(envelope.request)) > ticket.maxInputTokens) {
+			return { code: 'invalid_request', error: 'the prompt is larger than the ticket allows' };
+		}
 		if (this.state !== 'online' || this.active.size >= state.provider.maxConcurrentJobs) {
 			return { code: 'busy', error: 'provider is not taking jobs right now' };
 		}
@@ -382,8 +390,26 @@ export class Provider {
 	}
 
 	private async runJob(id: string, envelope: JobEnvelope): Promise<void> {
-		const checked = await this.checkJob(envelope);
 		const ticket = envelope.ticket?.ticket;
+		/* A ticket runs once: claim its job id before any await so a replay or a duplicate delivery is refused. */
+		const jobId = typeof ticket?.jobId === 'string' ? ticket.jobId : null;
+		if (jobId && this.claimed.has(jobId)) {
+			this.send({ type: 'error', id, code: 'ticket_used', message: 'this ticket was already used' });
+			return;
+		}
+		if (jobId) {
+			this.claimed.set(jobId, typeof ticket.expiresAt === 'number' ? ticket.expiresAt : Date.now());
+			for (const [claimedId, expiresAt] of this.claimed) {
+				if (expiresAt < Date.now() - 60_000) {
+					this.claimed.delete(claimedId);
+				}
+			}
+		}
+		let checked = await this.checkJob(envelope);
+		/* Re-check capacity with no await before taking the slot, so concurrent deliveries cannot both pass. */
+		if (!('error' in checked) && this.active.size >= this.deps.store.state.provider.maxConcurrentJobs) {
+			checked = { code: 'busy', error: 'provider is not taking jobs right now' };
+		}
 		if ('error' in checked) {
 			this.deps.log('warn', `rejected job ${ticket?.jobId ?? '?'}: ${checked.error}`);
 			this.send({ type: 'error', id, code: checked.code, message: checked.error });

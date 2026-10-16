@@ -63,6 +63,9 @@ export class ModelManager {
 				throw new Error(`${model.name} does not fit this machine (${fit.reason})`);
 			}
 		}
+		if (!custom && !model.weightsHash && this.store.state.network === 'main') {
+			throw new Error(`${model.name} has no pinned weights hash yet, so it cannot be installed for the main network`);
+		}
 		const controller = new AbortController();
 		this.installs.set(model.id, controller);
 		const progress = (phase: InstallProgress['phase'], bytesDone = 0, bytesTotal = model.diskBytes, message?: string) =>

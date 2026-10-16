@@ -129,7 +129,8 @@ export async function checkPaymentBlock(client: InstanceType<typeof KeetaNet.Cli
 		if (send.to.publicKeyString.get() !== expected.to || send.token.publicKeyString.get() !== expected.asset) {
 			continue;
 		}
-		if (send.external !== undefined && send.external !== expected.reference) {
+		/* The job id is the only link between a send and a receipt: without it one send could clear many jobs. */
+		if (send.external !== expected.reference) {
 			continue;
 		}
 		total += send.amount;
