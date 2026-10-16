@@ -1,0 +1,25 @@
+{
+  "name": "keeta-compute",
+  "private": true,
+  "description": "Keeta Compute: a marketplace for AI inference capacity on Keeta. Control plane, router and relay, node agent, and the macOS app.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "services/*",
+    "agent"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm test --workspaces --if-present",
+    "test:e2e": "node --import tsx --test test/e2e.test.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.4",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  }
+}

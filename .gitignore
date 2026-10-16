@@ -2,3 +2,6 @@ _site/
 __pycache__/
 .wrangler/
 node_modules/
+compute/**/lib/
+compute/**/dist/
+compute/**/.firebase/
