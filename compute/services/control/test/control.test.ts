@@ -33,7 +33,7 @@ import {
 import { Account, accountSigner, checkPaymentBlock, verifyKeetaSignature } from '@keeta-compute/protocol/keeta';
 import { createApi, type ApiRequest } from '../src/http.ts';
 import { creditsFromEnv, fallbackFromEnv, type EnvConfig } from '../src/config.ts';
-import { ControlService, type FallbackConfig, type PaymentVerifier, type SettlementLedger } from '../src/service.ts';
+import { ControlService, type CreditBalanceReader, type FallbackConfig, type PaymentVerifier, type SettlementLedger } from '../src/service.ts';
 import { MemoryStore } from '../src/store.ts';
 
 const GB = 1024 ** 3;
@@ -151,7 +151,7 @@ function settlementAccount(ledger: TestLedger) {
 	return { settlement, stats };
 }
 
-function harness(options: { fallback?: FallbackConfig; credits?: boolean } = {}) {
+function harness(options: { fallback?: FallbackConfig; credits?: boolean; creditBalanceOf?: CreditBalanceReader } = {}) {
 	let clock = 1_800_000_000_000;
 	const store = new MemoryStore();
 	const coordinator = newSigner();
@@ -175,6 +175,7 @@ function harness(options: { fallback?: FallbackConfig; credits?: boolean } = {})
 		credits: options.credits === false ? {} : creditsFromEnv({ ...SECRETS, TEST_CREDIT_TOKEN: CREDITS, TEST_FX_ACCOUNT: FX }, ['test']),
 		settlement,
 		...(options.fallback ? { fallback: options.fallback } : {}),
+		...(options.creditBalanceOf ? { creditBalanceOf: options.creditBalanceOf } : {}),
 		now: () => clock
 	});
 	const handle = createApi(service, { store, verify: verifyKeetaSignature, routerSecret: 'router-secret', now: () => clock });
@@ -548,6 +549,45 @@ test('quotes: an escrow after expiry is refunded, quotes nobody escrows expire, 
 	assert.equal((await h.call(buyer.signer, 'POST', `/v1/jobs/${open.quote.jobId}/cancel`, {})).status, 200);
 	await quote(h, buyer);
 	assert.equal((await quote(h, newBuyer())).job.status, 'quoted', 'the cap is per buyer');
+});
+
+test('a quote needs the buyer to hold the job\'s maximum cost in credits on the ledger, so empty keys cannot hold providers', async () => {
+	const balances = new Map<string, bigint>();
+	let ledgerDown = false;
+	const reads: Array<{ network: string; account: string; token: string }> = [];
+	const h = harness({
+		creditBalanceOf: async (args) => {
+			reads.push(args);
+			if (ledgerDown) {
+				throw new Error('connection reset');
+			}
+			return balances.get(args.account) ?? 0n;
+		}
+	});
+	const { node } = await registerMac(h);
+	await h.call(node, 'POST', '/v1/providers/heartbeat', { status: 'online', offers: [offer('qwen3-8b')], load: { active: 0, capacity: 1 } });
+	const needed = maxJobCost(offer('qwen3-8b').price, LIMITS);
+	const ask = (buyer: Buyer) => h.call(buyer.signer, 'POST', '/v1/jobs', { network: 'test', model: 'qwen3-8b', ...LIMITS });
+
+	const empty = newBuyer();
+	const refused = await ask(empty);
+	assert.equal(refused.status, 402, JSON.stringify(refused.body));
+	assert.match(JSON.stringify(refused.body), /buy credits/);
+	assert.deepEqual(reads[0], { network: 'test', account: empty.address, token: CREDITS }, 'the balance read is of the credit token, for the signing buyer');
+	balances.set(empty.address, needed - 1n);
+	assert.equal((await ask(empty)).status, 402, 'one base unit short');
+
+	ledgerDown = true;
+	const unread = await ask(empty);
+	assert.equal(unread.status, 503, 'a ledger that cannot be read refuses the quote rather than skipping the check');
+	ledgerDown = false;
+
+	/* None of the refusals held the provider's only slot. */
+	const funded = newBuyer();
+	balances.set(funded.address, needed);
+	const created = await quote(h, funded);
+	assert.equal(created.job.status, 'quoted');
+	assert.equal(created.quote.maxCost, needed.toString());
 });
 
 test('app jobs need the credit token and the settlement account; /v1/config publishes both and the stablecoins in lead order', async () => {

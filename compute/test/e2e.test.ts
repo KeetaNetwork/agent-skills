@@ -249,7 +249,8 @@ test('a buyer buys credits with a stablecoin, escrows each job at ticket time, a
 			TEST_FX_ACCOUNT: FX
 		},
 		verifyPayment: ledger.verifier(),
-		settlement: ledger.settlement(SETTLEMENT)
+		settlement: ledger.settlement(SETTLEMENT),
+		creditBalanceOf: async ({ account, token }) => ledger.balanceOf(account, token)
 	});
 	cleanups.push(() => control.server.close());
 	relay.controlUrl = control.url;

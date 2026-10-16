@@ -118,7 +118,7 @@ async function paidOut(jobId: string): Promise<JobRecord> {
 	);
 }
 
-test('a job is ticketed only against a block that escrows it with the settlement account: wrong recipient, reference or amount are refused', { skip: skipLive, timeout: 300_000 }, async () => {
+test('a job is quoted only to a buyer holding its cost in credits, and ticketed only against a block that escrows it with the settlement account', { skip: skipLive, timeout: 300_000 }, async () => {
 	const q = await quote();
 	assert.equal(q.token, credits.token, 'quoted in this run\'s credit token');
 	assert.equal(q.settlement, settlement);
@@ -126,6 +126,11 @@ test('a job is ticketed only against a block that escrows it with the settlement
 	/* 200 in at 1/M + 100 out at 4/M. */
 	assert.equal(due, 600n);
 	const refusal = (blockHash: string) => reportEscrow(q.jobId, blockHash).then(() => assert.fail('the escrow was accepted'), (error: ControlError) => error);
+
+	/* A key holding no credits gets no quote: the control plane reads its balance from the ledger first. */
+	const empty = accountSigner(freshAccount());
+	const unfunded = await api.post(empty, '/v1/jobs', { network: NETWORK, model: MODEL, maxInputTokens: 200, maxOutputTokens: 100 }).then(() => assert.fail('an account with no credits was quoted'), (error: ControlError) => error);
+	assert.equal(unfunded.status, 402);
 
 	const elsewhere = await send(funder.address, due, q.jobId);
 	assert.equal((await refusal(elsewhere)).status, 402, 'sent to another account');

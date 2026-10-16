@@ -6,7 +6,7 @@
 import * as KeetaNet from '@keetanetwork/keetanet-client';
 import { CREDIT_DECIMALS, assertKeetaAddress, assertModelId, assertPrice, pinnedCredits, ValidationError, type NetworkName } from '@keeta-compute/protocol';
 import { Account, accountSigner, checkPaymentBlock, verifyKeetaSignature } from '@keeta-compute/protocol/keeta';
-import { ControlService, type ControlConfig, type FallbackConfig, type PaymentVerifier, type SettlementLedger } from './service.ts';
+import { ControlService, type ControlConfig, type CreditBalanceReader, type FallbackConfig, type PaymentVerifier, type SettlementLedger } from './service.ts';
 import type { Store } from './store.ts';
 
 export interface EnvConfig {
@@ -18,6 +18,8 @@ export interface EnvConfig {
 	/** Comma-separated; defaults to "test". Main must be enabled explicitly. */
 	NETWORKS?: string;
 	ALLOW_SMALL_PROVIDERS?: string;
+	/** "false" skips the ledger read of a buyer's credit balance at quote time (local development only). */
+	REQUIRE_BUYER_BALANCE?: string;
 	/**
 	 * Seed of keeta.ai's settlement account: app buyers escrow credits to it,
 	 * and it pays providers and refunds buyers (it needs KTA for fees). App
@@ -88,6 +90,11 @@ function ledgerClient(network: NetworkName) {
 		ledgerClients.set(network, client);
 	}
 	return client;
+}
+
+/** Reads an account's balance of a token from the Keeta ledger. */
+export function ledgerCreditBalance(): CreditBalanceReader {
+	return (args) => ledgerClient(args.network).getBalance(args.account, args.token);
 }
 
 /** Looks up payment blocks on the Keeta ledger. */
@@ -179,7 +186,7 @@ export function ledgerSettlement(seed: string): SettlementLedger {
 	};
 }
 
-export function serviceFromEnv(store: Store, env: EnvConfig, ledger: { verifyPayment?: PaymentVerifier; settlement?: SettlementLedger } = {}): ControlService {
+export function serviceFromEnv(store: Store, env: EnvConfig, ledger: { verifyPayment?: PaymentVerifier; settlement?: SettlementLedger; creditBalanceOf?: CreditBalanceReader } = {}): ControlService {
 	if (!env.COORDINATOR_SEED || !env.RELAY_SECRET || !env.ROUTER_SECRET) {
 		throw new Error('COORDINATOR_SEED, RELAY_SECRET and ROUTER_SECRET must be set');
 	}
@@ -201,6 +208,7 @@ export function serviceFromEnv(store: Store, env: EnvConfig, ledger: { verifyPay
 		verifyPayment: ledger.verifyPayment ?? ledgerPaymentVerifier(),
 		credits: creditsFromEnv(env, networks),
 		...(settlement ? { settlement } : {}),
+		...(env.REQUIRE_BUYER_BALANCE === 'false' ? {} : { creditBalanceOf: ledger.creditBalanceOf ?? ledgerCreditBalance() }),
 		allowSmallProviders: env.ALLOW_SMALL_PROVIDERS === 'true',
 		...(fallback ? { fallback } : {})
 	});

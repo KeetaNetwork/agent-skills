@@ -72,7 +72,8 @@ before(async () => {
 			TEST_FX_ACCOUNT: Account.fromSeed(Account.generateRandomSeed({ asString: true }), 0).publicKeyString.get()
 		},
 		verifyPayment: ledger.verifier(),
-		settlement: ledger.settlement(SETTLEMENT)
+		settlement: ledger.settlement(SETTLEMENT),
+		creditBalanceOf: async ({ account, token }) => ledger.balanceOf(account, token)
 	});
 	scratch.defer(() => new Promise((resolve) => control.server.close(resolve)));
 	scratch.defer(() => control.server.closeAllConnections());

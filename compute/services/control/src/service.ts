@@ -138,6 +138,8 @@ export interface CreditTokenConfig {
 	fx: string | null;
 }
 
+export type CreditBalanceReader = (args: { network: NetworkName; account: string; token: string }) => Promise<bigint>;
+
 export interface ControlConfig {
 	store: Store;
 	/** Keeta account that signs job tickets. Providers pin its public key. */
@@ -152,6 +154,12 @@ export interface ControlConfig {
 	/** Credits per network. App jobs are refused on a network without them, or without `settlement`. */
 	credits: Partial<Record<NetworkName, CreditTokenConfig>>;
 	settlement?: SettlementLedger;
+	/**
+	 * Reads a buyer's credit balance from the ledger. When set, a quote needs
+	 * the buyer to hold the job's maximum cost, so keys with no credits cannot
+	 * hold providers' slots with quotes they never escrow.
+	 */
+	creditBalanceOf?: CreditBalanceReader;
 	now?: () => number;
 	/** Outside API the public router uses when no provider can take a job. Off when unset. */
 	fallback?: FallbackConfig;
@@ -503,8 +511,18 @@ export class ControlService {
 			...(Array.isArray(body.excludeProviders) ? { excludeProviders: body.excludeProviders.map((k, i) => assertKeetaAddress(k, `excludeProviders[${i}]`)) } : {}),
 			publicOnly: false
 		});
-		const now = this.now();
 		const limits = { maxInputTokens, maxOutputTokens };
+		if (this.config.creditBalanceOf) {
+			const needed = maxJobCost(offer.price, limits);
+			const held = await this.config.creditBalanceOf({ network, account: buyer, token: credits.token }).catch((error: Error) => {
+				console.warn('credit balance lookup failed', error.message);
+				throw new UnavailableError('could not read your credit balance from the ledger; try again');
+			});
+			if (held < needed) {
+				throw new PaymentRequiredError(`this job can cost up to ${needed} credit base units and the account holds ${held}; buy credits first`);
+			}
+		}
+		const now = this.now();
 		const job: JobRecord = {
 			jobId: randomId('job', 12),
 			network,
