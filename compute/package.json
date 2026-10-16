@@ -13,11 +13,12 @@
     "node": ">=22"
   },
   "scripts": {
-    "typecheck": "npm run typecheck --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present && tsc -p tsconfig.json",
     "test": "npm test --workspaces --if-present",
     "test:e2e": "node --import tsx --test test/e2e.test.ts"
   },
   "devDependencies": {
+    "@noble/curves": "^1.9.7",
     "@types/node": "^22.13.4",
     "tsx": "^4.19.2",
     "typescript": "^5.7.3"

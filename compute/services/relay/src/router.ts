@@ -22,10 +22,12 @@ import {
 	type ChatCompletionRequest,
 	type JobEnvelope,
 	type NetworkName,
-	type SignedReceipt,
-	type SignedTicket
+	type SignedTicket,
+	readRelayEvents,
+	aggregateCompletion,
+	type RelayEvent
 } from '@keeta-compute/protocol';
-import { readRelayEvents, type RelayEvent } from './sse.ts';
+
 
 export interface PaymentRequirements {
 	scheme: string;
@@ -238,49 +240,4 @@ export function createRouter(deps: RouterDeps) {
 	}
 
 	return { models, chatCompletions };
-}
-
-/** Collapse an OpenAI chunk stream into one chat.completion object. */
-export async function aggregateCompletion(events: AsyncIterable<RelayEvent>, model: string) {
-	let content = '';
-	let reasoning = '';
-	let finishReason: string | null = null;
-	let usage: Record<string, unknown> | undefined;
-	let id = '';
-	let created = Math.floor(Date.now() / 1000);
-	let receipt: SignedReceipt | undefined;
-	let error: string | undefined;
-	for await (const event of events) {
-		if (event.type === 'receipt') {
-			receipt = event.receipt;
-			continue;
-		}
-		if (event.type === 'error') {
-			error = event.message;
-			continue;
-		}
-		const chunk = event.data as { id?: string; created?: number; choices?: Array<{ delta?: { content?: string; reasoning?: string }; finish_reason?: string | null }>; usage?: Record<string, unknown> };
-		id ||= chunk.id ?? '';
-		created = chunk.created ?? created;
-		for (const choice of chunk.choices ?? []) {
-			content += choice.delta?.content ?? '';
-			reasoning += choice.delta?.reasoning ?? '';
-			finishReason = choice.finish_reason ?? finishReason;
-		}
-		if (chunk.usage) {
-			usage = chunk.usage;
-		}
-	}
-	return {
-		receipt,
-		error,
-		completion: {
-			id: id || `chatcmpl-${crypto.randomUUID()}`,
-			object: 'chat.completion',
-			created,
-			model,
-			choices: [{ index: 0, message: { role: 'assistant', content, ...(reasoning ? { reasoning } : {}) }, finish_reason: finishReason ?? 'stop' }],
-			...(usage ? { usage } : {})
-		}
-	};
 }

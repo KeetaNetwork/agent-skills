@@ -491,12 +491,23 @@ export class ControlService {
 		if (!blockHash) {
 			throw new ValidationError('blockHash must be a 64-character hex block hash');
 		}
-		const job = await this.store.getJob(jobId);
+		let job = await this.store.getJob(jobId);
 		if (!job) {
 			throw new NotFoundError('job not found');
 		}
 		if (job.buyer !== buyer) {
 			throw new ForbiddenError('job belongs to another buyer');
+		}
+		/* The buyer can pay before the provider's own receipt upload lands; it holds the same signed receipt. */
+		if (job.status === 'scheduled' && body.receipt) {
+			try {
+				await this.submitReceipt(job.nodeKey, jobId, { receipt: body.receipt });
+			} catch (error) {
+				if (!(error instanceof ConflictError)) {
+					throw error;
+				}
+			}
+			job = (await this.store.getJob(jobId))!;
 		}
 		if (job.status !== 'completed' || !job.amountDue) {
 			throw new ConflictError(`job is ${job.status}`);

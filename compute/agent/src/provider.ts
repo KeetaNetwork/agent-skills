@@ -1,0 +1,483 @@
+/**
+ * The provider loop (plan §5.3): register, heartbeat with offers, hold an
+ * outbound connection to the relay, and run jobs the control plane ticketed
+ * for this node — after independently re-checking every ticket.
+ */
+
+import {
+	HEARTBEAT_INTERVAL_MS,
+	NETWORKS,
+	canonicalJSON,
+	findCatalogModel,
+	jobAuthMessage,
+	jobCost,
+	receiptMessage,
+	sha256Hex,
+	ticketMessage,
+	usableModelMemory,
+	type HardwareProfile,
+	type JobEnvelope,
+	type Offer,
+	type ProviderFrame,
+	type Receipt,
+	type RelayFrame,
+	type SignedReceipt,
+	type Signer,
+	type Verifier
+} from '@keeta-compute/protocol';
+import { ControlError, type ControlClient } from './control-client.ts';
+import { idleSeconds, onBattery } from './hardware.ts';
+import type { ModelManager, StoredModel } from './models/manager.ts';
+import type { JobSummary, ProviderStatus } from './rpc/types.ts';
+import { streamChat, type Backend } from './runtime/openai-backend.ts';
+import type { Log, MlxRuntime } from './runtime/mlx.ts';
+import { today, type StateStore } from './state.ts';
+
+export interface ProviderDeps {
+	store: StateStore;
+	control: ControlClient;
+	node: Signer;
+	verify: Verifier;
+	models: ModelManager;
+	runtime: MlxRuntime | null;
+	kind: 'mac' | 'linux-helper';
+	hardware: () => HardwareProfile | null;
+	/** Registration fields beyond the basics (mac: payTo + link proof). Null when not ready (no wallet yet). */
+	registration: () => Record<string, unknown> | null;
+	log: Log;
+	onJob: (job: JobSummary) => void;
+	onChange: () => void;
+	WebSocketImpl?: typeof WebSocket;
+	/** Testing: skip battery/idle probes. */
+	localConditions?: () => Promise<{ onBattery: boolean; idleSeconds: number }>;
+}
+
+type ProviderState = ProviderStatus['state'];
+
+export class Provider {
+	private timer: ReturnType<typeof setTimeout> | null = null;
+	private socket: WebSocket | null = null;
+	private relay: { url: string; token: string; expiresAt: number } | null = null;
+	private coordinatorKey: string | null = null;
+	private registeredKey: string | null = null;
+	private eligible = true;
+	private state: ProviderState = 'offline';
+	private readonly active = new Map<string, AbortController>();
+	private readonly pendingReceipts: SignedReceipt[] = [];
+	private stopped = false;
+	private reconnectDelay = 1000;
+	private earnedTotal = '0';
+
+	constructor(private readonly deps: ProviderDeps) {}
+
+	get status(): ProviderStatus {
+		const s = this.deps.store.state;
+		const day = today();
+		return {
+			policy: s.provider,
+			state: this.state,
+			activeJobs: this.active.size,
+			earnedToday: s.earnedByDay[day] ?? '0',
+			earnedTotal: this.earnedTotal !== '0' ? this.earnedTotal : s.earnedTotal,
+			tokensServedToday: s.tokensByDay[day] ?? 0,
+			recentJobs: s.jobs.filter((j) => j.role === 'provider').slice(0, 50)
+		};
+	}
+
+	start(): void {
+		this.stopped = false;
+		void this.tick();
+	}
+
+	stop(): void {
+		this.stopped = true;
+		if (this.timer) {
+			clearTimeout(this.timer);
+		}
+		this.socket?.close();
+		this.socket = null;
+		for (const controller of this.active.values()) {
+			controller.abort();
+		}
+	}
+
+	/** Re-evaluate now (policy or offers changed). */
+	poke(): void {
+		if (this.timer) {
+			clearTimeout(this.timer);
+		}
+		void this.tick();
+	}
+
+	private setState(state: ProviderState) {
+		if (state !== this.state) {
+			this.state = state;
+			this.deps.onChange();
+		}
+	}
+
+	private async localState(): Promise<ProviderState> {
+		const policy = this.deps.store.state.provider;
+		if (!policy.enabled) {
+			return 'paused';
+		}
+		if (!this.eligible) {
+			return 'not-eligible';
+		}
+		const conditions = this.deps.localConditions ? await this.deps.localConditions() : { onBattery: await onBattery(), idleSeconds: await idleSeconds() };
+		if (policy.pauseOnBattery && conditions.onBattery) {
+			return 'on-battery';
+		}
+		if (policy.schedule.mode === 'hours') {
+			const hour = new Date().getHours();
+			const start = policy.schedule.startHour ?? 0;
+			const end = policy.schedule.endHour ?? 24;
+			const inside = start <= end ? hour >= start && hour < end : hour >= start || hour < end;
+			if (!inside) {
+				return 'outside-schedule';
+			}
+		}
+		if (policy.schedule.mode === 'idle' && conditions.idleSeconds < (policy.schedule.idleMinutes ?? 10) * 60 && this.active.size === 0) {
+			return 'outside-schedule';
+		}
+		if (!this.deps.models.models.some((m) => m.offer.offered)) {
+			return 'no-offers';
+		}
+		return 'online';
+	}
+
+	/** Offered models that are ready to serve, starting MLX servers as memory allows. */
+	private async readyOffers(serve: boolean): Promise<Offer[]> {
+		const offers: Offer[] = [];
+		const hardware = this.deps.hardware();
+		let memoryLeft = hardware ? usableModelMemory(hardware) : Number.POSITIVE_INFINITY;
+		const offered = this.deps.models.models.filter((m) => m.offer.offered);
+		for (const model of offered) {
+			const catalog = findCatalogModel(model.modelId);
+			let build: string;
+			let kind: Offer['runtime']['kind'];
+			if (model.backend) {
+				kind = 'openai-compatible';
+				build = `openai-compatible ${new URL(model.backend.baseUrl).host}`;
+			} else {
+				if (!this.deps.runtime) {
+					continue;
+				}
+				const needs = catalog?.memoryBytes ?? model.sizeBytes * 1.2;
+				if (needs > memoryLeft) {
+					this.deps.runtime.stop(model.modelId);
+					continue;
+				}
+				if (!serve) {
+					this.deps.runtime.stop(model.modelId);
+					continue;
+				}
+				try {
+					await this.deps.runtime.start(model.modelId, model.path);
+				} catch (error) {
+					this.deps.log('warn', `could not start ${model.modelId}: ${(error as Error).message}`);
+					continue;
+				}
+				memoryLeft -= needs;
+				kind = 'mlx';
+				build = await this.deps.runtime.runtimeBuild();
+			}
+			const policy = this.deps.store.state.provider;
+			offers.push({
+				modelId: model.modelId,
+				weightsHash: model.weightsHash,
+				runtime: { kind, build },
+				price: model.offer.price,
+				access: model.offer.access ?? policy.access,
+				contextLength: model.contextLength ?? catalog?.contextLength ?? 8192
+			});
+		}
+		return offers;
+	}
+
+	private async tick(): Promise<void> {
+		if (this.stopped) {
+			return;
+		}
+		try {
+			await this.beat();
+		} catch (error) {
+			this.deps.log('warn', `provider heartbeat failed: ${(error as Error).message}`);
+			if (error instanceof ControlError && error.status === 404) {
+				this.registeredKey = null;
+			}
+			if (this.state === 'online' || this.state === 'connecting') {
+				this.setState('offline');
+			}
+		} finally {
+			if (!this.stopped) {
+				this.timer = setTimeout(() => void this.tick(), HEARTBEAT_INTERVAL_MS);
+			}
+		}
+	}
+
+	private async beat(): Promise<void> {
+		const { store, control, node } = this.deps;
+		const registration = this.deps.registration();
+		const hardware = this.deps.hardware();
+		if (!registration || !hardware) {
+			this.setState(store.state.provider.enabled ? 'not-eligible' : 'paused');
+			return;
+		}
+		if (!this.coordinatorKey) {
+			const config = await control.get<{ coordinatorKey: string }>(null, '/v1/config');
+			this.coordinatorKey = config.coordinatorKey;
+		}
+		const registrationKey = canonicalJSON({ registration, network: store.state.network, name: store.state.machineName });
+		if (this.registeredKey !== registrationKey) {
+			const result = await control.post<{ eligible: boolean }>(node, '/v1/providers/register', {
+				network: store.state.network,
+				kind: this.deps.kind,
+				name: store.state.machineName,
+				hardware,
+				...registration
+			});
+			this.eligible = result.eligible;
+			this.registeredKey = registrationKey;
+		}
+		const local = await this.localState();
+		const offers = await this.readyOffers(local === 'online');
+		const online = local === 'online' && offers.length > 0;
+		const result = await control.post<{ status: string; eligible: boolean; relayUrl: string; relayToken: string; relayTokenExpiresAt: number }>(node, '/v1/providers/heartbeat', {
+			status: online ? 'online' : 'paused',
+			offers,
+			access: store.state.provider.access,
+			load: { active: this.active.size, capacity: store.state.provider.maxConcurrentJobs }
+		});
+		this.eligible = result.eligible;
+		this.relay = { url: result.relayUrl, token: result.relayToken, expiresAt: result.relayTokenExpiresAt };
+		await this.flushReceipts();
+		if (online) {
+			this.ensureSocket();
+			this.setState(this.socket?.readyState === 1 ? 'online' : 'connecting');
+		} else {
+			this.setState(!this.eligible ? 'not-eligible' : local === 'online' ? 'no-offers' : local);
+			if (this.active.size === 0) {
+				this.socket?.close();
+				this.socket = null;
+			}
+		}
+		try {
+			const me = await control.get<{ provider: { stats: { earned: string } } }>(node, '/v1/providers/me');
+			this.earnedTotal = me.provider.stats.earned;
+		} catch {
+			/* informational only */
+		}
+	}
+
+	private ensureSocket(): void {
+		if (this.socket || !this.relay) {
+			return;
+		}
+		const WS = this.deps.WebSocketImpl ?? WebSocket;
+		const base = this.relay.url.replace(/^http/, 'ws');
+		const url = `${base}/v1/provider/connect?nodeKey=${encodeURIComponent(this.deps.node.publicKey)}&exp=${this.relay.expiresAt}&token=${this.relay.token}`;
+		const socket = new WS(url);
+		this.socket = socket;
+		socket.addEventListener('open', () => {
+			this.reconnectDelay = 1000;
+			this.deps.log('info', 'connected to the relay');
+			this.setState('online');
+		});
+		socket.addEventListener('message', (event) => {
+			void this.onFrame(String(event.data));
+		});
+		const closed = () => {
+			if (this.socket !== socket) {
+				return;
+			}
+			this.socket = null;
+			if (this.stopped || this.state !== 'online') {
+				return;
+			}
+			this.setState('connecting');
+			setTimeout(() => {
+				if (!this.stopped) {
+					this.ensureSocket();
+				}
+			}, this.reconnectDelay);
+			this.reconnectDelay = Math.min(this.reconnectDelay * 2, 30_000);
+		};
+		socket.addEventListener('close', closed);
+		socket.addEventListener('error', closed);
+	}
+
+	private send(frame: ProviderFrame): void {
+		if (this.socket?.readyState === 1) {
+			this.socket.send(JSON.stringify(frame));
+		}
+	}
+
+	private async onFrame(raw: string): Promise<void> {
+		let frame: RelayFrame;
+		try {
+			frame = JSON.parse(raw) as RelayFrame;
+		} catch {
+			return;
+		}
+		if (frame.type === 'ping') {
+			this.send({ type: 'pong' });
+		} else if (frame.type === 'cancel') {
+			this.active.get(frame.id)?.abort();
+		} else if (frame.type === 'job') {
+			await this.runJob(frame.id, frame.envelope);
+		}
+	}
+
+	/** Every check the node makes itself before running anything (plan §5.5 step 3, §6.2). */
+	async checkJob(envelope: JobEnvelope): Promise<{ model: StoredModel } | { error: string; code: string }> {
+		const state = this.deps.store.state;
+		const signed = envelope?.ticket;
+		const ticket = signed?.ticket;
+		if (!ticket || !this.coordinatorKey || !this.deps.verify(this.coordinatorKey, ticketMessage(ticket), signed.coordinatorSig)) {
+			return { code: 'invalid_ticket', error: 'ticket is not signed by the coordinator' };
+		}
+		if (ticket.nodeKey !== this.deps.node.publicKey || ticket.network !== state.network) {
+			return { code: 'invalid_ticket', error: 'ticket is for another node or network' };
+		}
+		if (ticket.expiresAt < Date.now()) {
+			return { code: 'ticket_expired', error: 'ticket expired' };
+		}
+		if (ticket.asset !== NETWORKS[state.network].settlementAsset.address) {
+			return { code: 'invalid_ticket', error: 'ticket asset is not the settlement asset' };
+		}
+		const model = this.deps.models.installed(ticket.modelId);
+		if (!model || !model.offer.offered) {
+			return { code: 'model_not_offered', error: `${ticket.modelId} is not offered here` };
+		}
+		if (model.offer.price.inputPerMillion !== ticket.price.inputPerMillion || model.offer.price.outputPerMillion !== ticket.price.outputPerMillion) {
+			return { code: 'price_changed', error: 'the price changed since the ticket was issued' };
+		}
+		const access = model.offer.access ?? state.provider.access;
+		if (access.mode === 'allowlist' && (ticket.paymentMode !== 'postpay' || !access.allow.includes(ticket.buyer))) {
+			return { code: 'not_allowed', error: 'this provider only serves listed buyers' };
+		}
+		if (ticket.paymentMode === 'postpay') {
+			if (!envelope.buyerSig || !this.deps.verify(ticket.buyer, await jobAuthMessage(ticket.jobId, envelope.request), envelope.buyerSig)) {
+				return { code: 'invalid_buyer_signature', error: 'the request is not signed by the paying key' };
+			}
+		}
+		if (envelope.request.model !== ticket.modelId) {
+			return { code: 'invalid_request', error: 'request model does not match the ticket' };
+		}
+		if (this.state !== 'online' || this.active.size >= state.provider.maxConcurrentJobs) {
+			return { code: 'busy', error: 'provider is not taking jobs right now' };
+		}
+		return { model };
+	}
+
+	private async backendFor(model: StoredModel): Promise<Backend> {
+		if (model.backend) {
+			return model.backend;
+		}
+		if (!this.deps.runtime) {
+			throw new Error('no runtime');
+		}
+		return this.deps.runtime.start(model.modelId, model.path);
+	}
+
+	private async runJob(id: string, envelope: JobEnvelope): Promise<void> {
+		const checked = await this.checkJob(envelope);
+		const ticket = envelope.ticket?.ticket;
+		if ('error' in checked) {
+			this.deps.log('warn', `rejected job ${ticket?.jobId ?? '?'}: ${checked.error}`);
+			this.send({ type: 'error', id, code: checked.code, message: checked.error });
+			return;
+		}
+		const { model } = checked;
+		const controller = new AbortController();
+		this.active.set(id, controller);
+		const startedAt = Date.now();
+		const summary: JobSummary = {
+			jobId: ticket.jobId,
+			role: 'provider',
+			modelId: ticket.modelId,
+			counterparty: ticket.buyer,
+			inputTokens: 0,
+			outputTokens: 0,
+			amount: '0',
+			status: 'running',
+			at: startedAt
+		};
+		this.deps.onJob(summary);
+		try {
+			const requested = envelope.request.max_completion_tokens ?? envelope.request.max_tokens ?? ticket.maxOutputTokens;
+			const result = await streamChat(await this.backendFor(model), envelope.request, {
+				networkModelId: ticket.modelId,
+				maxOutputTokens: Math.min(requested, ticket.maxOutputTokens),
+				signal: controller.signal,
+				onChunk: (data) => this.send({ type: 'chunk', id, data })
+			});
+			const inputTokens = Math.min(result.inputTokens, ticket.maxInputTokens);
+			const outputTokens = Math.min(result.outputTokens, ticket.maxOutputTokens);
+			const amount = jobCost(ticket.price, { inputTokens, outputTokens });
+			const runtimeBuild = model.backend ? `openai-compatible ${new URL(model.backend.baseUrl).host}` : await this.deps.runtime!.runtimeBuild();
+			const receipt: Receipt = {
+				v: 1,
+				jobId: ticket.jobId,
+				network: ticket.network,
+				nodeKey: this.deps.node.publicKey,
+				payTo: ticket.payTo,
+				buyer: ticket.buyer,
+				modelId: ticket.modelId,
+				weightsHash: model.weightsHash,
+				runtime: { kind: model.backend ? 'openai-compatible' : 'mlx', build: runtimeBuild },
+				inputTokens,
+				outputTokens,
+				price: ticket.price,
+				amount: amount.toString(),
+				asset: ticket.asset,
+				startedAt,
+				finishedAt: Date.now(),
+				outputHash: await sha256Hex(result.text),
+				finishReason: controller.signal.aborted ? 'cancelled' : result.finishReason
+			};
+			const signed: SignedReceipt = { receipt, signature: await this.deps.node.sign(receiptMessage(receipt)) };
+			this.send({ type: 'receipt', id, receipt: signed });
+			this.pendingReceipts.push(signed);
+			void this.flushReceipts();
+			this.deps.store.addToDay('earnedByDay', amount);
+			this.deps.store.update((s) => {
+				const day = today();
+				s.tokensByDay[day] = (s.tokensByDay[day] ?? 0) + outputTokens;
+				s.earnedTotal = (BigInt(s.earnedTotal) + amount).toString();
+			});
+			this.deps.onJob({ ...summary, inputTokens, outputTokens, amount: amount.toString(), status: 'completed', at: Date.now() });
+		} catch (error) {
+			const message = controller.signal.aborted ? 'cancelled by the buyer' : (error as Error).message;
+			this.send({ type: 'error', id, code: 'model_failed', message });
+			this.deps.onJob({ ...summary, status: 'failed', error: message, at: Date.now() });
+			try {
+				await this.deps.control.post(this.deps.node, `/v1/jobs/${ticket.jobId}/fail`, { error: message });
+			} catch {
+				/* the control plane expires it */
+			}
+		} finally {
+			this.active.delete(id);
+			this.deps.onChange();
+		}
+	}
+
+	private async flushReceipts(): Promise<void> {
+		while (this.pendingReceipts.length > 0) {
+			const signed = this.pendingReceipts[0]!;
+			try {
+				await this.deps.control.post(this.deps.node, `/v1/jobs/${signed.receipt.jobId}/receipt`, { receipt: signed });
+			} catch (error) {
+				if (error instanceof ControlError && error.status === 409) {
+					/* The buyer already delivered this receipt with its payment. */
+				} else if (error instanceof ControlError && error.status >= 400 && error.status < 500) {
+					this.deps.log('warn', `control plane refused receipt ${signed.receipt.jobId}: ${error.message}`);
+				} else {
+					return; /* retry on the next heartbeat */
+				}
+			}
+			this.pendingReceipts.shift();
+		}
+	}
+}
