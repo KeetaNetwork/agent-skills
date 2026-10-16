@@ -426,7 +426,6 @@ export class ControlService {
 			payTo: job.payTo,
 			paymentMode: job.paymentMode,
 			...(job.prepaidAmount ? { prepaidAmount: job.prepaidAmount } : {}),
-			...(job.fallback ? { fallback: job.fallback } : {}),
 			issuedAt: job.createdAt,
 			expiresAt: job.createdAt + TICKET_TTL_MS
 		};

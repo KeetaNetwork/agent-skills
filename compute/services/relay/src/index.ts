@@ -59,7 +59,7 @@ function x402Gateway(env: Env, network: NetworkName): Promise<PaymentGateway> {
 const CORS = {
 	'access-control-allow-origin': '*',
 	'access-control-allow-headers': 'authorization, content-type, payment-signature, x-payment',
-	'access-control-expose-headers': 'payment-required, payment-response, x-keeta-receipt, x-keeta-fallback, retry-after'
+	'access-control-expose-headers': 'payment-required, payment-response, x-keeta-receipt, retry-after'
 };
 
 function withCors(response: Response): Response {

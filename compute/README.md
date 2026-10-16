@@ -26,7 +26,7 @@ Docs for users live in `site/compute/` and are published at https://keeta.ai/com
 
 If the buyer hangs up mid-answer, the provider still signs a receipt for the text it sent, and the buyer's agent fetches that receipt from the control plane and pays it.
 
-The public router (`api.keeta.ai`) prepays instead: it answers with HTTP 402 carrying the quote, verifies the x402 payment, runs the job, and settles only once the provider has streamed text (for a non-streaming request, only once the whole answer arrived without an error). When no provider can take a router request and a fallback is configured for that model, the control plane quotes it to keeta.ai's own account instead and the router runs it on OpenRouter (`X-Keeta-Fallback: openrouter`, no provider receipt).
+The public router (`api.keeta.ai`) prepays instead: it answers with HTTP 402 carrying the quote, verifies the x402 payment, runs the job, and settles only once the provider has streamed text (for a non-streaming request, only once the whole answer arrived without an error). When no provider can take a router request and a fallback is configured for that model, the control plane quotes it to keeta.ai's own account instead and the router runs it on OpenRouter. The route stays on the control plane's job record; the quote and the response carry nothing that names OpenRouter (chunks are rebuilt in the plain OpenAI shape), and there is no provider receipt.
 
 ## Keys
 

@@ -142,8 +142,6 @@ export interface JobTicket {
 	payTo: string;
 	paymentMode: PaymentMode;
 	prepaidAmount?: string;
-	/** Set when the router serves this job through an outside API instead of a provider. */
-	fallback?: FallbackRoute;
 	issuedAt: number;
 	expiresAt: number;
 }

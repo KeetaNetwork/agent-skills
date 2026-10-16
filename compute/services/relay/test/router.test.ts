@@ -7,10 +7,11 @@ import { sseData, sseEvent } from '../src/sse.ts';
 
 const SECRET = 'relay-secret';
 const payTo = 'keeta_aabpjkb2hmzj5wjiksxyxjpnbkvnelocqermwxd2ee2diikzy72cjtwd24gm37a';
+const coordinator = 'keeta_coordinator';
 
 async function makeTicket(overrides: Partial<JobTicket> = {}): Promise<SignedTicket> {
 	const ticket: JobTicket = {
-		v: 1, jobId: 'job_abc', network: 'test', nodeKey: payTo, modelId: 'qwen3-8b', buyer: payTo,
+		v: 1, jobId: 'job_abc', network: 'test', nodeKey: payTo, modelId: 'qwen3-8b', buyer: coordinator,
 		maxInputTokens: 1000, maxOutputTokens: 64, price: { inputPerMillion: '100000', outputPerMillion: '400000' },
 		asset: NETWORKS.test.settlementAsset.address, payTo, paymentMode: 'prepaid', prepaidAmount: '36',
 		issuedAt: Date.now(), expiresAt: Date.now() + 60_000, ...overrides
@@ -25,7 +26,7 @@ function sse(...parts: Uint8Array[]): Response {
 const chunk = (content: string, extra: Record<string, unknown> = {}) => ({ id: 'c1', created: 1, choices: [{ index: 0, delta: { content }, finish_reason: null }], ...extra });
 const receipt = { receipt: { jobId: 'job_abc' }, signature: 'ff' };
 
-function setup(options: { runJob?: () => Promise<Response>; gateway?: Partial<PaymentGateway>; ticket?: SignedTicket; openRouter?: (body: Record<string, unknown>) => Response } = {}) {
+function setup(options: { runJob?: () => Promise<Response>; gateway?: Partial<PaymentGateway>; ticket?: SignedTicket; openRouter?: (body: Record<string, unknown>) => Response; fallback?: { via: 'openrouter'; model: string } } = {}) {
 	const calls: string[] = [];
 	const upstreamBodies: Array<Record<string, unknown>> = [];
 	const gateway: PaymentGateway = {
@@ -55,6 +56,9 @@ function setup(options: { runJob?: () => Promise<Response>; gateway?: Partial<Pa
 			assert.equal((init?.headers as Record<string, string> | undefined)?.['x-router-secret'] ?? 'router-secret', 'router-secret');
 			if (url.endsWith('/v1/router/quote')) {
 				return Response.json({ job: {}, ticket: options.ticket ?? (await makeTicket()) });
+			}
+			if (url.includes('/v1/router/jobs/') && !url.endsWith('/settled')) {
+				return Response.json({ jobId: 'job_abc', ...(options.fallback ? { fallback: options.fallback } : {}) });
 			}
 			return Response.json({ ok: true });
 		}) as typeof fetch
@@ -128,18 +132,29 @@ test('a provider is paid only after it streams text, never for empty chunks', as
 	assert.ok(!calls.includes('settle'));
 });
 
-test('with no provider free, a fallback quote is served through OpenRouter and marked', async () => {
-	const fallbackTicket = await makeTicket({ fallback: { via: 'openrouter', model: 'qwen/qwen3-8b' } });
+const houseTicket = () => makeTicket({ nodeKey: coordinator, buyer: coordinator });
+const route = { via: 'openrouter' as const, model: 'qwen/qwen3-8b' };
+
+test('with no provider free, a fallback quote is served through OpenRouter with no trace of it', async () => {
+	const fallbackTicket = await houseTicket();
 	const text = (...lines: string[]) => new Response(lines.join('\n'), { headers: { 'content-type': 'text/event-stream' } });
+	const upstreamChunk = (content: string, extra: Record<string, unknown> = {}) => ({ ...chunk(content), id: 'gen-123', model: 'qwen/qwen3-8b', provider: 'DeepInfra', system_fingerprint: 'fp', ...extra });
 	const { router, calls, upstreamBodies } = setup({
 		ticket: fallbackTicket,
-		openRouter: () => text(': OPENROUTER PROCESSING', '', `data: ${JSON.stringify({ ...chunk('Hi'), model: 'qwen/qwen3-8b' })}`, '', `data: ${JSON.stringify(chunk(' there', { usage: { prompt_tokens: 4, completion_tokens: 2 } }))}`, '', 'data: [DONE]', '')
+		fallback: route,
+		openRouter: () => text(': OPENROUTER PROCESSING', '', `data: ${JSON.stringify(upstreamChunk('Hi'))}`, '', `data: ${JSON.stringify(upstreamChunk(' there', { usage: { prompt_tokens: 4, completion_tokens: 2, cost: 0.0001, is_byok: false } }))}`, '', 'data: [DONE]', '')
 	});
+	const challenge = await router.chatCompletions(new Request('http://api/v1/chat/completions', { method: 'POST', body: chatBody() }));
+	assert.ok(!atob(challenge.headers.get('payment-required')!).includes('openrouter'), 'the quote does not name the fallback');
 	const header = await paymentFor(router);
 	const response = await router.chatCompletions(new Request('http://api/v1/chat/completions', { method: 'POST', body: chatBody({ chat_template: '{{ evil }}' }), headers: { 'payment-signature': header } }));
 	assert.equal(response.status, 200);
-	assert.equal(response.headers.get('x-keeta-fallback'), 'openrouter');
-	const body = (await response.json()) as { model: string; choices: Array<{ message: { content: string } }> };
+	assert.equal(response.headers.get('x-keeta-fallback'), null);
+	const raw = await response.text();
+	for (const marker of ['openrouter', 'gen-123', 'DeepInfra', 'cost', 'is_byok', 'system_fingerprint']) {
+		assert.ok(!raw.toLowerCase().includes(marker.toLowerCase()), `response leaks ${marker}`);
+	}
+	const body = JSON.parse(raw) as { id: string; model: string; choices: Array<{ message: { content: string } }> };
 	assert.equal(body.choices[0]!.message.content, 'Hi there');
 	assert.equal(body.model, 'qwen3-8b', 'the network model id, not the upstream slug');
 	assert.ok(calls.includes('settle'));
@@ -150,13 +165,22 @@ test('with no provider free, a fallback quote is served through OpenRouter and m
 	assert.deepEqual(sent.provider, { data_collection: 'deny' });
 });
 
+test('provider jobs never look up a fallback route', async () => {
+	const { router, calls } = setup({ fallback: route, openRouter: () => new Response('') });
+	const response = await router.chatCompletions(new Request('http://api/v1/chat/completions', { method: 'POST', body: chatBody(), headers: { 'payment-signature': await paymentFor(router) } }));
+	assert.equal(response.status, 200);
+	assert.ok(!calls.some((c) => c.startsWith('GET http://control/v1/router/jobs/')));
+	assert.ok(!calls.some((c) => c.includes('openrouter')));
+});
+
 test('a fallback that fails before text, or is not configured, is never paid', async () => {
-	const fallbackTicket = await makeTicket({ fallback: { via: 'openrouter', model: 'qwen/qwen3-8b' } });
-	const failing = setup({ ticket: fallbackTicket, openRouter: () => new Response(`data: ${JSON.stringify({ error: { code: 502, message: 'upstream down' } })}\n\n`) });
+	const fallbackTicket = await houseTicket();
+	const failing = setup({ ticket: fallbackTicket, fallback: route, openRouter: () => new Response(`data: ${JSON.stringify({ error: { code: 502, message: 'OpenRouter: upstream down' } })}\n\n`) });
 	let response = await failing.router.chatCompletions(new Request('http://api/v1/chat/completions', { method: 'POST', body: chatBody(), headers: { 'payment-signature': await paymentFor(failing.router) } }));
 	assert.equal(response.status, 502);
+	assert.ok(!(await response.text()).includes('OpenRouter'), 'upstream error text is not passed on');
 	assert.ok(!failing.calls.includes('settle'));
-	const off = setup({ ticket: fallbackTicket });
+	const off = setup({ ticket: fallbackTicket, fallback: route });
 	response = await off.router.chatCompletions(new Request('http://api/v1/chat/completions', { method: 'POST', body: chatBody(), headers: { 'payment-signature': await paymentFor(off.router) } }));
 	assert.equal(response.status, 503);
 	assert.ok(!off.calls.includes('settle'));

@@ -12,7 +12,7 @@ Base URL: https://api.keeta.ai/v1
 
 ### GET /v1/models
 
-Free. Lists models with at least one online provider, plus any model the router can serve through its fallback, in the OpenAI list format. Each entry has an extra `keeta` object: how many providers serve the model, and the lowest price per million input and output tokens in USDC base units (6 decimals, so `50000` is 0.05 USDC). Models the fallback can serve also carry `keeta.fallback.price`.
+Free. Lists models with at least one online provider, plus any model the router can serve through its fallback, in the OpenAI list format. Each entry has an extra `keeta` object: how many providers serve the model, and the lowest price per million input and output tokens in USDC base units (6 decimals, so `50000` is 0.05 USDC).
 
 ```json
 {
@@ -94,14 +94,14 @@ In the example, 20 × 50000 + 256 × 100000 = 26600000, divided by one million a
 
 You pay the maximum. Tokens not used are not refunded in this version, so keep `max_tokens` close to what you need.
 
-## Fallback when the network is full
+## When the network is full
 
-When no provider can take a request (none online for the model, or all busy), the router can serve it through OpenRouter instead, so paid requests still get an answer. keeta.ai turns this on per model and sets the fallback price.
+When no provider can take a request, keeta.ai may answer it from its own capacity so paid requests still get an answer. keeta.ai turns this on per model and sets its price.
 
-- The 402 quote then shows keeta.ai's own address as `payTo` and the fallback price. Network providers are always tried first.
-- You are charged only once the fallback has streamed text, as with providers.
-- The router forwards only the standard chat fields, asks OpenRouter to use upstream providers that do not collect prompt data, and reports the network model id in responses.
-- Responses carry an `X-Keeta-Fallback: openrouter` header and no provider receipt, because no network provider ran the job.
+- The 402 quote then shows keeta.ai's own address as `payTo`. Network providers are always tried first.
+- You are charged only once text has streamed, as with providers.
+- keeta.ai may run these requests through an upstream inference provider. It forwards only the standard chat fields and asks for upstream providers that do not collect prompt data.
+- These responses have no provider receipt, because no network provider ran the job.
 
 ## Receipts
 

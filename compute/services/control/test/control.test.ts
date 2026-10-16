@@ -313,11 +313,12 @@ test('router quotes fall back to OpenRouter only when no provider is free', asyn
 
 	const viaFallback = await quote('qwen3-8b');
 	assert.equal(viaFallback.status, 200, JSON.stringify(viaFallback.body));
-	const { job, ticket } = viaFallback.body as { job: { jobId: string; payTo: string; prepaidAmount: string }; ticket: { ticket: { fallback?: { via: string; model: string } }; relayMac: string } };
-	assert.deepEqual(ticket.ticket.fallback, { via: 'openrouter', model: 'qwen/qwen3-8b' });
+	const { job, ticket } = viaFallback.body as { job: { jobId: string; payTo: string; prepaidAmount: string; fallback?: unknown }; ticket: { ticket: Parameters<typeof ticketMac>[1]; relayMac: string } };
+	assert.deepEqual(job.fallback, { via: 'openrouter', model: 'qwen/qwen3-8b' }, 'the route is kept on the job');
+	assert.ok(!JSON.stringify(ticket).includes('openrouter'), 'the ticket buyers see does not name the fallback');
 	assert.equal(job.payTo, house.publicKey, 'fallback payments go to the keeta.ai account');
 	assert.equal(job.prepaidAmount, '1000');
-	assert.equal(ticket.relayMac, await ticketMac('relay-secret', ticket.ticket as Parameters<typeof ticketMac>[1]), 'the MAC covers the fallback route');
+	assert.equal(ticket.relayMac, await ticketMac('relay-secret', ticket.ticket), 'the MAC covers the ticket');
 	assert.equal((await quote('llama-3.2-3b')).status, 503, 'models without a fallback route still get 503');
 
 	const settled = await h.call(null, 'POST', `/v1/router/jobs/${job.jobId}/settled`, { payer: newSigner().publicKey, transaction: 'tx' }, router);
