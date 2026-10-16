@@ -5,34 +5,35 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta
       name="description"
-      content="Agent skills for moving money on Keeta: wallets, payments, named bank accounts, payouts in more than 60 countries, Visa Direct card payouts, bridges, FX, identity, and x402."
+      content="Keeta Compute: a market for AI inference where Macs sell spare capacity and agents pay per request in USDC on Keeta. Plus agent skills for wallets, payments, payouts, bridges, FX, identity, and x402."
     />
     <meta name="theme-color" content="#ffffff" />
     <meta name="color-scheme" content="light" />
-    <title>Keeta Agent Skills</title>
+    <title>Keeta Compute and Agent Skills</title>
     <link rel="canonical" href="https://keeta.ai/" />
+    <link rel="alternate" type="text/markdown" href="/compute/index.md" title="Keeta Compute" />
     <link rel="alternate" type="text/markdown" href="/SKILL.md" title="Keeta agent skill" />
     <link rel="icon" href="./assets/favicon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="./assets/apple-touch-icon.png" />
     <link rel="preload" href="./assets/fonts/Geist-Regular.woff2" as="font" type="font/woff2" crossorigin />
     <link rel="preload" href="./assets/fonts/Geist-Medium.woff2" as="font" type="font/woff2" crossorigin />
     <meta property="og:type" content="website" />
-    <meta property="og:site_name" content="Keeta Agent Skills" />
-    <meta property="og:title" content="Keeta Agent Skills" />
+    <meta property="og:site_name" content="Keeta AI" />
+    <meta property="og:title" content="Keeta Compute and Agent Skills" />
     <meta
       property="og:description"
-      content="Installable Keeta agent skills for payments, bank accounts, global payouts, card payouts, bridges, FX, KYC, and x402."
+      content="AI inference from spare Macs, paid per request in USDC on Keeta. Plus installable agent skills for payments, payouts, bridges, FX, KYC, and x402."
     />
     <meta property="og:url" content="https://keeta.ai/" />
     <meta property="og:image" content="https://keeta.ai/assets/og-image.png" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
-    <meta property="og:image:alt" content="Keeta Agent Skills" />
+    <meta property="og:image:alt" content="Keeta" />
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="Keeta Agent Skills" />
+    <meta name="twitter:title" content="Keeta Compute and Agent Skills" />
     <meta
       name="twitter:description"
-      content="Installable Keeta agent skills for payments, bank accounts, global payouts, card payouts, bridges, FX, KYC, and x402."
+      content="AI inference from spare Macs, paid per request in USDC on Keeta. Plus installable agent skills for payments, payouts, bridges, FX, KYC, and x402."
     />
     <meta name="twitter:image" content="https://keeta.ai/assets/og-image.png" />
     <link rel="stylesheet" href="./styles.css" />
@@ -42,19 +43,19 @@
     <a class="skip-link" href="#main">Skip to content</a>
 
     <header class="nav">
-      <a class="brand" href="#top" aria-label="Keeta Agent Skills home">
+      <a class="brand" href="#top" aria-label="Keeta AI home">
         <img class="wordmark" src="./assets/keeta-wordmark.svg" alt="Keeta" width="84" height="20" />
         <span class="brand-divider" aria-hidden="true"></span>
-        <span class="brand-product">Agent Skills</span>
+        <span class="brand-product">Compute</span>
       </a>
       <nav id="site-menu" aria-label="Primary navigation">
-        <a href="#skills">Catalog</a>
-        <a href="#why">Why Keeta</a>
-        <a href="/compute/">Compute</a>
-        <a href="https://docs.keeta.com/">Docs</a>
+        <a href="#how">How it works</a>
+        <a href="/compute/">Compute docs</a>
+        <a href="/compute/router">API</a>
+        <a href="#skills">Agent skills</a>
         <a href="https://github.com/KeetaNetwork/agent-skills">GitHub</a>
       </nav>
-      <a class="nav-cta" href="#install">Install pack</a>
+      <a class="nav-cta" href="#start">Get started</a>
       <button class="menu-toggle" type="button" aria-expanded="false" aria-controls="site-menu" aria-label="Open menu">
         <svg viewBox="0 0 24 24" aria-hidden="true">
           <path class="menu-open-icon" d="M4 7h16M4 12h16M4 17h16" />
@@ -65,15 +66,163 @@
 
     <main id="main">
       <section class="hero" id="top">
-        <p class="eyebrow"><span aria-hidden="true"></span>Open agent skill pack</p>
-        <h1>Give agents a<br /><em>multi-currency wallet.</em></h1>
+        <p class="eyebrow"><span aria-hidden="true"></span>Keeta Compute · test-network preview</p>
+        <h1>AI inference from spare Macs.<br /><em>Paid per request.</em></h1>
         <p class="hero-copy">
-          With these skills, agents can pay anyone, get paid by bank transfer,
-          pay out to banks in more than 60 countries and to debit cards, bridge
-          across chains, convert currencies, and pay per API call.
+          Mac owners sell idle capacity running open-weight models and are
+          paid in USDC on Keeta for every completed request. Agents and apps
+          call one OpenAI-compatible API.
         </p>
 
-        <div class="install" id="install">
+        <div class="install" id="api">
+          <div class="install-label">
+            <span>List the models on the network</span>
+            <span class="install-status">OpenAI-compatible</span>
+          </div>
+          <div class="command">
+            <code><span aria-hidden="true">$</span> curl https://api.keeta.ai/v1/models</code>
+            <button class="copy" type="button" data-copy="curl https://api.keeta.ai/v1/models" aria-label="Copy models command">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M8 8h11v11H8z" />
+                <path d="M5 16H4V5h11v1" />
+              </svg>
+              <span>Copy</span>
+            </button>
+          </div>
+          <div class="install-label install-label-secondary">
+            <span>Or point any agent at the docs</span>
+            <span class="install-status">pays with x402</span>
+          </div>
+          <div class="command">
+            <code><span aria-hidden="true">→</span> https://keeta.ai/compute/router.md</code>
+            <button class="copy" type="button" data-copy="Read https://keeta.ai/compute/router.md and use the Keeta Compute API, paying with x402." aria-label="Copy agent instruction">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M8 8h11v11H8z" />
+                <path d="M5 16H4V5h11v1" />
+              </svg>
+              <span>Copy</span>
+            </button>
+          </div>
+        </div>
+
+        <dl class="hero-meta">
+          <div><dt>paid per request</dt><dd>USDC</dd></div>
+          <div><dt>settlement</dt><dd>400<span class="unit">ms</span></dd></div>
+          <div><dt>prompts kept by the network</dt><dd>0</dd></div>
+        </dl>
+      </section>
+
+      <section class="partners" id="how">
+        <div class="section-heading">
+          <div>
+            <p class="section-kicker">How it works</p>
+            <h2>One market for spare inference.</h2>
+          </div>
+          <p>
+            A scheduler matches each request to an online provider that has
+            the model and fits the price. Money moves straight from buyer to
+            provider on Keeta; nobody in between holds it.
+          </p>
+        </div>
+        <div class="partner-grid">
+          <article>
+            <span>Provide</span>
+            <h3>Sell spare capacity</h3>
+            <p>Install the app on an Apple Silicon Mac, pick the models that fit, set a price per million tokens, and get paid for each request.</p>
+          </article>
+          <article>
+            <span>Buy locally</span>
+            <h3>Inference for your agents</h3>
+            <p>The same app gives agents on your Mac a local OpenAI-compatible endpoint, with spend limits you set.</p>
+          </article>
+          <article>
+            <span>Public API</span>
+            <h3>One endpoint for everyone else</h3>
+            <p>Servers and other platforms call api.keeta.ai with the OpenAI chat API and pay per request with x402.</p>
+          </article>
+          <article>
+            <span>Payments</span>
+            <h3>Paid directly, in USDC</h3>
+            <p>Buyers pay providers on Keeta. You are charged only once a provider has streamed text.</p>
+          </article>
+          <article>
+            <span>Receipts</span>
+            <h3>Signed for every job</h3>
+            <p>Each response carries the provider's signed receipt: model, weights hash, runtime, tokens, price and amount.</p>
+          </article>
+          <article>
+            <span>Privacy</span>
+            <h3>Your machines, your rules</h3>
+            <p>Providers can see the prompts they serve, so sensitive work can stay on your own machines or a list of buyers you trust.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="catalog" id="start">
+        <div class="section-heading">
+          <div>
+            <p class="section-kicker">Get started</p>
+            <h2>Provide, buy, or build on it.</h2>
+          </div>
+          <p>
+            Every page is also plain Markdown, so agents can read the same
+            docs you do.
+          </p>
+        </div>
+        <div class="skill-grid start-grid">
+          <a class="skill-card featured" href="/compute/app">
+            <div class="card-top"><span class="number">01</span><span class="tag">Provide &amp; buy</span></div>
+            <h3>macOS app</h3>
+            <p>A passkey wallet, compatible models, provider controls, and a local endpoint for your agents.</p>
+            <span class="card-link">Read the guide <span aria-hidden="true">→</span></span>
+          </a>
+          <a class="skill-card featured" href="/compute/router">
+            <div class="card-top"><span class="number">02</span><span class="tag">Build</span></div>
+            <h3>Public API router</h3>
+            <p>OpenAI-compatible endpoints, the x402 payment flow, receipts, and errors.</p>
+            <span class="card-link">Read the API <span aria-hidden="true">→</span></span>
+          </a>
+          <a class="skill-card" href="/compute/helper">
+            <div class="card-top"><span class="number">03</span><span class="tag">Linux</span></div>
+            <h3>Linux machines</h3>
+            <p>Run Keeta Compute on Linux with GPU servers such as vLLM or llama.cpp.</p>
+            <span class="card-link">Read the guide <span aria-hidden="true">→</span></span>
+          </a>
+          <a class="skill-card" href="/compute/models">
+            <div class="card-top"><span class="number">04</span><span class="tag">Catalog</span></div>
+            <h3>Models</h3>
+            <p>Open-weight models, the memory each needs, licenses, and suggested prices.</p>
+            <span class="card-link">Browse models <span aria-hidden="true">→</span></span>
+          </a>
+          <a class="skill-card" href="/compute/protocol">
+            <div class="card-top"><span class="number">05</span><span class="tag">Spec</span></div>
+            <h3>Protocol</h3>
+            <p>Identities, signed requests, tickets, receipts, and the pricing math.</p>
+            <span class="card-link">Read the spec <span aria-hidden="true">→</span></span>
+          </a>
+          <a class="skill-card agent-card" href="/compute/index.md">
+            <div class="card-top"><span class="number">→</span><span class="tag">For agents</span></div>
+            <h3>Compute as Markdown</h3>
+            <p>Point any agent at keeta.ai/compute/index.md, or add .md to any Compute page.</p>
+            <span class="card-link">Open index.md <span aria-hidden="true">→</span></span>
+          </a>
+        </div>
+      </section>
+
+      <section class="skills-intro" id="skills-install">
+        <div class="section-heading">
+          <div>
+            <p class="section-kicker">Agent skills</p>
+            <h2>Give agents a multi-currency wallet.</h2>
+          </div>
+          <p>
+            With these skills, agents can pay anyone, get paid by bank
+            transfer, pay out to banks in more than 60 countries and to debit
+            cards, bridge across chains, convert currencies, and pay per API
+            call, including for Keeta Compute.
+          </p>
+        </div>
+        <div class="install skills-install" id="install">
           <div class="install-label">
             <span>Install all 14 skills</span>
             <span class="install-status">agentskills.io compatible</span>
@@ -104,58 +253,12 @@
           </div>
         </div>
 
-        <dl class="hero-meta">
-          <div><dt>skills</dt><dd>14</dd></div>
-          <div><dt>payout countries</dt><dd>60+</dd></div>
-          <div><dt>settlement</dt><dd>400<span class="unit">ms</span></dd></div>
-        </dl>
       </section>
 
-      <section class="wedge" id="why">
-        <div>
-          <p class="section-kicker">Network reach</p>
-          <h2>One wallet. More than one money rail.</h2>
-        </div>
-        <p>
-          One Keeta account holds dollars, euros, stablecoins, and KTA.
-          Anchors run by Keeta and its partners connect that account to bank
-          accounts, cards, and other blockchains.
-        </p>
-        <dl class="rail">
-          <dt>Networks connected</dt>
-          <dd class="rail-figure">79</dd>
-          <dd class="rail-detail">11 blockchains: Base, Ethereum, Solana and more</dd>
-          <dd class="rail-detail">68 payment rails: Visa Direct, ACH, SWIFT and more</dd>
-        </dl>
-        <dl class="rail">
-          <dt>Assets to pay in</dt>
-          <dd class="rail-figure">57</dd>
-          <dd class="rail-detail">9 currencies by bank transfer</dd>
-          <dd class="rail-detail">48 tokens from other chains</dd>
-        </dl>
-        <dl class="rail">
-          <dt>Assets to pay out</dt>
-          <dd class="rail-figure">97</dd>
-          <dd class="rail-detail">49 currencies over local rails and wires</dd>
-          <dd class="rail-detail">48 tokens to other chains</dd>
-        </dl>
-        <p class="reach-note">Main network, October 2026. Asset totals exclude card payouts and top-ups.</p>
-      </section>
-
-      <section class="final-cta" id="compute">
-        <p class="section-kicker">Keeta Compute · test-network preview</p>
-        <h2>Macs sell spare AI inference.<br />Agents pay per request in USDC.</h2>
-        <p class="final-links">
-          <a href="/compute/">Read the Compute docs</a>
-          <a href="/compute/app">macOS app</a>
-          <a href="/compute/router">Public API router</a>
-        </p>
-      </section>
-
-      <section class="catalog" id="skills">
+      <section class="catalog skills-catalog" id="skills">
         <div class="section-heading">
           <div>
-            <p class="section-kicker">The catalog</p>
+            <p class="section-kicker">The skill catalog</p>
             <h2>From empty wallet to external settlement.</h2>
           </div>
           <p>
@@ -272,7 +375,38 @@
         </p>
       </section>
 
-      <section class="partners" id="partners">
+      <section class="wedge" id="why">
+        <div>
+          <p class="section-kicker">Network reach</p>
+          <h2>One wallet. More than one money rail.</h2>
+        </div>
+        <p>
+          One Keeta account holds dollars, euros, stablecoins, and KTA.
+          Anchors run by Keeta and its partners connect that account to bank
+          accounts, cards, and other blockchains.
+        </p>
+        <dl class="rail">
+          <dt>Networks connected</dt>
+          <dd class="rail-figure">79</dd>
+          <dd class="rail-detail">11 blockchains: Base, Ethereum, Solana and more</dd>
+          <dd class="rail-detail">68 payment rails: Visa Direct, ACH, SWIFT and more</dd>
+        </dl>
+        <dl class="rail">
+          <dt>Assets to pay in</dt>
+          <dd class="rail-figure">57</dd>
+          <dd class="rail-detail">9 currencies by bank transfer</dd>
+          <dd class="rail-detail">48 tokens from other chains</dd>
+        </dl>
+        <dl class="rail">
+          <dt>Assets to pay out</dt>
+          <dd class="rail-figure">97</dd>
+          <dd class="rail-detail">49 currencies over local rails and wires</dd>
+          <dd class="rail-detail">48 tokens to other chains</dd>
+        </dl>
+        <p class="reach-note">Main network, October 2026. Asset totals exclude card payouts and top-ups.</p>
+      </section>
+
+      <section class="partners partners-plain" id="partners">
         <div class="section-heading">
           <div>
             <p class="section-kicker">Partners</p>
@@ -319,9 +453,19 @@
       </section>
 
       <section class="final-cta">
-        <p class="section-kicker">Ready to install</p>
-        <h2>Build on every Keeta rail.</h2>
+        <p class="section-kicker">Start building</p>
+        <h2>Spare inference in. Agents that pay out.</h2>
         <div class="final-commands">
+          <div class="command command-light">
+            <code><span aria-hidden="true">$</span> curl https://api.keeta.ai/v1/models</code>
+            <button class="copy" type="button" data-copy="curl https://api.keeta.ai/v1/models" aria-label="Copy models command">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M8 8h11v11H8z" />
+                <path d="M5 16H4V5h11v1" />
+              </svg>
+              <span>Copy</span>
+            </button>
+          </div>
           <div class="command command-light">
             <code><span aria-hidden="true">$</span> npx skills add KeetaNetwork/agent-skills</code>
             <button class="copy" type="button" data-copy="npx skills add KeetaNetwork/agent-skills" aria-label="Copy install command">
@@ -344,6 +488,7 @@
           </div>
         </div>
         <p class="final-links">
+          <a href="/compute/">Read the Compute docs</a>
           <a href="/SKILL.md">Read the main skill</a>
           <a href="https://docs.keeta.com/">Keeta docs</a>
           <a href="https://github.com/KeetaNetwork/agent-skills">View on GitHub</a>
@@ -354,12 +499,12 @@
     <footer class="site-footer">
       <div class="footer-top">
         <div class="footer-intro">
-          <a class="brand footer-brand" href="#top" aria-label="Keeta Agent Skills home">
+          <a class="brand footer-brand" href="#top" aria-label="Keeta AI home">
             <img class="wordmark" src="./assets/keeta-wordmark.svg" alt="Keeta" width="84" height="20" />
             <span class="brand-divider" aria-hidden="true"></span>
-            <span class="brand-product">Agent Skills</span>
+            <span class="brand-product">Compute</span>
           </a>
-          <p>Agent skills for moving money on Keeta Network.</p>
+          <p>AI inference paid per request, and agent skills for moving money on Keeta Network.</p>
         </div>
         <nav class="footer-links" aria-label="Footer">
           <div>
@@ -367,6 +512,13 @@
             <a href="https://keeta.com/">keeta.com</a>
             <a href="https://docs.keeta.com/">Docs</a>
             <a href="https://explorer.keeta.com/">Explorer</a>
+          </div>
+          <div>
+            <h2>Compute</h2>
+            <a href="/compute/">Docs</a>
+            <a href="/compute/app">macOS app</a>
+            <a href="/compute/router">API router</a>
+            <a href="/compute/models">Models</a>
           </div>
           <div>
             <h2>For agents</h2>

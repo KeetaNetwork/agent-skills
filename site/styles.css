@@ -280,6 +280,7 @@ img {
 
 .hero,
 .wedge,
+.skills-intro,
 .catalog,
 .partners,
 .final-cta,
@@ -490,6 +491,7 @@ h1 em {
 }
 
 .wedge h2,
+.skills-intro h2,
 .catalog h2,
 .partners h2,
 .final-cta h2 {
@@ -739,6 +741,20 @@ h1 em {
   text-decoration-color: var(--accent);
 }
 
+/* Agent skills introduction */
+
+.skills-intro {
+  padding-top: 104px;
+  padding-bottom: 104px;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-wash);
+}
+
+.skills-install {
+  margin-top: 48px;
+}
+
 /* Partners */
 
 .partners {
@@ -747,6 +763,11 @@ h1 em {
   border-top: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
   background: var(--surface-wash);
+}
+
+.partners-plain {
+  border-bottom: 0;
+  background: var(--surface);
 }
 
 .partner-grid {
@@ -865,7 +886,7 @@ h1 em {
 
 .footer-links {
   display: grid;
-  grid-template-columns: repeat(3, minmax(120px, auto));
+  grid-template-columns: repeat(4, minmax(120px, auto));
   gap: 48px;
 }
 
@@ -1009,6 +1030,7 @@ h1 em {
   }
 
   .wedge h2,
+  .skills-intro h2,
   .catalog h2,
   .partners h2,
   .final-cta h2 {
@@ -1098,6 +1120,7 @@ h1 em {
     margin-top: 0;
   }
 
+  .skills-intro,
   .catalog,
   .partners {
     padding-top: 72px;

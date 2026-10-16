@@ -1,21 +1,61 @@
 <!doctype html>
 <html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="color-scheme" content="light">
-<title>Keeta Compute</title>
-<meta name="description" content="Keeta Compute: Macs sell spare AI inference capacity and are paid per request in USDC on Keeta Network.">
-<link rel="canonical" href="https://keeta.ai/compute/">
-<link rel="alternate" type="text/markdown" href="/compute/index.md" title="This page as Markdown">
-<link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
-<link rel="stylesheet" href="/compute/compute.css">
-</head>
-<body>
-<header>
-<nav aria-label="Keeta Compute"><a href="/compute/" aria-current="page">Compute</a> <a href="/compute/app">macOS app</a> <a href="/compute/models">Models</a> <a href="/compute/router">API router</a> <a href="/compute/helper">Linux helper</a> <a href="/compute/protocol">Protocol</a> <a href="/">Agent skills</a></nav>
-</header>
-<main>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#ffffff" />
+    <meta name="color-scheme" content="light" />
+    <title>Keeta Compute</title>
+    <meta name="description" content="Keeta Compute: Macs sell spare AI inference capacity and are paid per request in USDC on Keeta Network." />
+    <link rel="canonical" href="https://keeta.ai/compute/" />
+    <link rel="alternate" type="text/markdown" href="/compute/index.md" title="This page as Markdown" />
+    <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png" />
+    <link rel="preload" href="/assets/fonts/Geist-Regular.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="/assets/fonts/Geist-Medium.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/compute/compute.css" />
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <header class="nav">
+      <a class="brand" href="/" aria-label="Keeta AI home">
+        <img class="wordmark" src="/assets/keeta-wordmark.svg" alt="Keeta" width="84" height="20" />
+        <span class="brand-divider" aria-hidden="true"></span>
+        <span class="brand-product">Compute</span>
+      </a>
+      <nav id="site-menu" aria-label="Primary navigation">
+        <a href="/#how">How it works</a>
+        <a href="/compute/">Compute docs</a>
+        <a href="/compute/router">API</a>
+        <a href="/#skills">Agent skills</a>
+        <a href="https://github.com/KeetaNetwork/agent-skills">GitHub</a>
+      </nav>
+      <a class="nav-cta" href="/#start">Get started</a>
+      <button class="menu-toggle" type="button" aria-expanded="false" aria-controls="site-menu" aria-label="Open menu">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path class="menu-open-icon" d="M4 7h16M4 12h16M4 17h16" />
+          <path class="menu-close-icon" d="M6 6l12 12M18 6L6 18" />
+        </svg>
+      </button>
+    </header>
+
+    <main id="main" class="docs">
+      <aside class="docs-nav">
+        <p class="section-kicker">Keeta Compute</p>
+        <nav aria-label="Keeta Compute pages">
+          <a href="/compute/" aria-current="page">Compute</a>
+          <a href="/compute/app">macOS app</a>
+          <a href="/compute/models">Models</a>
+          <a href="/compute/router">API router</a>
+          <a href="/compute/helper">Linux helper</a>
+          <a href="/compute/protocol">Protocol</a>
+        </nav>
+      </aside>
+      <article class="docs-body">
+        <p class="eyebrow"><span aria-hidden="true"></span>Test-network preview</p>
 <h1 id="keeta-compute">Keeta Compute</h1>
 <p>Status: test-network preview. Nothing on these pages runs on the Keeta main network yet. Hostnames such as <code>api.keeta.ai</code> are the planned production endpoints.</p>
 <p>Keeta Compute is a market for AI inference on Apple Silicon Macs, paid per request in USDC on Keeta Network.</p>
@@ -52,9 +92,50 @@
 </ul>
 <p>Each page is also served as Markdown: add <code>.md</code> to its path, for example <code>https://keeta.ai/compute/router.md</code>.</p>
 <p>Keeta Compute builds on the <a href="/">Keeta agent skills</a>, which cover wallets, payments and <a href="/skills/x402-payments/SKILL.md">x402</a>.</p>
-</main>
-<footer>
-<p>Plain text: <a href="/compute/index.md">index.md</a>. Keeta Compute is in a test-network preview. <a href="/llms.txt">llms.txt</a> <a href="https://github.com/KeetaNetwork/agent-skills">GitHub</a></p>
-</footer>
-</body>
+        <p class="docs-source">This page as Markdown: <a href="/compute/index.md">index.md</a>. Every Compute page for agents: <a href="/llms.txt">llms.txt</a>.</p>
+      </article>
+    </main>
+
+    <footer class="site-footer">
+      <div class="footer-top">
+        <div class="footer-intro">
+          <a class="brand footer-brand" href="/" aria-label="Keeta AI home">
+            <img class="wordmark" src="/assets/keeta-wordmark.svg" alt="Keeta" width="84" height="20" />
+            <span class="brand-divider" aria-hidden="true"></span>
+            <span class="brand-product">Compute</span>
+          </a>
+          <p>AI inference paid per request, and agent skills for moving money on Keeta Network.</p>
+        </div>
+        <nav class="footer-links" aria-label="Footer">
+          <div>
+            <h2>Keeta</h2>
+            <a href="https://keeta.com/">keeta.com</a>
+            <a href="https://docs.keeta.com/">Docs</a>
+            <a href="https://explorer.keeta.com/">Explorer</a>
+          </div>
+          <div>
+            <h2>Compute</h2>
+            <a href="/compute/">Docs</a>
+            <a href="/compute/app">macOS app</a>
+            <a href="/compute/router">API router</a>
+            <a href="/compute/models">Models</a>
+          </div>
+          <div>
+            <h2>For agents</h2>
+            <a href="/SKILL.md">SKILL.md</a>
+            <a href="/llms.txt">llms.txt</a>
+            <a href="/llms-full.txt">llms-full.txt</a>
+            <a href="/.well-known/agent-skills/index.json">Skill index</a>
+          </div>
+          <div>
+            <h2>Open source</h2>
+            <a href="https://github.com/KeetaNetwork/agent-skills">GitHub</a>
+            <a href="https://agentskills.io/">Agent Skills spec</a>
+            <a href="https://github.com/KeetaNetwork/agent-skills/blob/main/LICENSE">Apache-2.0 license</a>
+          </div>
+        </nav>
+      </div>
+      <p class="footer-bottom">Open source under Apache-2.0.</p>
+    </footer>
+  </body>
 </html>

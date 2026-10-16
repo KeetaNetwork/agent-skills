@@ -127,39 +127,121 @@ def render(lines: list[str]) -> str:
     return "\n".join(out)
 
 
+# The site header and footer, shared with site/index.html and site/404.html; keep them in step.
+HEADER = """    <header class="nav">
+      <a class="brand" href="/" aria-label="Keeta AI home">
+        <img class="wordmark" src="/assets/keeta-wordmark.svg" alt="Keeta" width="84" height="20" />
+        <span class="brand-divider" aria-hidden="true"></span>
+        <span class="brand-product">Compute</span>
+      </a>
+      <nav id="site-menu" aria-label="Primary navigation">
+        <a href="/#how">How it works</a>
+        <a href="/compute/">Compute docs</a>
+        <a href="/compute/router">API</a>
+        <a href="/#skills">Agent skills</a>
+        <a href="https://github.com/KeetaNetwork/agent-skills">GitHub</a>
+      </nav>
+      <a class="nav-cta" href="/#start">Get started</a>
+      <button class="menu-toggle" type="button" aria-expanded="false" aria-controls="site-menu" aria-label="Open menu">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path class="menu-open-icon" d="M4 7h16M4 12h16M4 17h16" />
+          <path class="menu-close-icon" d="M6 6l12 12M18 6L6 18" />
+        </svg>
+      </button>
+    </header>"""
+
+FOOTER = """    <footer class="site-footer">
+      <div class="footer-top">
+        <div class="footer-intro">
+          <a class="brand footer-brand" href="/" aria-label="Keeta AI home">
+            <img class="wordmark" src="/assets/keeta-wordmark.svg" alt="Keeta" width="84" height="20" />
+            <span class="brand-divider" aria-hidden="true"></span>
+            <span class="brand-product">Compute</span>
+          </a>
+          <p>AI inference paid per request, and agent skills for moving money on Keeta Network.</p>
+        </div>
+        <nav class="footer-links" aria-label="Footer">
+          <div>
+            <h2>Keeta</h2>
+            <a href="https://keeta.com/">keeta.com</a>
+            <a href="https://docs.keeta.com/">Docs</a>
+            <a href="https://explorer.keeta.com/">Explorer</a>
+          </div>
+          <div>
+            <h2>Compute</h2>
+            <a href="/compute/">Docs</a>
+            <a href="/compute/app">macOS app</a>
+            <a href="/compute/router">API router</a>
+            <a href="/compute/models">Models</a>
+          </div>
+          <div>
+            <h2>For agents</h2>
+            <a href="/SKILL.md">SKILL.md</a>
+            <a href="/llms.txt">llms.txt</a>
+            <a href="/llms-full.txt">llms-full.txt</a>
+            <a href="/.well-known/agent-skills/index.json">Skill index</a>
+          </div>
+          <div>
+            <h2>Open source</h2>
+            <a href="https://github.com/KeetaNetwork/agent-skills">GitHub</a>
+            <a href="https://agentskills.io/">Agent Skills spec</a>
+            <a href="https://github.com/KeetaNetwork/agent-skills/blob/main/LICENSE">Apache-2.0 license</a>
+          </div>
+        </nav>
+      </div>
+      <p class="footer-bottom">Open source under Apache-2.0.</p>
+    </footer>"""
+
+
 for name, (title, description) in PAGES.items():
     md = (DIR / f"{name}.md").read_text(encoding="utf-8")
     body = render(md.splitlines())
     path = "/compute/" if name == "index" else f"/compute/{name}"
     full_title = "Keeta Compute" if name == "index" else f"{title} | Keeta Compute"
-    nav = " ".join(
-        f'<a href="{"/compute/" if key == "index" else "/compute/" + key}"{CURRENT if key == name else ""}>{label}</a>'
+    nav = "\n".join(
+        f'          <a href="{"/compute/" if key == "index" else "/compute/" + key}"{CURRENT if key == name else ""}>{label}</a>'
         for key, label in NAV
     )
     page = f"""<!doctype html>
 <html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="color-scheme" content="light">
-<title>{full_title}</title>
-<meta name="description" content="{html.escape(description)}">
-<link rel="canonical" href="https://keeta.ai{path}">
-<link rel="alternate" type="text/markdown" href="/compute/{name}.md" title="This page as Markdown">
-<link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
-<link rel="stylesheet" href="/compute/compute.css">
-</head>
-<body>
-<header>
-<nav aria-label="Keeta Compute">{nav} <a href="/">Agent skills</a></nav>
-</header>
-<main>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#ffffff" />
+    <meta name="color-scheme" content="light" />
+    <title>{full_title}</title>
+    <meta name="description" content="{html.escape(description)}" />
+    <link rel="canonical" href="https://keeta.ai{path}" />
+    <link rel="alternate" type="text/markdown" href="/compute/{name}.md" title="This page as Markdown" />
+    <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png" />
+    <link rel="preload" href="/assets/fonts/Geist-Regular.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="/assets/fonts/Geist-Medium.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/compute/compute.css" />
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+
+{HEADER}
+
+    <main id="main" class="docs">
+      <aside class="docs-nav">
+        <p class="section-kicker">Keeta Compute</p>
+        <nav aria-label="Keeta Compute pages">
+{nav}
+        </nav>
+      </aside>
+      <article class="docs-body">
+        <p class="eyebrow"><span aria-hidden="true"></span>Test-network preview</p>
 {body}
-</main>
-<footer>
-<p>Plain text: <a href="/compute/{name}.md">{name}.md</a>. Keeta Compute is in a test-network preview. <a href="/llms.txt">llms.txt</a> <a href="https://github.com/KeetaNetwork/agent-skills">GitHub</a></p>
-</footer>
-</body>
+        <p class="docs-source">This page as Markdown: <a href="/compute/{name}.md">{name}.md</a>. Every Compute page for agents: <a href="/llms.txt">llms.txt</a>.</p>
+      </article>
+    </main>
+
+{FOOTER}
+  </body>
 </html>
 """
     (DIR / f"{name}.html").write_text(page, encoding="utf-8")
