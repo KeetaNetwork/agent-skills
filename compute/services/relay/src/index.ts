@@ -10,11 +10,13 @@
  *                                                  fallback is configured
  */
 
+import './browser-globals.ts';
 import { HTTPFacilitatorClient, x402ResourceServer } from '@x402/core/server';
 import { ExactKeetaScheme } from '@x402/keeta/exact/server';
 import { NETWORKS, type JobEnvelope, type NetworkName } from '@keeta-compute/protocol';
 import { ProviderChannel } from './channel.ts';
 import { checkEnvelope, checkProviderToken, errorJson } from './relay.ts';
+import { lazyGateway } from './gateway.ts';
 import { createRouter, type PaymentGateway } from './router.ts';
 
 export { ProviderChannel };
@@ -30,10 +32,10 @@ export interface Env {
 	OPENROUTER_API_KEY?: string;
 }
 
-let gatewayPromise: Promise<PaymentGateway> | undefined;
+let gateway: PaymentGateway | undefined;
 
-function x402Gateway(env: Env, network: NetworkName): Promise<PaymentGateway> {
-	gatewayPromise ??= (async () => {
+function x402Gateway(env: Env, network: NetworkName): PaymentGateway {
+	gateway ??= lazyGateway(async () => {
 		const server = new x402ResourceServer(new HTTPFacilitatorClient({ url: env.FACILITATOR_URL }));
 		server.register(NETWORKS[network].caip2 as `${string}:${string}`, new ExactKeetaScheme());
 		await server.initialize();
@@ -52,8 +54,8 @@ function x402Gateway(env: Env, network: NetworkName): Promise<PaymentGateway> {
 				};
 			}
 		};
-	})();
-	return gatewayPromise;
+	});
+	return gateway;
 }
 
 const CORS = {
@@ -115,7 +117,7 @@ export default {
 				controlUrl: env.CONTROL_URL,
 				routerSecret: env.ROUTER_SECRET,
 				relaySecret: env.RELAY_SECRET,
-				gateway: await x402Gateway(env, network),
+				gateway: x402Gateway(env, network),
 				runJob: (envelope, signal) => channel(env, envelope.ticket.ticket.nodeKey).fetch('https://channel/run', { method: 'POST', body: JSON.stringify(envelope), signal }),
 				...(env.OPENROUTER_API_KEY ? { openRouter: { apiKey: env.OPENROUTER_API_KEY } } : {})
 			});

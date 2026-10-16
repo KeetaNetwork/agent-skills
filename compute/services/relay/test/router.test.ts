@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { NETWORKS, ticketMac, type JobTicket, type SignedTicket } from '@keeta-compute/protocol';
 import { createRouter, type PaymentGateway, type PaymentPayload } from '../src/router.ts';
 import { checkEnvelope } from '../src/relay.ts';
+import { lazyGateway } from '../src/gateway.ts';
 import { sseData, sseEvent } from '../src/sse.ts';
 
 const SECRET = 'relay-secret';
@@ -199,6 +200,39 @@ test('a fallback that fails before text, or is not configured, is never paid', a
 	response = await off.router.chatCompletions(new Request('http://api/v1/chat/completions', { method: 'POST', body: chatBody(), headers: { 'payment-signature': await paymentFor(off.router) } }));
 	assert.equal(response.status, 503);
 	assert.ok(!off.calls.includes('settle'));
+});
+
+test('a payment service outage answers 503 and runs nothing; a failed settlement charges nothing', async () => {
+	let ran = 0;
+	const runJob = async () => (ran++, sse(sseData(chunk('Hello', { usage: { prompt_tokens: 5, completion_tokens: 1 } })), sseEvent('keeta.receipt', receipt)));
+	const down = setup({ runJob, gateway: { verify: async () => Promise.reject(new Error('facilitator unreachable')) } });
+	const paid = await down.router.chatCompletions(new Request('http://api/v1/chat/completions', { method: 'POST', body: chatBody(), headers: { 'payment-signature': await paymentFor(down.router) } }));
+	assert.equal(paid.status, 503);
+	assert.equal(paid.headers.get('retry-after'), '5');
+	assert.equal(ran, 0, 'no provider runs a job whose payment was not checked');
+
+	const failing = setup({ runJob, gateway: { settle: async () => Promise.reject(new Error('facilitator timed out')) } });
+	const unsettled = await failing.router.chatCompletions(new Request('http://api/v1/chat/completions', { method: 'POST', body: chatBody(), headers: { 'payment-signature': await paymentFor(failing.router) } }));
+	assert.equal(unsettled.status, 402);
+	assert.match(((await unsettled.json()) as { error: { message: string } }).error.message, /not charged/);
+	assert.ok(!failing.calls.some((c) => c.includes('/settled')), 'an unsettled job is not reported as paid');
+});
+
+test('the payment gateway connects on first use and retries a failed connection', async () => {
+	let attempts = 0;
+	const gateway = lazyGateway(async () => {
+		attempts++;
+		if (attempts === 1) {
+			throw new Error('facilitator unreachable');
+		}
+		return { verify: async () => ({ isValid: true }), settle: async () => ({ success: true }) };
+	});
+	assert.equal(attempts, 0, 'nothing connects until a payment needs checking');
+	const payload = {} as PaymentPayload;
+	await assert.rejects(gateway.verify(payload, payload.accepted), /unreachable/);
+	assert.deepEqual(await gateway.verify(payload, payload.accepted), { isValid: true });
+	assert.deepEqual(await gateway.settle(payload, payload.accepted), { success: true });
+	assert.equal(attempts, 2, 'a working connection is kept');
 });
 
 test('forged, expired or mismatched quotes are rejected before verification', async () => {

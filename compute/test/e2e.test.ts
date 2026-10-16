@@ -11,91 +11,23 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { AddressInfo } from 'node:net';
-import { p256 } from '@noble/curves/p256';
-import { fromHex, randomId, sseData, sseEvent, toHex, type HardwareProfile, type JobEnvelope, type ProviderFrame } from '@keeta-compute/protocol';
+import { randomId, sseData, sseEvent, toHex, type HardwareProfile, type JobEnvelope, type ProviderFrame } from '@keeta-compute/protocol';
 import { Account } from '@keeta-compute/protocol/keeta';
 import { startServer } from '../services/control/src/server.ts';
 import { checkEnvelope, checkProviderToken } from '../services/relay/src/relay.ts';
-import { AgentApp } from '../agent/src/app.ts';
 import * as cli from '../agent/src/cli.ts';
 import { addHelperModel, pairHelper, runHelper } from '../agent/src/helper.ts';
 import type { Balances, Ledger } from '../agent/src/ledger.ts';
 import type { ModelManager } from '../agent/src/models/manager.ts';
+import { GB, fakeModelServer, listen, macAgent as makeMacAgent, readBody, until } from './support/harness.ts';
 
-const GB = 1024 ** 3;
 const RELAY_SECRET = 'relay-secret-for-tests';
 const ROUTER_SECRET = 'router-secret-for-tests';
 const MODEL = 'llama-3.2-3b';
-
-/* ------------------------------------------------------------ helpers */
-
-function listen(server: Server): Promise<string> {
-	return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(`http://127.0.0.1:${(server.address() as AddressInfo).port}`)));
-}
-
-async function until<T>(what: string, probe: () => Promise<T | null | undefined | false> | T | null | undefined | false, timeoutMs = 10_000): Promise<T> {
-	const deadline = Date.now() + timeoutMs;
-	for (;;) {
-		const value = await probe();
-		if (value) {
-			return value;
-		}
-		if (Date.now() > deadline) {
-			throw new Error(`timed out waiting for ${what}`);
-		}
-		await new Promise((r) => setTimeout(r, 25));
-	}
-}
-
-async function readBody(req: IncomingMessage): Promise<string> {
-	const chunks: Buffer[] = [];
-	for await (const chunk of req) {
-		chunks.push(chunk as Buffer);
-	}
-	return Buffer.concat(chunks).toString('utf8');
-}
-
-/* ------------------------------------------------- fake model server */
-
-function fakeModelServer(): Server {
-	return createServer(async (req, res) => {
-		if (req.method === 'GET' && req.url === '/v1/models') {
-			res.writeHead(200, { 'content-type': 'application/json' });
-			res.end(JSON.stringify({ object: 'list', data: [{ id: 'fake' }] }));
-			return;
-		}
-		if (req.method === 'POST' && req.url === '/v1/chat/completions') {
-			const body = JSON.parse(await readBody(req)) as { model: string; stream: boolean; messages: Array<{ content: string }> };
-			assert.equal(body.model, 'fake');
-			assert.equal(body.stream, true);
-			const slow = body.messages.some((m) => m.content.includes('slowly'));
-			res.writeHead(200, { 'content-type': 'text/event-stream' });
-			for (const piece of ['Hello', ' from', ' Keeta']) {
-				res.write(`data: ${JSON.stringify({ id: 'c1', object: 'chat.completion.chunk', choices: [{ index: 0, delta: { content: piece }, finish_reason: null }] })}\n\n`);
-				if (slow) {
-					/* Stall after each piece until the caller hangs up. */
-					await new Promise<void>((resolve) => {
-						const timer = setTimeout(resolve, 5_000);
-						res.once('close', () => (clearTimeout(timer), resolve()));
-					});
-					if (res.destroyed) {
-						return;
-					}
-				}
-			}
-			res.write(`data: ${JSON.stringify({ id: 'c1', object: 'chat.completion.chunk', choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] })}\n\n`);
-			res.write(`data: ${JSON.stringify({ id: 'c1', object: 'chat.completion.chunk', choices: [], usage: { prompt_tokens: 12, completion_tokens: 3 } })}\n\n`);
-			res.end('data: [DONE]\n\n');
-			return;
-		}
-		res.writeHead(404).end();
-	});
-}
 
 /* ------------------------------------------------------- fake ledger */
 
@@ -246,26 +178,9 @@ class FakeSocket extends EventTarget {
 
 /* ------------------------------------------------------------ agents */
 
-type Handlers = Record<string, (params: unknown) => Promise<any>>;
-
-const mac64: HardwareProfile = { os: 'macos', osVersion: '15.4', chip: 'Apple M4 Max', memoryBytes: 64 * GB, freeDiskBytes: 500 * GB };
 const linux128: HardwareProfile = { os: 'linux', osVersion: 'Ubuntu 24.04', chip: 'NVIDIA H100', memoryBytes: 128 * GB, freeDiskBytes: 2000 * GB };
 
-function macAgent(dataDir: string, ledger: Ledger) {
-	const enclaveKey = p256.utils.randomPrivateKey();
-	const app = new AgentApp({
-		dataDir,
-		signDigest: async (digestHex) => toHex(p256.sign(fromHex(digestHex), enclaveKey, { prehash: false, lowS: true }).toCompactRawBytes()),
-		notify: () => undefined,
-		ledgerFor: () => ledger,
-		WebSocketImpl: FakeSocket as unknown as typeof WebSocket,
-		buyerPort: 0,
-		hardware: mac64,
-		localConditions: async () => ({ onBattery: false, idleSeconds: 1e9 }),
-		noRuntime: true
-	});
-	return { app, rpc: app.handlers() as unknown as Handlers, nodePublicKey: toHex(p256.getPublicKey(enclaveKey, true)) };
-}
+const macAgent = (dataDir: string, ledger: Ledger) => makeMacAgent(dataDir, { ledger, WebSocketImpl: FakeSocket as unknown as typeof WebSocket });
 
 /* -------------------------------------------------------------- test */
 
@@ -378,7 +293,8 @@ test('a buyer runs a job on a Mac provider and a paired Linux helper, and pays e
 	assert.equal(firstSend.to, operator);
 	/* 12 in at 0.10/M + 3 out at 0.40/M rounds up to 3 base units. */
 	assert.equal(firstSend.amount, 3n);
-	assert.equal((await buyer.rpc['buyer.status']!({})).unpaid, 0);
+	/* The control plane marks the job paid before the buyer hears back and clears its own record. */
+	await until('the buyer to clear its unpaid receipt', async () => (await buyer.rpc['buyer.status']!({})).unpaid === 0);
 
 	/* Replaying a ticket that already ran is refused by the provider. */
 	const replay = await fetch(`${relay.url}/v1/jobs/${first.jobId}/run`, { method: 'POST', body: JSON.stringify(relay.lastEnvelope) });
@@ -418,7 +334,8 @@ test('a buyer runs a job on a Mac provider and a paired Linux helper, and pays e
 	}, 20_000);
 	assert.equal(paidHungUp.receipt!.receipt.finishReason, 'cancelled');
 	assert.equal(paidHungUp.receipt!.receipt.outputTokens, 1, 'billed only for the one piece delivered');
-	assert.equal((await buyer.rpc['buyer.status']!({})).unpaid, 0);
+	/* The control plane marks the job paid before the buyer hears back and clears its own record. */
+	await until('the buyer to clear its unpaid receipt', async () => (await buyer.rpc['buyer.status']!({})).unpaid === 0);
 
 	/* Linux helper: pair by code, approve on the Mac, serve the same model. */
 	const helperDir = tmp('helper');

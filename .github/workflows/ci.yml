@@ -72,6 +72,8 @@ jobs:
         run: npm test
       - name: End-to-end test
         run: npm run test:e2e
+      - name: Relay Worker under wrangler dev
+        run: npm run test:worker
 
   macos:
     runs-on: macos-15

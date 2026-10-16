@@ -1,0 +1,236 @@
+/**
+ * The real relay Worker under `wrangler dev` (workerd with local Durable
+ * Objects), with no network beyond this machine. It owns what the in-process
+ * end-to-end test cannot prove because it emulates the relay: that the
+ * Worker bundle starts, that providers connect to it over a real WebSocket,
+ * that the Durable Object carries jobs and hang-ups between buyer and
+ * provider, that it records what it forwarded with the control plane, and
+ * that the public router answers without the payment service.
+ *
+ * Payments are not made here; the live suite (test/live) pays on the Keeta
+ * test network.
+ */
+
+import { after, before, test } from 'node:test';
+import assert from 'node:assert/strict';
+import { request as httpRequest } from 'node:http';
+import { Readable } from 'node:stream';
+import { promptTokenBound, requestedMaxTokens, jobAuthMessage, readRelayEvents, chunkText, sha256Hex, type ChatCompletionRequest, type SignedReceipt, type SignedTicket, type Signer, type JobRecord } from '@keeta-compute/protocol';
+import { Account, accountSigner } from '@keeta-compute/protocol/keeta';
+import { startServer } from '../services/control/src/server.ts';
+import { ControlClient, ControlError } from '../agent/src/control-client.ts';
+import type { Ledger } from '../agent/src/ledger.ts';
+import type { ModelManager } from '../agent/src/models/manager.ts';
+import { Scratch, fakeModelServer, freePort, listen, macAgent, passkeyEntropy, until } from './support/harness.ts';
+import { startWorker, type RunningWorker } from './support/worker.ts';
+
+const RELAY_SECRET = 'relay-secret-for-worker-tests';
+const ROUTER_SECRET = 'router-secret-for-worker-tests';
+const MODEL = 'llama-3.2-3b';
+
+/** The provider agent reads balances in the background; nothing here touches a ledger. */
+const noLedger: Ledger = {
+	balances: async () => Promise.reject(new Error('no ledger in this test')),
+	send: async () => Promise.reject(new Error('no ledger in this test')),
+	requestTestFunds: async () => Promise.reject(new Error('no ledger in this test'))
+};
+
+const scratch = new Scratch();
+let control: Awaited<ReturnType<typeof startServer>>;
+let worker: RunningWorker;
+let controlClient: ControlClient;
+let operator: string;
+let nodeKey: string;
+
+before(async () => {
+	const model = fakeModelServer();
+	const modelUrl = `${await listen(model)}/v1`;
+	scratch.defer(() => model.close());
+
+	/* The Worker starts before the control plane knows its URL, so reserve the control port first. */
+	const controlPort = await freePort();
+	worker = await startWorker(
+		{
+			CONTROL_URL: `http://127.0.0.1:${controlPort}`,
+			RELAY_SECRET,
+			ROUTER_SECRET,
+			NETWORK: 'test',
+			/* Nothing listens here: the payment service is down for the whole file. */
+			FACILITATOR_URL: `http://127.0.0.1:${await freePort()}`
+		},
+		scratch.dir('wrangler')
+	);
+	scratch.defer(() => worker.stop());
+
+	control = await startServer({
+		port: controlPort,
+		env: {
+			COORDINATOR_SEED: Account.generateRandomSeed({ asString: true }) as string,
+			RELAY_SECRET,
+			ROUTER_SECRET,
+			RELAY_URL: worker.url,
+			ALLOW_SMALL_PROVIDERS: 'true',
+			REQUIRE_BUYER_BALANCE: 'false'
+		}
+	});
+	scratch.defer(() => new Promise((resolve) => control.server.close(resolve)));
+	scratch.defer(() => control.server.closeAllConnections());
+	controlClient = new ControlClient(control.url);
+
+	const provider = macAgent(scratch.dir('provider'), { ledger: noLedger });
+	scratch.defer(() => provider.app.shutdown());
+	await provider.rpc['agent.initialize']!({ network: 'test', controlUrl: control.url, relayUrl: worker.url, nodePublicKey: provider.nodePublicKey, appVersion: 'test', machineName: 'Studio' });
+	(provider.app as unknown as { models: ModelManager }).models.addExternal({
+		modelId: MODEL,
+		name: 'Llama 3.2 3B',
+		backend: { baseUrl: modelUrl, servedName: 'fake' },
+		weightsHash: 'a'.repeat(64),
+		sizeBytes: 1,
+		path: '/dev/null',
+		contextLength: 8192,
+		price: { inputPerMillion: '100000', outputPerMillion: '400000' }
+	});
+	await provider.rpc['provider.setPolicy']!({ enabled: true });
+	({ operator } = await provider.rpc['wallet.setOperator']!({ entropy: passkeyEntropy() }));
+	/* Online means the Worker accepted the provider's WebSocket with the token the control plane minted. */
+	await until('the provider to connect to the Worker', async () => (await provider.rpc['provider.status']!({})).state === 'online', 30_000);
+	nodeKey = (await provider.rpc['agent.state']!({})).nodeKey as string;
+});
+
+after(() => scratch.cleanup());
+
+function newBuyer(): Signer {
+	return accountSigner(Account.fromSeed(Account.generateRandomSeed({ asString: true }), 0));
+}
+
+/** A buyer without the agent: ask for a ticket, run it through the Worker, read the stream. */
+async function runJob(buyer: Signer, content: string, options: { hangUpAfter?: string } = {}) {
+	const request: ChatCompletionRequest = { model: MODEL, messages: [{ role: 'user', content }], max_tokens: 64, stream: true, stream_options: { include_usage: true } };
+	const { ticket } = await controlClient.post<{ ticket: SignedTicket }>(buyer, '/v1/jobs', {
+		network: 'test',
+		model: MODEL,
+		maxInputTokens: promptTokenBound(request),
+		maxOutputTokens: requestedMaxTokens(request)
+	});
+	const jobId = ticket.ticket.jobId;
+	/* node:http rather than fetch: a hang-up must close the connection the way a buyer process going away does. */
+	const run = await postStream(`${worker.url}/v1/jobs/${jobId}/run`, JSON.stringify({ ticket, request, buyerSig: await buyer.sign(await jobAuthMessage(jobId, request)) }));
+	let text = '';
+	let receipt: SignedReceipt | undefined;
+	let hungUp = false;
+	try {
+		for await (const event of readRelayEvents(run.body)) {
+			if (event.type === 'chunk') {
+				text += chunkText(event.data);
+				if (options.hangUpAfter && text.includes(options.hangUpAfter)) {
+					hungUp = true;
+					run.hangUp();
+					break;
+				}
+			} else if (event.type === 'receipt') {
+				receipt = event.receipt;
+			} else {
+				assert.fail(`the job failed: ${event.code} ${event.message}`);
+			}
+		}
+	} catch (error) {
+		if (!hungUp) {
+			throw error;
+		}
+	}
+	return { jobId, ticket, text, receipt };
+}
+
+/** POST and stream the answer; `hangUp` drops the connection. */
+function postStream(url: string, body: string): Promise<{ body: ReadableStream<Uint8Array>; hangUp: () => void }> {
+	return new Promise((resolve, reject) => {
+		const req = httpRequest(url, { method: 'POST', headers: { 'content-type': 'application/json' }, agent: false }, (res) => {
+			if (res.statusCode !== 200) {
+				let text = '';
+				res.on('data', (chunk: Buffer) => (text += chunk.toString()));
+				res.on('end', () => reject(new Error(`the Worker answered ${res.statusCode}: ${text}`)));
+				return;
+			}
+			resolve({ body: Readable.toWeb(res) as ReadableStream<Uint8Array>, hangUp: () => req.destroy() });
+		});
+		req.on('error', reject);
+		req.end(body);
+	});
+}
+
+async function refusal(buyer: Signer, jobId: string): Promise<ControlError> {
+	return controlClient.post(buyer, `/v1/jobs/${jobId}/refuse`, { reason: 'test refusal' }).then(
+		() => assert.fail('the refusal was accepted'),
+		(error: unknown) => error as ControlError
+	);
+}
+
+const job = (jobId: string) => control.store.getJob(jobId) as Promise<JobRecord>;
+
+test('an app job runs through the Worker to the provider, and the relay records what it forwarded before the receipt', async () => {
+	const buyer = newBuyer();
+	const { jobId, text, receipt } = await runJob(buyer, 'Say hello');
+	assert.equal(text, 'Hello from Keeta');
+	assert.ok(receipt, 'the receipt reached the buyer through the Worker');
+	assert.equal(receipt.receipt.nodeKey, nodeKey);
+	assert.equal(receipt.receipt.payTo, operator);
+	assert.equal(receipt.receipt.outputHash, await sha256Hex(text));
+
+	/* The Durable Object posts the record before it passes the receipt on, so it is already there. */
+	const record = await job(jobId);
+	assert.equal(record.delivery?.outputHash, receipt.receipt.outputHash);
+	assert.ok(record.delivery!.maxOutputTokens >= receipt.receipt.outputTokens);
+
+	await until('the provider to file its receipt', async () => (await job(jobId)).status === 'completed');
+	const refused = await refusal(buyer, jobId);
+	assert.equal(refused.status, 409);
+	assert.equal(refused.code, 'delivery_attested', 'a buyer cannot dispute text the relay delivered');
+	assert.equal((await job(jobId)).status, 'completed', 'the receipt is still owed');
+});
+
+test('a buyer hanging up mid-answer cancels the job on the provider, and the receipt bills what the relay forwarded', async () => {
+	const buyer = newBuyer();
+	const started = Date.now();
+	const { jobId, text } = await runJob(buyer, 'Say hello slowly', { hangUpAfter: 'Hello' });
+	assert.equal(text, 'Hello');
+
+	const record = await until('the provider to file the receipt for the cancelled job', async () => {
+		const current = await job(jobId);
+		return current.receipt && current.delivery ? current : null;
+	}, 20_000);
+	/*
+	 * The model stalls 5 s after each of its three pieces unless cancelled. The
+	 * runtime notices a dropped connection when it next writes to it, so the
+	 * piece in flight at the hang-up may count as forwarded, but no more.
+	 */
+	assert.ok(Date.now() - started < 9_000, `the hang-up did not reach the provider: ${JSON.stringify(record.receipt!.receipt)}`);
+	const billed = record.receipt!.receipt;
+	assert.equal(billed.finishReason, 'cancelled');
+	assert.ok(billed.outputTokens < 3, 'the provider stopped before the whole answer');
+	assert.ok([await sha256Hex('Hello'), await sha256Hex('Hello from')].includes(record.delivery!.outputHash), 'the relay records what it forwarded, not the whole answer');
+	assert.equal(billed.outputHash, record.delivery!.outputHash, 'the receipt bills exactly what the relay forwarded');
+
+	const refused = await refusal(buyer, jobId);
+	assert.equal(refused.code, 'delivery_attested');
+});
+
+test('the public router lists models and quotes while the payment service is down, and runs nothing it cannot check', async () => {
+	const models = await fetch(`${worker.url}/v1/models`);
+	assert.equal(models.status, 200, worker.output());
+	const listed = (await models.json()) as { data: Array<{ id: string; keeta: { providers: number } }> };
+	assert.ok(listed.data.some((m) => m.id === MODEL && m.keeta.providers >= 1));
+
+	const body = JSON.stringify({ model: MODEL, messages: [{ role: 'user', content: 'Say hello' }], max_tokens: 32 });
+	const quote = await fetch(`${worker.url}/v1/chat/completions`, { method: 'POST', headers: { 'content-type': 'application/json' }, body });
+	assert.equal(quote.status, 402);
+	const required = JSON.parse(atob(quote.headers.get('payment-required')!)) as { accepts: Array<{ payTo: string; amount: string; network: string; extra: { jobId: string } }> };
+	const [accepted] = required.accepts;
+	assert.equal(accepted!.payTo, operator, 'the provider is paid directly');
+	assert.equal(accepted!.network, 'keeta:1413829460');
+
+	const header = btoa(JSON.stringify({ x402Version: 2, accepted, payload: { block: 'unchecked' } }));
+	const paid = await fetch(`${worker.url}/v1/chat/completions`, { method: 'POST', headers: { 'content-type': 'application/json', 'payment-signature': header }, body });
+	assert.equal(paid.status, 503);
+	assert.equal(((await paid.json()) as { error: { code: string } }).error.code, 'payment_unavailable');
+	assert.equal((await job(accepted!.extra.jobId)).status, 'scheduled', 'the provider never ran the job');
+});

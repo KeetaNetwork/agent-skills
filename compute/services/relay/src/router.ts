@@ -206,7 +206,11 @@ export function createRouter(deps: RouterDeps) {
 			return errorResponse(402, 'quote_mismatch', 'the request does not match the quote it pays for');
 		}
 		const requirements = requirementsFromTicket(signed, deps.network);
-		const verified = await deps.gateway.verify(payload, requirements);
+		const checked = await deps.gateway.verify(payload, requirements).catch(() => null);
+		if (!checked) {
+			return errorResponse(503, 'payment_unavailable', 'the payment could not be checked right now; you were not charged', { 'retry-after': '5' });
+		}
+		const verified = checked;
 		if (!verified.isValid) {
 			return errorResponse(402, 'payment_invalid', verified.invalidReason ?? 'the payment did not verify');
 		}
@@ -305,7 +309,7 @@ export function createRouter(deps: RouterDeps) {
 
 		/** Settle the x402 payment; returns the payment-response header, or an error response. */
 		async function settle(): Promise<string | Response> {
-			const settlement = await deps.gateway.settle(payload, requirements);
+			const settlement = await deps.gateway.settle(payload, requirements).catch(() => ({ success: false as const, errorReason: 'the payment service could not settle the payment; you were not charged' }));
 			if (!settlement.success) {
 				return errorResponse(402, 'settlement_failed', settlement.errorReason ?? 'the payment could not be settled');
 			}
