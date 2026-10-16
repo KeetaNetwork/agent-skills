@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>Linux helper | Keeta Compute</title>
+<meta name="description" content="Add a Linux machine to a Keeta Compute fleet as provider-only capacity paid to the paired Mac.">
+<link rel="canonical" href="https://keeta.ai/compute/helper">
+<link rel="alternate" type="text/markdown" href="/compute/helper.md" title="This page as Markdown">
+<link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/compute/compute.css">
+</head>
+<body>
+<header>
+<nav aria-label="Keeta Compute"><a href="/compute/">Compute</a> <a href="/compute/app">macOS app</a> <a href="/compute/models">Models</a> <a href="/compute/router">API router</a> <a href="/compute/helper" aria-current="page">Linux helper</a> <a href="/compute/protocol">Protocol</a> <a href="/">Agent skills</a></nav>
+</header>
+<main>
+<h1 id="linux-helper">Linux helper</h1>
+<p>Status: test-network preview.</p>
+<p>The Linux helper adds a Linux machine you own (a home server, a workstation, a GPU box) to your Mac's fleet as extra provider capacity.</p>
+<ul>
+<li>It is provider-only. It has no wallet, no balance and cannot buy.</li>
+<li>Every payment it earns goes to the paired Mac's wallet.</li>
+<li>The Mac holds the policy: prices, access mode, pause and revoke.</li>
+<li>It is tiered by what it proves in its benchmark, like a Mac.</li>
+</ul>
+<h2 id="install">Install</h2>
+<pre><code class="language-bash">curl -fsSL https://keeta.ai/compute/install-helper.sh | sh</code></pre>
+<p>Read the <a href="/compute/install-helper.sh">install script</a> before you run it. It installs the <code>keeta-compute-agent</code> command.</p>
+<h2 id="pair-with-your-mac">Pair with your Mac</h2>
+<ol>
+<li>In the Mac app, open Fleet → Add a Linux machine. The app shows a one-time pairing code. It expires in 10 minutes and works once.</li>
+<li><p>On the Linux machine:</p>
+<pre><code class="language-bash">keeta-compute-agent helper pair &lt;CODE&gt;</code></pre></li>
+<li>Both machines show a short check string, such as <code>K7M-Q2X</code>. Compare them. If they differ, reject the claim on the Mac.</li>
+<li>Approve the machine on the Mac. It joins the fleet, paid to the Mac's address.</li>
+</ol>
+<p>The code alone cannot pair a machine: pairing completes only after you approve it on the Mac.</p>
+<h2 id="serve-a-model">Serve a model</h2>
+<p>The helper does not run models itself. Run any OpenAI-compatible server on the same machine, such as llama.cpp's <code>llama-server</code>, vLLM or SGLang, then register each model with the helper:</p>
+<pre><code class="language-bash">keeta-compute-agent helper add-model \
+  --id qwen3-8b \
+  --url http://127.0.0.1:8080/v1 \
+  --served-name &lt;name the server uses for the model&gt; \
+  --weights &lt;path-to-weights&gt;</code></pre>
+<ul>
+<li><code>--id</code> is the network model id from the <a href="/compute/models">catalog</a>.</li>
+<li><code>--served-name</code> is the <code>model</code> value your local server expects.</li>
+<li><code>--weights</code> is hashed, and the hash appears on every receipt the helper signs.</li>
+<li>Keep the server bound to <code>127.0.0.1</code>. The helper is the only thing that should reach it.</li>
+</ul>
+<h2 id="run">Run</h2>
+<pre><code class="language-bash">keeta-compute-agent helper run</code></pre>
+<p>As a systemd service, in <code>/etc/systemd/system/keeta-compute-helper.service</code>:</p>
+<pre><code class="language-ini">[Unit]
+Description=Keeta Compute helper
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=keeta
+ExecStart=/usr/local/bin/keeta-compute-agent helper run
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target</code></pre>
+<pre><code class="language-bash">sudo systemctl enable --now keeta-compute-helper</code></pre>
+<p>Adjust <code>User</code> and the <code>ExecStart</code> path to match where the install script put the binary (<code>command -v keeta-compute-agent</code>). Run <code>helper pair</code> as that same user so the service finds its key.</p>
+<h2 id="keys-and-revocation">Keys and revocation</h2>
+<ul>
+<li>Pairing creates the helper's own node key. It signs receipts and requests; it cannot move funds.</li>
+<li>The key is stored in a keyfile with mode <code>0600</code>, readable only by the user that runs the helper.</li>
+<li>Revoking the machine in the Mac app (Fleet) cuts it off: its credentials stop working and it gets no more jobs.</li>
+<li>If the machine is lost or compromised, revoke it from the Mac first, then delete the keyfile.</li>
+</ul>
+</main>
+<footer>
+<p>Plain text: <a href="/compute/helper.md">helper.md</a>. Keeta Compute is in a test-network preview. <a href="/llms.txt">llms.txt</a> <a href="https://github.com/KeetaNetwork/agent-skills">GitHub</a></p>
+</footer>
+</body>
+</html>

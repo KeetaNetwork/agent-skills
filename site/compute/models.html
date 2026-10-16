@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>Models | Keeta Compute</title>
+<meta name="description" content="The Keeta Compute model catalog: memory, disk, license and suggested price per million tokens in USDC.">
+<link rel="canonical" href="https://keeta.ai/compute/models">
+<link rel="alternate" type="text/markdown" href="/compute/models.md" title="This page as Markdown">
+<link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/compute/compute.css">
+</head>
+<body>
+<header>
+<nav aria-label="Keeta Compute"><a href="/compute/">Compute</a> <a href="/compute/app">macOS app</a> <a href="/compute/models" aria-current="page">Models</a> <a href="/compute/router">API router</a> <a href="/compute/helper">Linux helper</a> <a href="/compute/protocol">Protocol</a> <a href="/">Agent skills</a></nav>
+</header>
+<main>
+<h1 id="models">Models</h1>
+<p>Status: test-network preview. Prices are suggestions; each provider sets its own.</p>
+<p>The curated catalog below makes the common case one click in the macOS app. The network is model-agnostic: an operator can also install other weights that fit the machine, and the <code>id</code> column is the value of the OpenAI <code>model</code> field.</p>
+<!-- keeta-compute:models-table -->
+<h2 id="columns">Columns</h2>
+<ul>
+<li><strong>Memory</strong> is the unified memory the model needs once loaded, including working headroom. A Mac can give a model about two thirds of its memory under 64 GB and about three quarters above that.</li>
+<li><strong>Disk</strong> is the approximate download size.</li>
+<li><strong>Price</strong> is the suggested price in USDC per million input and output tokens. On the wire, prices are integer base units: USDC has 6 decimals, so 0.05 USDC is <code>50000</code>. <a href="/compute/protocol">Pricing math</a>.</li>
+<li><strong>Cluster only</strong> marks a model no single machine can hold. Clusters are not scheduled in this version.</li>
+<li>Live prices and provider counts come from <code>GET /v1/models</code> on the <a href="/compute/router">router</a> or the app's local endpoint.</li>
+</ul>
+<h2 id="licenses">Licenses</h2>
+<p>License terms travel with the model. An operator who offers a model to the network is serving it commercially and takes on that license's obligations, such as attribution ("Built with Llama"), acceptable-use policies, and size or revenue thresholds that need a separate license. Those obligations are the operator's responsibility, not the network's. The app shows each license before you offer the model; read it in full at the linked page.</p>
+<p>Every receipt names the exact weights the provider ran by their sha256 hash, so a buyer can tell which build of a model served the request.</p>
+</main>
+<footer>
+<p>Plain text: <a href="/compute/models.md">models.md</a>. Keeta Compute is in a test-network preview. <a href="/llms.txt">llms.txt</a> <a href="https://github.com/KeetaNetwork/agent-skills">GitHub</a></p>
+</footer>
+</body>
+</html>

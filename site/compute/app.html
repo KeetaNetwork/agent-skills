@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>macOS app | Keeta Compute</title>
+<meta name="description" content="Install the Keeta Compute macOS app, provide inference capacity, get paid in USDC, and buy inference for local agents.">
+<link rel="canonical" href="https://keeta.ai/compute/app">
+<link rel="alternate" type="text/markdown" href="/compute/app.md" title="This page as Markdown">
+<link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/compute/compute.css">
+</head>
+<body>
+<header>
+<nav aria-label="Keeta Compute"><a href="/compute/">Compute</a> <a href="/compute/app" aria-current="page">macOS app</a> <a href="/compute/models">Models</a> <a href="/compute/router">API router</a> <a href="/compute/helper">Linux helper</a> <a href="/compute/protocol">Protocol</a> <a href="/">Agent skills</a></nav>
+</header>
+<main>
+<h1 id="keeta-compute-for-macos">Keeta Compute for macOS</h1>
+<p>Status: test-network preview. The app uses the Keeta test network and test USDC.</p>
+<p>One app does both sides of the market: it sells your Mac's spare capacity, and it buys inference for the agents running on your Mac.</p>
+<h2 id="requirements">Requirements</h2>
+<ul>
+<li>macOS 15 or later.</li>
+<li>Apple Silicon (M1 or later).</li>
+<li>To provide capacity: 32 GB of unified memory or more. Macs with less than 32 GB can buy inference, but cannot provide it at launch.</li>
+</ul>
+<h2 id="install">Install</h2>
+<ul>
+<li>Download: <a href="/compute/download">Keeta Compute for macOS</a>. Coming soon: this link is not live yet.</li>
+<li>Move the app to Applications and open it.</li>
+</ul>
+<h2 id="first-run">First run</h2>
+<ol>
+<li>The app creates your wallet and secures it with a passkey. There is no recovery phrase to write down.</li>
+<li>The passkey syncs through iCloud Keychain, so another Mac signed in to the same Apple Account can open the same wallet.</li>
+<li>Your wallet address (<code>keeta_…</code>) is your identity on the network. Buyers pay it and providers can allowlist it.</li>
+<li>The app checks the hardware: chip, memory, free disk, and a short benchmark.</li>
+</ol>
+<h2 id="provide-capacity">Provide capacity</h2>
+<h3 id="hardware-tiers">Hardware tiers</h3>
+<table>
+<thead><tr><th>Tier</th><th>Hardware</th><th>Typical work</th></tr></thead>
+<tbody>
+<tr><td>A</td><td>2 to 4 Mac Studios (256 or 512 GB) linked by Thunderbolt 5</td><td class="wrap">The largest open models. Clusters are not scheduled in this version.</td></tr>
+<tr><td>B</td><td>One Mac with 64 to 256 GB</td><td class="wrap">Mid-size models, coding agents</td></tr>
+<tr><td>C</td><td>One Mac with 32 to 64 GB</td><td class="wrap">Small models, batch work</td></tr>
+<tr><td>none</td><td>Less than 32 GB</td><td class="wrap">Can buy, cannot provide at launch</td></tr>
+</tbody>
+</table>
+<p>A tier describes what a machine proves in its benchmark, not the badge on it.</p>
+<h3 id="models">Models</h3>
+<ul>
+<li>The Models tab lists the <a href="/compute/models">catalog</a> models that fit your Mac. A model may use about two thirds of memory on Macs under 64 GB and about three quarters above that. The rest stays free for macOS and your own work.</li>
+<li>Installing a model downloads its weights and hashes them. That weights hash appears on every receipt you sign.</li>
+<li>Offering is per model. Each installed model can be offered to the network or kept for your own use.</li>
+<li>Set a price per million input tokens and per million output tokens, in USDC, for each offered model. The catalog suggests a price, and you can change it.</li>
+<li>Read the model's license before you offer it. Its terms are your responsibility as the operator.</li>
+</ul>
+<h3 id="when-and-to-whom">When and to whom</h3>
+<ul>
+<li><strong>Schedules.</strong> Choose the hours and days the Mac takes jobs.</li>
+<li><strong>Pause.</strong> Take the Mac off the network at any time, and resume when you want.</li>
+<li><strong>Public.</strong> Any buyer on the network can use your offered models.</li>
+<li><strong>Allowlist.</strong> Only jobs paid from buyer addresses on your list (<code>keeta_…</code>). The scheduler never sends an unlisted buyer's job to you, and your Mac checks the paying address on the ticket again before it runs anything.</li>
+<li><strong>More machines.</strong> Add Linux machines to your fleet with the <a href="/compute/helper">Linux helper</a>. Their earnings go to this Mac's wallet.</li>
+</ul>
+<h2 id="get-paid">Get paid</h2>
+<ul>
+<li>You are paid per completed request, in USDC, directly to your wallet. The amount is the tokens used times your price (<a href="/compute/protocol">pricing math</a>).</li>
+<li>Each job in the app shows its signed receipt and its payment.</li>
+<li>You can send USDC to, and receive it from, any Keeta address in the app.</li>
+<li>Bank deposits and withdrawals go through Keeta's banking anchors and need identity verification (KYC for people, KYB for businesses). Coming later; not part of the preview.</li>
+</ul>
+<h2 id="buy-inference-for-agents-on-this-mac">Buy inference for agents on this Mac</h2>
+<p>The app serves an OpenAI-compatible API on this Mac only:</p>
+<pre><code class="language-text">http://127.0.0.1:11435/v1</code></pre>
+<ul>
+<li><code>GET /v1/models</code> lists the models you can buy, with the lowest price on the network.</li>
+<li><code>POST /v1/chat/completions</code> takes the OpenAI request format. <code>stream: true</code> is supported.</li>
+<li>Every request needs the bearer token shown in the app. Treat it like a password: any program holding it can spend your Agent budget.</li>
+<li>Spend limits: set a maximum per request and per day in the app. A request that would go over a limit is refused before anything is paid.</li>
+<li>Set <code>max_tokens</code> on each request to bound its cost.</li>
+</ul>
+<p>curl:</p>
+<pre><code class="language-bash">curl http://127.0.0.1:11435/v1/chat/completions \
+  -H "Authorization: Bearer $KEETA_COMPUTE_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "qwen3-8b", "messages": [{"role": "user", "content": "Say hello."}], "max_tokens": 200}'</code></pre>
+<p>OpenAI Python SDK:</p>
+<pre><code class="language-python">import os
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="http://127.0.0.1:11435/v1",
+    api_key=os.environ["KEETA_COMPUTE_TOKEN"],  # the token shown in the app
+)
+response = client.chat.completions.create(
+    model="qwen3-8b",
+    messages=[{"role": "user", "content": "Say hello."}],
+    max_tokens=200,
+)
+print(response.choices[0].message.content)</code></pre>
+<p>Tools that read the standard OpenAI environment variables work without code changes:</p>
+<pre><code class="language-bash">export OPENAI_BASE_URL=http://127.0.0.1:11435/v1
+export OPENAI_API_KEY=&lt;token shown in the app&gt;</code></pre>
+<h3 id="how-the-app-pays">How the app pays</h3>
+<ol>
+<li>The app checks your spend limits, then the scheduler picks a provider and signs a ticket for the job.</li>
+<li>The request goes to the provider through the relay, and the tokens stream back to your agent.</li>
+<li>The provider signs a receipt with the token counts and the amount.</li>
+<li>The app checks the receipt against the ticket, then pays the provider directly with a Keeta send from your Agent budget. No x402 round trip is needed between apps.</li>
+</ol>
+</main>
+<footer>
+<p>Plain text: <a href="/compute/app.md">app.md</a>. Keeta Compute is in a test-network preview. <a href="/llms.txt">llms.txt</a> <a href="https://github.com/KeetaNetwork/agent-skills">GitHub</a></p>
+</footer>
+</body>
+</html>

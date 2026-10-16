@@ -52,7 +52,7 @@ export function ticketMessage(ticket: JobTicket): Uint8Array {
 }
 
 export function ticketMacInput(ticket: JobTicket): string {
-	return `keeta-compute-relay-v1\n${ticket.jobId}\n${ticket.nodeKey}\n${ticket.expiresAt}`;
+	return `keeta-compute-relay-v1\n${canonicalJSON(ticket)}`;
 }
 
 export function ticketMac(secret: string, ticket: JobTicket): Promise<string> {

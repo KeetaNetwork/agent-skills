@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>Protocol | Keeta Compute</title>
+<meta name="description" content="Keeta Compute protocol: identities, signed requests, job lifecycle, tickets, receipts and pricing math.">
+<link rel="canonical" href="https://keeta.ai/compute/protocol">
+<link rel="alternate" type="text/markdown" href="/compute/protocol.md" title="This page as Markdown">
+<link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/compute/compute.css">
+</head>
+<body>
+<header>
+<nav aria-label="Keeta Compute"><a href="/compute/">Compute</a> <a href="/compute/app">macOS app</a> <a href="/compute/models">Models</a> <a href="/compute/router">API router</a> <a href="/compute/helper">Linux helper</a> <a href="/compute/protocol" aria-current="page">Protocol</a> <a href="/">Agent skills</a></nav>
+</header>
+<main>
+<h1 id="protocol">Protocol</h1>
+<p>Status: test-network preview. Version 1 of the formats below; field names match the shared protocol package in the <a href="https://github.com/KeetaNetwork/agent-skills">source repository</a>.</p>
+<h2 id="identities">Identities</h2>
+<p>Every party is a Keeta public key (<code>keeta_…</code>). Every signature is a Keeta account signature (<code>Account.sign</code>), hex encoded, so a key can live in the Secure Enclave, in a software keyfile or in any Keeta wallet.</p>
+<table>
+<thead><tr><th>Key</th><th>Held by</th><th>Used for</th></tr></thead>
+<tbody>
+<tr><td>Node key</td><td>Each Mac or Linux helper</td><td class="wrap">Signs requests to the network and the receipts for its jobs. Cannot move funds.</td></tr>
+<tr><td>Payout address (<code>payTo</code>)</td><td>The operator's wallet (passkey on the Mac)</td><td class="wrap">Receives every payment for the operator's machines, including paired Linux helpers</td></tr>
+<tr><td>Buyer key</td><td>The paying account</td><td class="wrap">Pays providers; is what provider allowlists list</td></tr>
+</tbody>
+</table>
+<p>At onboarding the operator signs a link message tying each node key to its payout address.</p>
+<h2 id="signed-requests">Signed requests</h2>
+<p>Calls from apps and helpers to the control plane and relay carry four headers:</p>
+<table>
+<thead><tr><th>Header</th><th>Value</th></tr></thead>
+<tbody>
+<tr><td><code>x-kc-key</code></td><td class="wrap">The caller's Keeta public key</td></tr>
+<tr><td><code>x-kc-ts</code></td><td class="wrap">Unix time in milliseconds</td></tr>
+<tr><td><code>x-kc-nonce</code></td><td class="wrap">12 random bytes, hex</td></tr>
+<tr><td><code>x-kc-sig</code></td><td class="wrap">Hex signature by <code>x-kc-key</code> over the message below</td></tr>
+</tbody>
+</table>
+<p>The signed message is UTF-8, lines joined with <code>\n</code>, no trailing newline:</p>
+<pre><code class="language-text">keeta-compute-request-v1
+METHOD
+PATH
+TIMESTAMP
+NONCE
+sha256hex(body)</code></pre>
+<p><code>METHOD</code> is upper case, <code>TIMESTAMP</code> and <code>NONCE</code> are the header values, and the last line is the lowercase hex SHA-256 of the exact body bytes (of the empty string when there is no body). Requests more than 2 minutes from server time are rejected, and nonces are not accepted twice.</p>
+<p>Other signed messages use the same pattern, a version line followed by canonical JSON (object keys sorted recursively, no whitespace, undefined fields dropped):</p>
+<ul>
+<li>Receipt: <code>keeta-compute-receipt-v1\n</code> + canonical JSON of the receipt.</li>
+<li>Ticket: <code>keeta-compute-ticket-v1\n</code> + canonical JSON of the ticket.</li>
+<li>Buyer job authorization: <code>keeta-compute-job-v1\n</code> + job id + <code>\n</code> + sha256 hex of the canonical JSON of the request.</li>
+</ul>
+<h2 id="job-lifecycle">Job lifecycle</h2>
+<ol>
+<li><strong>Schedule.</strong> The buyer asks the control plane for a provider for a model, with its token limits. The scheduler picks an online provider (heartbeat in the last 90 seconds) that offers the model, accepts the buyer and has capacity.</li>
+<li><strong>Ticket.</strong> The control plane signs a ticket for that one job and provider. It is valid for 60 seconds.</li>
+<li><strong>Relay.</strong> The buyer sends the ticket, the request and its job authorization to the relay, which forwards them over the provider's open connection.</li>
+<li><strong>Provider.</strong> The provider checks the ticket signature, its own key, the expiry and its allowlist, then runs the model and streams tokens back through the relay.</li>
+<li><strong>Signed receipt.</strong> The provider signs a receipt with the actual token counts and the amount.</li>
+<li><strong>Payment.</strong> The buyer pays <code>amount</code> to <code>payTo</code> in the settlement asset: a Keeta send from the app (postpay), or an x402 payment before the job on the <a href="/compute/router">router</a> (prepaid). A buyer with a receipt left unpaid for more than 10 minutes is not scheduled again until it pays.</li>
+<li><strong>Reputation.</strong> Completed, failed and paid jobs update the provider's record, which the scheduler reads.</li>
+</ol>
+<h2 id="tickets">Tickets</h2>
+<table>
+<thead><tr><th>Field</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>v</code></td><td class="wrap"><code>1</code></td></tr>
+<tr><td><code>jobId</code></td><td class="wrap">Job id</td></tr>
+<tr><td><code>network</code></td><td class="wrap"><code>test</code> or <code>main</code></td></tr>
+<tr><td><code>nodeKey</code></td><td class="wrap">The provider chosen</td></tr>
+<tr><td><code>modelId</code></td><td class="wrap">Model id</td></tr>
+<tr><td><code>buyer</code></td><td class="wrap">The paying key</td></tr>
+<tr><td><code>maxInputTokens</code>, <code>maxOutputTokens</code></td><td class="wrap">Token limits for the job</td></tr>
+<tr><td><code>price</code></td><td class="wrap"><code>{inputPerMillion, outputPerMillion}</code>, base units</td></tr>
+<tr><td><code>asset</code></td><td class="wrap">Settlement token address (USDC)</td></tr>
+<tr><td><code>payTo</code></td><td class="wrap">Where payment goes</td></tr>
+<tr><td><code>paymentMode</code></td><td class="wrap"><code>postpay</code> (app) or <code>prepaid</code> (router)</td></tr>
+<tr><td><code>prepaidAmount</code></td><td class="wrap">Amount already paid, prepaid jobs only</td></tr>
+<tr><td><code>issuedAt</code>, <code>expiresAt</code></td><td class="wrap">Unix milliseconds</td></tr>
+</tbody>
+</table>
+<p>A signed ticket is <code>{ticket, coordinatorSig, relayMac}</code>: <code>coordinatorSig</code> is checked by the provider, <code>relayMac</code> by the relay.</p>
+<h2 id="receipts">Receipts</h2>
+<p>A signed receipt is <code>{receipt, signature}</code>, where <code>signature</code> is by <code>receipt.nodeKey</code> over the receipt message above.</p>
+<table>
+<thead><tr><th>Field</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>v</code></td><td class="wrap"><code>1</code></td></tr>
+<tr><td><code>jobId</code></td><td class="wrap">Job id from the ticket</td></tr>
+<tr><td><code>network</code></td><td class="wrap"><code>test</code> or <code>main</code></td></tr>
+<tr><td><code>nodeKey</code></td><td class="wrap">The provider's node key, which signs the receipt</td></tr>
+<tr><td><code>payTo</code></td><td class="wrap">Where payment goes</td></tr>
+<tr><td><code>buyer</code></td><td class="wrap">The paying key</td></tr>
+<tr><td><code>modelId</code></td><td class="wrap">Model id</td></tr>
+<tr><td><code>weightsHash</code></td><td class="wrap">sha256 over the installed weight files</td></tr>
+<tr><td><code>runtime</code></td><td class="wrap"><code>{kind, build}</code>: <code>mlx</code> or <code>openai-compatible</code>, and the runtime name and version, such as <code>mlx-lm 0.26.0</code></td></tr>
+<tr><td><code>inputTokens</code>, <code>outputTokens</code></td><td class="wrap">Tokens actually processed and generated</td></tr>
+<tr><td><code>price</code></td><td class="wrap"><code>{inputPerMillion, outputPerMillion}</code>, base units</td></tr>
+<tr><td><code>amount</code></td><td class="wrap">Base units owed (postpay) or consumed (prepaid)</td></tr>
+<tr><td><code>asset</code></td><td class="wrap">Settlement token address</td></tr>
+<tr><td><code>startedAt</code>, <code>finishedAt</code></td><td class="wrap">Unix milliseconds</td></tr>
+<tr><td><code>outputHash</code></td><td class="wrap">sha256 of the generated text. The text itself is never stored.</td></tr>
+<tr><td><code>finishReason</code></td><td class="wrap">As in the OpenAI response, such as <code>stop</code> or <code>length</code></td></tr>
+</tbody>
+</table>
+<p>To check a receipt: verify the signature with the Keeta SDK against <code>nodeKey</code>, then compare <code>modelId</code>, <code>price</code>, <code>payTo</code> and the token limits with your ticket or 402 challenge, and <code>outputHash</code> with the sha256 of the text you received.</p>
+<h2 id="pricing-math">Pricing math</h2>
+<p>Prices are integer base units of the settlement asset per million tokens. USDC has 6 decimals, so 1 USDC is <code>1000000</code> base units and 0.05 USDC per million tokens is <code>50000</code>. All arithmetic is integer.</p>
+<pre><code class="language-text">raw    = inputTokens × inputPerMillion + outputTokens × outputPerMillion
+amount = ceil(raw / 1000000)</code></pre>
+<p>Any job that processed at least one token costs at least 1 base unit. A quote or x402 challenge uses the same formula with <code>maxInputTokens</code> and <code>maxOutputTokens</code>.</p>
+<p>Example: 1200 input and 300 output tokens at <code>50000</code> / <code>100000</code> gives raw = 60000000 + 30000000 = 90000000, so amount = 90 base units (0.00009 USDC).</p>
+<h2 id="on-chain-and-off-chain">On-chain and off-chain</h2>
+<ul>
+<li><strong>On-chain (Keeta Network):</strong> payments only. Each payment is an ordinary Keeta send of USDC from the buyer to the provider's payout address.</li>
+<li><strong>Off-chain (app backend):</strong> the provider registry (node keys, hardware, offers, prices, access lists, heartbeats), job records and receipts, pairing records for Linux helpers, and reputation counters.</li>
+<li><strong>Never stored:</strong> prompts and outputs. They pass through the relay to the provider and back. Job records hold the receipt, which holds only the output's hash.</li>
+</ul>
+</main>
+<footer>
+<p>Plain text: <a href="/compute/protocol.md">protocol.md</a>. Keeta Compute is in a test-network preview. <a href="/llms.txt">llms.txt</a> <a href="https://github.com/KeetaNetwork/agent-skills">GitHub</a></p>
+</footer>
+</body>
+</html>

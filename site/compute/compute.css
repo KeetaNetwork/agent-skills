@@ -1,0 +1,27 @@
+/* Keeta Compute docs: plain black text on white, readable as raw text (plan §6.4). */
+:root { color-scheme: light; }
+html { background: #fff; color: #000; }
+body {
+  margin: 0 auto;
+  padding: 24px 16px 64px;
+  max-width: 72ch;
+  font: 16px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  background: #fff;
+  color: #000;
+}
+a { color: #000; text-decoration: underline; }
+h1, h2, h3 { font-size: 1em; font-weight: bold; margin: 2em 0 0.5em; }
+h1 { margin-top: 1em; }
+h1::before { content: "# "; }
+h2::before { content: "## "; }
+h3::before { content: "### "; }
+p, ul, ol, pre, table { margin: 0 0 1em; }
+ul, ol { padding-left: 2ch; }
+pre { overflow-x: auto; padding: 8px 0; border-top: 1px solid #000; border-bottom: 1px solid #000; }
+code, pre { font: inherit; font-size: 0.94em; }
+table { display: block; overflow-x: auto; border-collapse: collapse; }
+th, td { border: 1px solid #000; padding: 2px 6px; text-align: left; vertical-align: top; white-space: nowrap; }
+td.wrap, th.wrap { white-space: normal; }
+header, footer { font-size: 0.94em; }
+header nav a, footer a { margin-right: 1ch; }
+footer { margin-top: 3em; padding-top: 1em; border-top: 1px solid #000; }

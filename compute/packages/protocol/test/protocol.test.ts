@@ -146,3 +146,9 @@ test('validation rejects malformed offers and requests', () => {
 	assert.ok(assertChatRequest({ model: 'qwen3-8b', messages: [{ role: 'user', content: 'hi' }] }));
 	assert.throws(() => assertOffer({ modelId: 'x', weightsHash: 'nope' }, 0));
 });
+
+test('catalog.json is in sync with catalog.ts (run npm run catalog:export)', async () => {
+	const { readFileSync } = await import('node:fs');
+	const { catalogExport } = await import('../scripts/export-catalog.ts');
+	assert.deepEqual(JSON.parse(readFileSync(new URL('../catalog.json', import.meta.url), 'utf8')), catalogExport());
+});

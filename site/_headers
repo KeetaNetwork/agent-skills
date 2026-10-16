@@ -23,5 +23,9 @@
 /.well-known/*
   Access-Control-Allow-Origin: *
 
+# Keeta Compute docs: every page also has a .md twin that agents fetch as text.
+/compute/*
+  Access-Control-Allow-Origin: *
+
 /assets/fonts/*
   Cache-Control: public, max-age=31536000, immutable

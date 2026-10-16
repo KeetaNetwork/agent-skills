@@ -53,6 +53,10 @@ Don't use `npx skills add https://keeta.ai/SKILL.md`. Once the site publishes a 
 - **Base units.** Amounts are integer base units, and decimals are read from token metadata, never assumed.
 - **Guidance, not authorization.** Every value-moving workflow asks for confirmation first. A skill doesn't replace application controls, or legal, compliance or security review.
 
+## Keeta Compute
+
+Keeta Compute is a market for AI inference on Apple Silicon Macs, paid per request in USDC on Keeta. It is in a test-network preview. Its code lives in [`compute/`](compute/), and its developer docs are at <https://keeta.ai/compute/>. The docs come from `site/compute/`: every page is plain HTML with a Markdown twin (for example <https://keeta.ai/compute/router.md>), and the build fills the models table from `compute/packages/protocol/catalog.json`.
+
 ## Hosting on keeta.ai
 
 keeta.ai is the Cloudflare Pages project `agent-skills`, connected to this repository. Pages builds every push. `main` deploys to keeta.ai, and other branches and pull requests get preview URLs.

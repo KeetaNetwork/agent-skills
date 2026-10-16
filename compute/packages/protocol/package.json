@@ -10,7 +10,8 @@
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",
-    "test": "node --import tsx --test test/*.test.ts"
+    "test": "node --import tsx --test test/*.test.ts",
+    "catalog:export": "node --import tsx scripts/export-catalog.ts"
   },
   "dependencies": {
     "@keetanetwork/keetanet-client": "0.18.7"

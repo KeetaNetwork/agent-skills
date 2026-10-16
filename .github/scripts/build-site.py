@@ -7,6 +7,9 @@ Output layout:
     index.html, 404.html, styles.css, app.js     copied from site/
     assets/                                       wordmark, app icon, preview image, Geist fonts (SIL OFL)
     _headers                                      Pages response headers (CORS for agents); not served
+    compute/                                      Keeta Compute docs from site/compute/: every page as
+                                                  <page>.html and a <page>.md twin; the models table is
+                                                  filled from compute/packages/protocol/catalog.json
     SKILL.md, skill.md                            the main `keeta` skill, links made absolute
     skills/<name>/...                             every skill directory at a short URL, the primary link
     llms.txt                                      plain index for LLMs and web agents
@@ -25,6 +28,7 @@ shadow the pack for `npx skills add KeetaNetwork/agent-skills`.
 from __future__ import annotations
 
 import hashlib
+import html
 import io
 import json
 import posixpath
@@ -32,6 +36,7 @@ import re
 import shutil
 import sys
 import zipfile
+from decimal import Decimal
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -46,6 +51,12 @@ LEGACY_WELL_KNOWN = ".well-known/skills"
 SCHEMA_V2 = "https://schemas.agentskills.io/discovery/0.2.0/schema.json"
 NAME_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 LINK_PATTERN = re.compile(r"(\]\()([^)\s]+)(\))")
+COMPUTE_PATH = "compute"
+COMPUTE_CATALOG = ROOT / "compute" / "packages" / "protocol" / "catalog.json"
+COMPUTE_PAGES = ("index", "app", "models", "router", "helper", "protocol")
+MODELS_MARKER = "<!-- keeta-compute:models-table -->"
+USDC_DECIMALS = 6
+GIB = 1024**3
 
 
 def frontmatter(text: str) -> dict[str, str]:
@@ -105,10 +116,96 @@ def absolutize_links(markdown: str, skill: str) -> str:
     return LINK_PATTERN.sub(rewrite, markdown)
 
 
+def gib(size: object) -> str:
+    value = Decimal(int(size)) / GIB  # type: ignore[arg-type]
+    return f"{value:.0f} GB" if value >= 10 else f"{value:.1f} GB".replace(".0 GB", " GB")
+
+
+def usdc(base_units: object) -> str:
+    text = str(base_units)
+    if not text.isdigit():
+        raise SystemExit(f"{COMPUTE_CATALOG}: price {text!r} is not integer base units")
+    value = Decimal(text).scaleb(-USDC_DECIMALS)
+    return format(value.normalize(), "f") if value else "0"
+
+
+def models_tables(catalog: list[dict[str, object]]) -> tuple[str, str]:
+    """The catalog as a Markdown table and an HTML table (prices shown in USDC per million tokens)."""
+    head = ["id", "Name", "Parameters", "Quantization", "Memory", "Disk", "License",
+            "Input USDC / 1M", "Output USDC / 1M", "Notes"]
+    md = ["| " + " | ".join(head) + " |", "|" + " --- |" * len(head)]
+    rows_html = []
+    for model in catalog:
+        try:
+            license_ = model["license"]
+            price = model["suggestedPrice"]
+            cells = [
+                str(model["id"]), str(model["name"]), str(model["parameters"]), str(model["quantization"]),
+                gib(model["memoryBytes"]), gib(model["diskBytes"]),
+                usdc(price["inputPerMillion"]), usdc(price["outputPerMillion"]),  # type: ignore[index]
+                "cluster only" if model.get("requiresCluster") else "",
+            ]
+            license_name, license_url = str(license_["name"]), str(license_["url"])  # type: ignore[index]
+        except (KeyError, TypeError, ValueError) as error:
+            raise SystemExit(f"{COMPUTE_CATALOG}: malformed entry {model!r}: {error}")
+        md_cells = [f"`{cells[0]}`", *cells[1:6], f"[{license_name}]({license_url})", *cells[6:]]
+        md.append("| " + " | ".join(c.replace("|", "\\|") for c in md_cells) + " |")
+        esc = [html.escape(c) for c in cells]
+        link = f'<a href="{html.escape(license_url)}">{html.escape(license_name)}</a>'
+        tds = [f"<td><code>{esc[0]}</code></td>", *(f"<td>{c}</td>" for c in esc[1:6]), f"<td>{link}</td>",
+               *(f"<td>{c}</td>" for c in esc[6:])]
+        rows_html.append("<tr>" + "".join(tds) + "</tr>")
+    table_html = "\n".join([
+        "<table>",
+        "<thead><tr>" + "".join(f"<th>{html.escape(h)}</th>" for h in head) + "</tr></thead>",
+        "<tbody>",
+        *rows_html,
+        "</tbody>",
+        "</table>",
+    ])
+    return "\n".join(md), table_html
+
+
+def build_compute(out: Path) -> list[tuple[str, str]]:
+    """Check the Keeta Compute pages, fill in the models table, and return (title, url) for llms.txt."""
+    folder = out / COMPUTE_PATH
+    html_pages = {p.stem for p in folder.glob("*.html")}
+    md_pages = {p.stem for p in folder.glob("*.md")}
+    if html_pages != md_pages:
+        raise SystemExit(f"site/{COMPUTE_PATH}: every page needs an .html and an .md twin; unpaired: "
+                         f"{sorted(html_pages ^ md_pages)}")
+    missing = [name for name in COMPUTE_PAGES if name not in html_pages]
+    if missing:
+        raise SystemExit(f"site/{COMPUTE_PATH}: missing pages {missing}")
+
+    try:
+        catalog = json.loads(COMPUTE_CATALOG.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        raise SystemExit(f"{COMPUTE_CATALOG}: cannot read the model catalog: {error}")
+    if not isinstance(catalog, list) or not catalog:
+        raise SystemExit(f"{COMPUTE_CATALOG}: expected a non-empty JSON array")
+    table_md, table_html = models_tables(catalog)
+    for suffix, table in ((".md", table_md), (".html", table_html)):
+        page = folder / f"models{suffix}"
+        text = page.read_text(encoding="utf-8")
+        if text.count(MODELS_MARKER) != 1:
+            raise SystemExit(f"site/{COMPUTE_PATH}/{page.name}: needs exactly one {MODELS_MARKER}")
+        page.write_text(text.replace(MODELS_MARKER, table), encoding="utf-8")
+
+    entries = []
+    for name in [*COMPUTE_PAGES, *sorted(md_pages - set(COMPUTE_PAGES))]:
+        first = (folder / f"{name}.md").read_text(encoding="utf-8").splitlines()[0]
+        if not first.startswith("# "):
+            raise SystemExit(f"site/{COMPUTE_PATH}/{name}.md: must start with a '# ' title")
+        entries.append((first[2:].strip(), f"{SITE_URL}/{COMPUTE_PATH}/{name}.md"))
+    return entries
+
+
 def build(out: Path) -> None:
     if out.exists():
         shutil.rmtree(out)
     shutil.copytree(SITE_SOURCE, out)
+    compute_pages = build_compute(out)
 
     v1_entries: list[dict[str, object]] = []
     v2_entries: list[dict[str, str]] = []
@@ -200,6 +297,15 @@ def build(out: Path) -> None:
         lines.append(f"- [{name}]({SITE_URL}/{SKILLS_PATH}/{name}/SKILL.md): {description}")
     lines += [
         "",
+        "## Keeta Compute",
+        "",
+        "AI inference on Apple Silicon Macs, paid per request in USDC on Keeta (test-network preview).",
+        "",
+    ]
+    for title, url in compute_pages:
+        lines.append(f"- [{title}]({url})")
+    lines += [
+        "",
         "## Machine-readable",
         "",
         f"- [Every skill in one file]({SITE_URL}/llms-full.txt)",
@@ -213,7 +319,7 @@ def build(out: Path) -> None:
     (out / "llms.txt").write_text("\n".join(lines), encoding="utf-8")
 
     shown = out.relative_to(ROOT) if ROOT in out.parents else out
-    print(f"Built {shown}: {len(catalog)} skills with Python {sys.version.split()[0]}")
+    print(f"Built {shown}: {len(catalog)} skills, {len(compute_pages)} Keeta Compute pages with Python {sys.version.split()[0]}")
 
 
 if __name__ == "__main__":

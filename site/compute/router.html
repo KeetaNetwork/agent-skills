@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>Public API router | Keeta Compute</title>
+<meta name="description" content="The Keeta Compute public API router: OpenAI-compatible endpoints paid per request with x402 on Keeta.">
+<link rel="canonical" href="https://keeta.ai/compute/router">
+<link rel="alternate" type="text/markdown" href="/compute/router.md" title="This page as Markdown">
+<link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/compute/compute.css">
+</head>
+<body>
+<header>
+<nav aria-label="Keeta Compute"><a href="/compute/">Compute</a> <a href="/compute/app">macOS app</a> <a href="/compute/models">Models</a> <a href="/compute/router" aria-current="page">API router</a> <a href="/compute/helper">Linux helper</a> <a href="/compute/protocol">Protocol</a> <a href="/">Agent skills</a></nav>
+</header>
+<main>
+<h1 id="public-api-router">Public API router</h1>
+<p>Status: test-network preview. <code>https://api.keeta.ai/v1</code> is the planned production base URL.</p>
+<p>The router serves Keeta Compute to clients without the macOS app: servers, other platforms, any HTTP client. It speaks the OpenAI chat API and charges per request with x402 on Keeta. There is no account, API key or invoice: the payment is the authorization.</p>
+<pre><code class="language-text">Base URL: https://api.keeta.ai/v1</code></pre>
+<h2 id="endpoints">Endpoints</h2>
+<h3 id="get-v1-models">GET /v1/models</h3>
+<p>Free. Lists models with at least one online provider, in the OpenAI list format. Each entry has an extra <code>keeta</code> object: how many providers serve the model, and the lowest price per million input and output tokens in USDC base units (6 decimals, so <code>50000</code> is 0.05 USDC).</p>
+<pre><code class="language-json">{
+  "object": "list",
+  "data": [
+    {
+      "id": "qwen3-8b",
+      "object": "model",
+      "keeta": {
+        "providers": 3,
+        "lowestPrice": { "inputPerMillion": "50000", "outputPerMillion": "100000" }
+      }
+    }
+  ]
+}</code></pre>
+<h3 id="post-v1-chat-completions">POST /v1/chat/completions</h3>
+<p>Paid. OpenAI request and response format; <code>stream: true</code> is supported. Set <code>max_tokens</code>: it bounds what the request can cost.</p>
+<h2 id="payment-x402-on-keeta">Payment: x402 on Keeta</h2>
+<ol>
+<li>Send the request with no payment. The router picks a provider and answers <code>402 Payment Required</code> with a <code>PAYMENT-REQUIRED</code> header: base64 JSON, x402 version 2.</li>
+<li>Your client signs one Keeta send block for <code>amount</code> to <code>payTo</code> and retries the same request with the <code>PAYMENT-SIGNATURE</code> header. The block is signed, not published.</li>
+<li>The router has the x402 facilitator verify the block and settle it on Keeta, then runs the job and returns the completion.</li>
+</ol>
+<p>The payment goes straight to the serving provider's address. The router never holds the funds.</p>
+<p>Example 402:</p>
+<pre><code class="language-bash">curl -i https://api.keeta.ai/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model": "qwen3-8b", "messages": [{"role": "user", "content": "Say hello."}], "max_tokens": 256}'</code></pre>
+<pre><code class="language-text">HTTP/2 402
+content-type: application/json
+payment-required: eyJ4NDAyVmVyc2lvbiI6Mi...</code></pre>
+<p>The <code>PAYMENT-REQUIRED</code> header, decoded:</p>
+<pre><code class="language-json">{
+  "x402Version": 2,
+  "resource": { "url": "https://api.keeta.ai/v1/chat/completions" },
+  "accepts": [
+    {
+      "scheme": "exact",
+      "network": "keeta:1413829460",
+      "asset": "keeta_apna75yhhvnv4ei7ape55hndk4yepno7a7i2mhtiwahiygixjcnmvswxhnmnk",
+      "amount": "27",
+      "payTo": "keeta_&lt;the serving provider's address&gt;",
+      "maxTimeoutSeconds": 60,
+      "extra": {
+        "jobId": "job_&lt;id&gt;",
+        "model": "qwen3-8b",
+        "maxInputTokens": 20,
+        "maxOutputTokens": 256,
+        "price": { "inputPerMillion": "50000", "outputPerMillion": "100000" }
+      }
+    }
+  ]
+}</code></pre>
+<table>
+<thead><tr><th>Field</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>network</code></td><td class="wrap"><code>keeta:1413829460</code> on the test network, <code>keeta:21378</code> on the main network</td></tr>
+<tr><td><code>asset</code></td><td class="wrap">The USDC token address on that network</td></tr>
+<tr><td><code>amount</code></td><td class="wrap">The maximum cost in base units: estimated input tokens plus <code>max_tokens</code>, at the provider's price, rounded up</td></tr>
+<tr><td><code>payTo</code></td><td class="wrap">The serving provider's Keeta address</td></tr>
+<tr><td><code>extra</code></td><td class="wrap">The job id, model, token limits and price the amount was computed from</td></tr>
+</tbody>
+</table>
+<p>In the example, 20 × 50000 + 256 × 100000 = 26600000, divided by one million and rounded up: 27 base units, or 0.000027 USDC.</p>
+<p>You pay the maximum. Tokens not used are not refunded in this version, so keep <code>max_tokens</code> close to what you need.</p>
+<h2 id="receipts">Receipts</h2>
+<p>Every completion carries the provider's signed receipt: model, weights hash, runtime, token counts, price and amount (<a href="/compute/protocol">fields</a>).</p>
+<ul>
+<li>Non-streaming: the <code>X-Keeta-Receipt</code> response header, base64 JSON <code>{"receipt": {...}, "signature": "..."}</code>.</li>
+<li>Streaming: a final server-sent event after the completion chunks:</li>
+</ul>
+<pre><code class="language-text">event: keeta.receipt
+data: {"receipt": {...}, "signature": "..."}</code></pre>
+<h2 id="typescript-buyer">TypeScript buyer</h2>
+<p>Uses the same packages as the <a href="/skills/x402-payments/SKILL.md">x402-payments skill</a> (verified there with <code>@x402/*</code> 2.28.0 and <code>@keetanetwork/keetanet-client</code> 0.18.7).</p>
+<pre><code class="language-bash">npm install @keetanetwork/keetanet-client @x402/core @x402/keeta @x402/fetch</code></pre>
+<pre><code class="language-ts">import * as KeetaNet from "@keetanetwork/keetanet-client";
+import { x402Client } from "@x402/core/client";
+import { wrapFetchWithPayment } from "@x402/fetch";
+import { ExactKeetaScheme, KEETA_TESTNET_CAIP2, toClientKeetaSigner } from "@x402/keeta";
+
+// Load the seed from your secret store. Never print, log or commit it.
+const account = KeetaNet.lib.Account.fromSeed(process.env.KEETA_SEED!, 0);
+const signer = toClientKeetaSigner(account); // opens a UserClient; destroy it when done
+const model = "qwen3-8b";
+
+try {
+  const client = new x402Client()
+    .register(KEETA_TESTNET_CAIP2, new ExactKeetaScheme(signer))
+    .setSpendControls({ maxAmountPerPayment: "$0.05" }) // USDC cap per request
+    .onBeforePaymentCreation(async ({ selectedRequirements: req }) =&gt; {
+      const extra = req.extra as { model?: string } | undefined;
+      if (req.network !== KEETA_TESTNET_CAIP2 || extra?.model !== model) {
+        return { abort: true, reason: "unexpected payment request" };
+      }
+    });
+
+  const fetchWithPayment = wrapFetchWithPayment(fetch, client);
+  const response = await fetchWithPayment("https://api.keeta.ai/v1/chat/completions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model,
+      messages: [{ role: "user", content: "Say hello." }],
+      max_tokens: 256,
+    }),
+  });
+  if (!response.ok) throw new Error(`router answered ${response.status}`);
+
+  const completion = await response.json();
+  const header = response.headers.get("X-Keeta-Receipt");
+  const receipt = header ? JSON.parse(Buffer.from(header, "base64").toString("utf8")) : undefined;
+  console.log(completion.choices[0].message.content, receipt?.receipt.amount);
+} finally {
+  await signer.destroy();
+}</code></pre>
+<ul>
+<li>The spend cap and the <code>onBeforePaymentCreation</code> check run in your client. The chain does not enforce them.</li>
+<li>Pay sequentially from each account. Keeta account chains are ordered, so one account cannot sign two payments at once. Queue requests, or spread them over several funded accounts when you need parallel requests.</li>
+<li>On the main network use <code>KEETA_MAINNET_CAIP2</code> and main-network USDC.</li>
+</ul>
+<h2 id="errors">Errors</h2>
+<table>
+<thead><tr><th>Status</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td>400</td><td class="wrap">Invalid request: malformed JSON or fields the router does not accept</td></tr>
+<tr><td>402</td><td class="wrap">Payment required, or the payment failed verification or settlement</td></tr>
+<tr><td>404</td><td class="wrap">Unknown model</td></tr>
+<tr><td>502</td><td class="wrap">The provider failed. If it failed before streaming started, the payment is not settled.</td></tr>
+<tr><td>503</td><td class="wrap">No provider is available for the model now. Retry after the <code>Retry-After</code> header.</td></tr>
+</tbody>
+</table>
+</main>
+<footer>
+<p>Plain text: <a href="/compute/router.md">router.md</a>. Keeta Compute is in a test-network preview. <a href="/llms.txt">llms.txt</a> <a href="https://github.com/KeetaNetwork/agent-skills">GitHub</a></p>
+</footer>
+</body>
+</html>

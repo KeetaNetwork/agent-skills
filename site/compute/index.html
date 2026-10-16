@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>Keeta Compute</title>
+<meta name="description" content="Keeta Compute: Macs sell spare AI inference capacity and are paid per request in USDC on Keeta Network.">
+<link rel="canonical" href="https://keeta.ai/compute/">
+<link rel="alternate" type="text/markdown" href="/compute/index.md" title="This page as Markdown">
+<link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/compute/compute.css">
+</head>
+<body>
+<header>
+<nav aria-label="Keeta Compute"><a href="/compute/" aria-current="page">Compute</a> <a href="/compute/app">macOS app</a> <a href="/compute/models">Models</a> <a href="/compute/router">API router</a> <a href="/compute/helper">Linux helper</a> <a href="/compute/protocol">Protocol</a> <a href="/">Agent skills</a></nav>
+</header>
+<main>
+<h1 id="keeta-compute">Keeta Compute</h1>
+<p>Status: test-network preview. Nothing on these pages runs on the Keeta main network yet. Hostnames such as <code>api.keeta.ai</code> are the planned production endpoints.</p>
+<p>Keeta Compute is a market for AI inference on Apple Silicon Macs, paid per request in USDC on Keeta Network.</p>
+<ul>
+<li><strong>Providers.</strong> A Mac sells its spare inference capacity. It runs open-weight models and is paid per completed request, in USDC, straight to its own wallet.</li>
+<li><strong>Buyers on a Mac.</strong> The same macOS app buys inference for the agents running on that Mac, through a local OpenAI-compatible endpoint, within spend limits you set.</li>
+<li><strong>Everyone else.</strong> A public API router at <code>https://api.keeta.ai/v1</code> serves the same models to servers and other platforms. It speaks the OpenAI chat API and charges per request with x402.</li>
+</ul>
+<p>Payments settle on Keeta. Prompts and outputs never go on chain.</p>
+<h2 id="how-it-works">How it works</h2>
+<ol>
+<li>A provider installs the macOS app. The app creates a passkey wallet and checks the hardware.</li>
+<li>The provider installs models that fit, sets a price per million tokens for each, and offers them to everyone or only to listed buyer addresses.</li>
+<li>A buyer sends an OpenAI-style chat request: an agent through the app's local endpoint, or any client through the public router.</li>
+<li>The scheduler picks an online provider that has the model, accepts that buyer and fits the price, and signs a ticket for that one job.</li>
+<li>The provider runs the job, streams the tokens back through the relay, and signs a receipt.</li>
+<li>The buyer pays the provider directly in USDC, and the result feeds the provider's reputation.</li>
+</ol>
+<h2 id="trust-and-privacy">Trust and privacy</h2>
+<ul>
+<li>A provider can see the prompts it serves and the text it generates. Running a request on someone else's Mac is not private from that Mac's operator.</li>
+<li>For sensitive work, use your own machines or an allowlist. A provider can serve only listed buyer addresses, such as your own other machines or your company.</li>
+<li>Every response comes with a receipt signed by the provider. It names the model, the weights hash, the runtime and its version, the input and output tokens, the price and the amount. Check it against what you asked for.</li>
+<li>A receipt is a signed statement by the provider. It is not a cryptographic proof that the work was done as described.</li>
+<li>The network never stores prompts or outputs. The relay passes them through, and job records keep the receipt, which holds only a sha256 hash of the output.</li>
+</ul>
+<h2 id="pages">Pages</h2>
+<ul>
+<li><a href="/compute/app">macOS app</a>: install, provide capacity, get paid, buy for local agents.</li>
+<li><a href="/compute/models">Models</a>: the catalog, memory needs, licenses and suggested prices.</li>
+<li><a href="/compute/router">Public API router</a>: endpoints, x402 payment flow, receipts, errors.</li>
+<li><a href="/compute/helper">Linux helper</a>: add a Linux machine to a Mac's fleet as extra capacity.</li>
+<li><a href="/compute/protocol">Protocol</a>: identities, signed requests, jobs, receipts, pricing math.</li>
+</ul>
+<p>Each page is also served as Markdown: add <code>.md</code> to its path, for example <code>https://keeta.ai/compute/router.md</code>.</p>
+<p>Keeta Compute builds on the <a href="/">Keeta agent skills</a>, which cover wallets, payments and <a href="/skills/x402-payments/SKILL.md">x402</a>.</p>
+</main>
+<footer>
+<p>Plain text: <a href="/compute/index.md">index.md</a>. Keeta Compute is in a test-network preview. <a href="/llms.txt">llms.txt</a> <a href="https://github.com/KeetaNetwork/agent-skills">GitHub</a></p>
+</footer>
+</body>
+</html>

@@ -45,12 +45,14 @@ export interface CatalogModel {
 
 const GB = 1024 ** 3;
 
-const LLAMA_LICENSE: ModelLicense = {
-	name: 'Llama Community License',
-	url: 'https://www.llama.com/llama3_3/license/',
-	operatorNotes: 'Display "Built with Llama" where you offer the model; follow the Llama acceptable use policy. Services above 700M monthly users need a separate license from Meta.',
-	attribution: 'Built with Llama'
-};
+function llamaLicense(version: '3_1' | '3_2' | '3_3'): ModelLicense {
+	return {
+		name: `Llama ${version.replace('_', '.')} Community License`,
+		url: `https://www.llama.com/llama${version}/license/`,
+		operatorNotes: 'Display "Built with Llama" where you offer the model; follow the Llama acceptable use policy. Services above 700M monthly users need a separate license from Meta.',
+		attribution: 'Built with Llama'
+	};
+}
 
 const QWEN_LICENSE: ModelLicense = {
 	name: 'Apache-2.0',
@@ -95,7 +97,7 @@ export const CATALOG: CatalogModel[] = [
 		diskBytes: 1.8 * GB,
 		memoryBytes: 4 * GB,
 		contextLength: 131072,
-		license: LLAMA_LICENSE,
+		license: llamaLicense('3_2'),
 		suggestedPrice: price(0.02, 0.04),
 		tags: ['small', 'chat']
 	},
@@ -125,7 +127,7 @@ export const CATALOG: CatalogModel[] = [
 		diskBytes: 4.5 * GB,
 		memoryBytes: 7 * GB,
 		contextLength: 131072,
-		license: LLAMA_LICENSE,
+		license: llamaLicense('3_1'),
 		suggestedPrice: price(0.05, 0.08),
 		tags: ['chat']
 	},
@@ -215,7 +217,7 @@ export const CATALOG: CatalogModel[] = [
 		diskBytes: 40 * GB,
 		memoryBytes: 46 * GB,
 		contextLength: 131072,
-		license: LLAMA_LICENSE,
+		license: llamaLicense('3_3'),
 		suggestedPrice: price(0.3, 0.6),
 		tags: ['large', 'chat']
 	},
