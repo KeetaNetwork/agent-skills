@@ -393,7 +393,7 @@ test('a buyer runs a job on a Mac provider and a paired Linux helper, and pays e
 	});
 	assert.equal(tooDear.status, 402);
 	const [cancelled] = await control.store.listJobsByBuyer(spendKey, 1);
-	assert.equal(cancelled!.status, 'failed');
+	assert.ok(cancelled!.handedBackAt, 'the ticket is handed back');
 	assert.equal((await control.store.getProvider(macKey))!.load.active, 0, 'the refused job does not hold the provider');
 	await buyer.rpc['buyer.setPolicy']!({ perRequestMax: '250000' });
 

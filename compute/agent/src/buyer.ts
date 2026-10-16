@@ -253,6 +253,7 @@ export class Buyer {
 			}
 		};
 		const events = capture(readRelayEvents(upstream.body));
+		let failure: unknown;
 
 		try {
 			if (body.stream) {
@@ -276,17 +277,19 @@ export class Buyer {
 				json(res, 200, result.completion, { 'x-keeta-job': t.jobId });
 			}
 		} catch (error) {
-			if (!signal.aborted || (!receipt && !delivered)) {
+			if (!receipt && !delivered) {
 				throw error;
 			}
+			/* Text already arrived, so the provider bills it: settle that below, then report the failure. */
+			failure = error;
 		}
-		if (signal.aborted && !receipt && delivered) {
-			/* The caller hung up after text arrived. The provider bills what it sent; collect that receipt and pay it. */
+		if (!receipt && delivered) {
+			/* The caller hung up or the stream broke after text arrived. Collect the provider's receipt for it and pay it. */
 			const late = { jobId: t.jobId, network, ticket, maxCost: maxCost.toString(), delivery: await deliveryOf(delivered), since: Date.now() };
 			store.update((s) => s.awaitingReceipts.push(late));
 			this.deps.onJob({ ...summary, status: 'running', at: Date.now() });
 			void this.chaseLateReceipts([2_000, 5_000, 15_000, 30_000]);
-			return;
+			return this.endAfterFailure(res, failure, signal);
 		}
 
 		if (!receipt) {
@@ -295,6 +298,19 @@ export class Buyer {
 			return;
 		}
 		await this.accept(ticket, receipt, maxCost, await deliveryOf(delivered), summary);
+		this.endAfterFailure(res, failure, signal);
+	}
+
+	/** Answer a caller whose stream broke after its text was settled: an error if nothing was sent yet, else end the stream. */
+	private endAfterFailure(res: ServerResponse, failure: unknown, signal: AbortSignal): void {
+		if (failure === undefined || signal.aborted || res.writableEnded) {
+			return;
+		}
+		if (!res.headersSent) {
+			json(res, 502, { error: { code: 'provider_failed', message: (failure as Error).message } });
+		} else {
+			res.end();
+		}
 	}
 
 	/** Check a receipt against the ticket and the text received, then queue its payment. */

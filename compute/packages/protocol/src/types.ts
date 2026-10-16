@@ -89,6 +89,12 @@ export interface JobRecord {
 	delivery?: { outputHash: string; maxOutputTokens: number; at: number };
 	/** For fallback jobs: when the router started the one upstream run this quote allows. */
 	claimedAt?: number;
+	/**
+	 * For app jobs: when the buyer handed the ticket back before a receipt. The
+	 * job stays open (and counted against the buyer's balance) until the ticket
+	 * lapses, so a provider that already streamed can still file its receipt.
+	 */
+	handedBackAt?: number;
 	error?: string;
 }
 

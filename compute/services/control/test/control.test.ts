@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
 	NETWORKS,
+	TICKET_TTL_MS,
 	UNPAID_GRACE_MS,
 	generatePairingCode,
 	jobCost,
@@ -223,6 +224,59 @@ test('a buyer can dispute a receipt for text the relay never forwarded, but not 
 	assert.equal((await h.call(null, 'POST', `/v1/relay/jobs/${delivered}/delivery`, { outputHash: 'a'.repeat(64), maxOutputTokens: 20 })).status, 401, 'only the relay records deliveries');
 });
 
+test('a buyer who hands a ticket back mid-stream still owes the receipt for what it was sent', async () => {
+	const balances = new Map<string, bigint>();
+	const h = harness({ balanceOf: async ({ account }) => balances.get(account) ?? 0n });
+	const { node, operator } = await registerMac(h);
+	const online = () => h.call(node, 'POST', '/v1/providers/heartbeat', { status: 'online', offers: [offer('qwen3-8b')], load: { active: 0, capacity: 4 } });
+	await online();
+	const limits = { maxInputTokens: 10, maxOutputTokens: 10 };
+	const buyer = newSigner();
+	balances.set(buyer.publicKey, maxJobCost(offer('qwen3-8b').price, limits));
+	const start = () => h.call(buyer, 'POST', '/v1/jobs', { network: 'test', model: 'qwen3-8b', ...limits });
+
+	const created = await start();
+	assert.equal(created.status, 200, JSON.stringify(created.body));
+	const { ticket } = created.body as { ticket: { ticket: { jobId: string; price: Offer['price'] } } };
+	const jobId = ticket.ticket.jobId;
+	assert.equal((await h.call(buyer, 'POST', `/v1/jobs/${jobId}/refuse`, { reason: 'stream broke' })).status, 200);
+	assert.equal((await start()).status, 402, 'the handed-back job stays held against the balance');
+
+	const receipt: Receipt = {
+		v: 1, jobId, network: 'test', nodeKey: node.publicKey, payTo: operator.publicKey, buyer: buyer.publicKey, modelId: 'qwen3-8b',
+		weightsHash: 'c'.repeat(64), runtime: { kind: 'mlx', build: 'x' }, inputTokens: 5, outputTokens: 5, price: ticket.ticket.price,
+		amount: jobCost(ticket.ticket.price, { inputTokens: 5, outputTokens: 5 }).toString(), asset: NETWORKS.test.settlementAsset.address,
+		startedAt: 0, finishedAt: 0, outputHash: 'a'.repeat(64), finishReason: 'cancelled'
+	};
+	await h.call(null, 'POST', `/v1/relay/jobs/${jobId}/delivery`, { outputHash: 'a'.repeat(64), maxOutputTokens: 20 }, { 'x-router-secret': 'router-secret' });
+	const filed = await h.call(node, 'POST', `/v1/jobs/${jobId}/receipt`, { receipt: { receipt, signature: await node.sign(receiptMessage(receipt)) } });
+	assert.equal(filed.status, 200, 'the provider files its receipt after the handback');
+	assert.equal((await h.store.getJob(jobId))!.amountDue, receipt.amount);
+	assert.equal((await h.call(buyer, 'POST', `/v1/jobs/${jobId}/refuse`, {})).status, 409, 'delivered text cannot be disputed away');
+	h.advance(UNPAID_GRACE_MS + 1000);
+	await online();
+	assert.equal((await start()).status, 402, 'the unpaid receipt blocks new jobs');
+});
+
+test('a handed-back ticket that draws no receipt lapses and frees the balance', async () => {
+	const balances = new Map<string, bigint>();
+	const h = harness({ balanceOf: async ({ account }) => balances.get(account) ?? 0n });
+	const { node } = await registerMac(h);
+	const online = () => h.call(node, 'POST', '/v1/providers/heartbeat', { status: 'online', offers: [offer('qwen3-8b')], load: { active: 0, capacity: 4 } });
+	await online();
+	const limits = { maxInputTokens: 10, maxOutputTokens: 10 };
+	const buyer = newSigner();
+	balances.set(buyer.publicKey, maxJobCost(offer('qwen3-8b').price, limits));
+	const start = () => h.call(buyer, 'POST', '/v1/jobs', { network: 'test', model: 'qwen3-8b', ...limits });
+	const jobId = ((await start()).body as { job: { jobId: string } }).job.jobId;
+	await h.call(buyer, 'POST', `/v1/jobs/${jobId}/cancel`, {});
+	h.advance(TICKET_TTL_MS + 5 * 60_000 + 1000);
+	await h.service.sweep();
+	assert.equal((await h.store.getJob(jobId))!.status, 'failed');
+	await online();
+	assert.equal((await start()).status, 200);
+});
+
 test('pay-later buyers need ledger funds for every job they still owe for', async () => {
 	const balances = new Map<string, bigint>();
 	let ledgerUp = true;
@@ -305,9 +359,11 @@ test('a heartbeat keeps ticketed slots held, and a buyer cancel or provider fail
 	const jobId = (first.body as { job: { jobId: string } }).job.jobId;
 	assert.equal((await h.call(newSigner(), 'POST', `/v1/jobs/${jobId}/cancel`, {})).status, 403, 'only the buyer can cancel');
 	assert.equal((await h.call(buyer, 'POST', `/v1/jobs/${jobId}/cancel`, {})).status, 200);
-	assert.equal((await h.call(buyer, 'POST', `/v1/jobs/${jobId}/cancel`, {})).status, 409);
+	assert.equal((await h.call(buyer, 'POST', `/v1/jobs/${jobId}/cancel`, {})).status, 200, 'cancelling twice is harmless');
+	await beat();
 	const second = await job();
 	assert.equal(second.status, 200, 'the cancelled slot is free again');
+	assert.equal((await job()).status, 503, 'a repeated cancel frees only one slot');
 	const secondId = (second.body as { job: { jobId: string } }).job.jobId;
 	assert.equal((await h.call(node, 'POST', `/v1/jobs/${secondId}/fail`, { error: 'busy' })).status, 200);
 	assert.equal((await job()).status, 200, 'a job the provider rejected frees its slot');

@@ -220,7 +220,7 @@ export class ControlService {
 		const capacity = Number.isInteger(load?.capacity) ? Math.min(64, Math.max(1, Number(load?.capacity))) : 1;
 		const now = this.now();
 		/* Count jobs ticketed to this node that have not started yet, so a heartbeat never frees their slots. */
-		const ticketed = (await this.store.listJobsByNode(nodeKey, 100)).filter((j) => j.status === 'scheduled' && j.paymentMode === 'postpay' && j.createdAt > now - TICKET_TTL_MS).length;
+		const ticketed = (await this.store.listJobsByNode(nodeKey, 100)).filter((j) => j.status === 'scheduled' && j.paymentMode === 'postpay' && !j.handedBackAt && j.createdAt > now - TICKET_TTL_MS).length;
 		const active = Math.max(reported, ticketed);
 
 		const record = await this.store.updateProvider(nodeKey, (current) => {
@@ -592,10 +592,12 @@ export class ControlService {
 			throw new AuthError('receipt signature does not verify');
 		}
 		const now = this.now();
+		let heldSlot = false;
 		const updated = await this.store.updateJob(jobId, (current) => {
 			if (current.status !== 'scheduled') {
 				throw new ConflictError(`job is already ${current.status}`);
 			}
+			heldSlot = holdsSlot(current);
 			const prepaidSettled = current.paymentMode === 'prepaid' && current.payment;
 			return {
 				...current,
@@ -607,7 +609,7 @@ export class ControlService {
 		});
 		await this.store.updateProvider(nodeKey, (record) => ({
 			...record,
-			load: { ...record.load, active: Math.max(0, record.load.active - (job.paymentMode === 'postpay' ? 1 : 0)) },
+			load: { ...record.load, active: Math.max(0, record.load.active - (heldSlot ? 1 : 0)) },
 			stats: {
 				...record.stats,
 				completed: record.stats.completed + 1,
@@ -627,15 +629,17 @@ export class ControlService {
 		if (job.nodeKey !== nodeKey) {
 			throw new ForbiddenError('job was not assigned to this node');
 		}
+		let heldSlot = false;
 		const updated = await this.store.updateJob(jobId, (current) => {
 			if (current.status !== 'scheduled') {
 				throw new ConflictError(`job is already ${current.status}`);
 			}
+			heldSlot = holdsSlot(current);
 			return { ...current, status: 'failed', completedAt: this.now(), error: reason };
 		});
 		await this.store.updateProvider(nodeKey, (record) => ({
 			...record,
-			load: { ...record.load, active: Math.max(0, record.load.active - (job.paymentMode === 'postpay' ? 1 : 0)) },
+			load: { ...record.load, active: Math.max(0, record.load.active - (heldSlot ? 1 : 0)) },
 			stats: { ...record.stats, failed: record.stats.failed + 1 }
 		}));
 		return { job: redactJob(updated) };
@@ -650,14 +654,10 @@ export class ControlService {
 		if (job.buyer !== buyer) {
 			throw new ForbiddenError('job belongs to another buyer');
 		}
-		const updated = await this.store.updateJob(jobId, (current) => {
-			if (current.status !== 'scheduled') {
-				throw new ConflictError(`job is already ${current.status}`);
-			}
-			return { ...current, status: 'failed', completedAt: this.now(), error: 'cancelled by the buyer' };
-		});
-		await this.store.updateProvider(job.nodeKey, (record) => ({ ...record, load: { ...record.load, active: Math.max(0, record.load.active - 1) } }));
-		return { job: redactJob(updated) };
+		if (job.status !== 'scheduled') {
+			throw new ConflictError(`job is already ${job.status}`);
+		}
+		return { job: redactJob(await this.handBack(jobId, 'cancelled by the buyer')) };
 	}
 
 	/**
@@ -676,10 +676,10 @@ export class ControlService {
 		if (job.buyer !== buyer || job.paymentMode !== 'postpay') {
 			throw new ForbiddenError('job belongs to another buyer');
 		}
+		if (job.status === 'scheduled') {
+			return { job: redactJob(await this.handBack(jobId, `refused by the buyer: ${reason}`)) };
+		}
 		const updated = await this.store.updateJob(jobId, (current) => {
-			if (current.status === 'scheduled') {
-				return { ...current, status: 'failed', completedAt: this.now(), error: `refused by the buyer: ${reason}` };
-			}
 			if (current.status === 'completed' && !current.payment) {
 				const billed = current.receipt?.receipt;
 				if (current.delivery && billed && billed.outputHash === current.delivery.outputHash && billed.outputTokens <= current.delivery.maxOutputTokens) {
@@ -689,12 +689,33 @@ export class ControlService {
 			}
 			throw new ConflictError(`job is already ${current.status}`);
 		});
-		await this.store.updateProvider(job.nodeKey, (record) =>
-			updated.status === 'failed'
-				? { ...record, load: { ...record.load, active: Math.max(0, record.load.active - 1) } }
-				: { ...record, stats: { ...record.stats, disputed: (record.stats.disputed ?? 0) + 1 } }
-		);
+		await this.store.updateProvider(job.nodeKey, (record) => ({ ...record, stats: { ...record.stats, disputed: (record.stats.disputed ?? 0) + 1 } }));
 		return { job: redactJob(updated) };
+	}
+
+	/**
+	 * Hand a scheduled app job back: free the provider's slot now, but keep the
+	 * job open until its ticket lapses. A provider may already be streaming it,
+	 * so its receipt is still taken and owed (and disputable against the relay's
+	 * delivery record), and the job's cost stays held against the buyer's balance.
+	 */
+	private async handBack(jobId: string, reason: string): Promise<JobRecord> {
+		let freed = false;
+		const updated = await this.store.updateJob(jobId, (current) => {
+			freed = false; /* a store may retry this update */
+			if (current.status !== 'scheduled') {
+				throw new ConflictError(`job is already ${current.status}`);
+			}
+			if (current.handedBackAt) {
+				return current;
+			}
+			freed = true;
+			return { ...current, handedBackAt: this.now(), error: reason };
+		});
+		if (freed) {
+			await this.store.updateProvider(updated.nodeKey, (record) => ({ ...record, load: { ...record.load, active: Math.max(0, record.load.active - 1) } }));
+		}
+		return updated;
 	}
 
 	/** The relay records what it forwarded to the buyer of an app job; the first record stands. */
@@ -787,8 +808,16 @@ export class ControlService {
 		let expired = 0;
 		let confirmed = 0;
 		for (const job of await this.store.listJobsByStatus('scheduled', now - TICKET_TTL_MS - 5 * 60_000, 200)) {
-			await this.store.updateJob(job.jobId, (current) => (current.status === 'scheduled' ? { ...current, status: 'expired' } : current));
-			if (job.paymentMode === 'postpay') {
+			/* A handed-back ticket that drew no receipt ends as the buyer's refusal; its slot was freed then. */
+			let heldSlot = false;
+			await this.store.updateJob(job.jobId, (current) => {
+				if (current.status !== 'scheduled') {
+					return current;
+				}
+				heldSlot = holdsSlot(current);
+				return { ...current, status: current.handedBackAt ? 'failed' : 'expired' };
+			});
+			if (heldSlot) {
 				await this.store.updateProvider(job.nodeKey, (record) => ({ ...record, load: { ...record.load, active: Math.max(0, record.load.active - 1) } }));
 			}
 			expired++;
@@ -1033,6 +1062,11 @@ function publicProvider(record: StoredProvider): ProviderRecord {
 }
 
 /** What a buyer still owes on open postpay jobs: the amount due once receipted, else the job's maximum cost. */
+/** Whether a scheduled job still holds a slot in its provider's load: app jobs until handed back. */
+function holdsSlot(job: JobRecord): boolean {
+	return job.paymentMode === 'postpay' && !job.handedBackAt;
+}
+
 function owedFor(open: JobRecord[]): bigint {
 	return open.reduce((sum, job) => sum + (job.status === 'completed' && job.amountDue ? BigInt(job.amountDue) : maxJobCost(job.price, job)), 0n);
 }
