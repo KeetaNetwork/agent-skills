@@ -121,11 +121,14 @@ test('the buyer refuses receipts that do not match the ticket', async (t) => {
 		log: () => undefined,
 		onJob: () => undefined
 	});
-	assert.equal(buyer.checkReceipt(ticket, await sign(base), 1000n), null);
-	assert.match(buyer.checkReceipt(ticket, await sign({ ...base, payTo: node.publicKey }), 1000n)!, /does not match/);
-	assert.match(buyer.checkReceipt(ticket, await sign({ ...base, outputTokens: 101, amount: '41' }), 1000n)!, /token limits/);
-	assert.match(buyer.checkReceipt(ticket, await sign({ ...base, amount: '999' }), 1000n)!, /amount/);
-	assert.match(buyer.checkReceipt(ticket, { ...(await sign(base)), signature: (await sign({ ...base, inputTokens: 1 })).signature }, 1000n)!, /signature/);
+	const delivery = { outputHash: 'b'.repeat(64), maxOutputTokens: 100 };
+	assert.equal(buyer.checkReceipt(ticket, await sign(base), 1000n, delivery), null);
+	assert.match(buyer.checkReceipt(ticket, await sign({ ...base, payTo: node.publicKey }), 1000n, delivery)!, /does not match/);
+	assert.match(buyer.checkReceipt(ticket, await sign({ ...base, outputTokens: 101, amount: '41' }), 1000n, delivery)!, /token limits/);
+	assert.match(buyer.checkReceipt(ticket, await sign({ ...base, amount: '999' }), 1000n, delivery)!, /amount/);
+	assert.match(buyer.checkReceipt(ticket, { ...(await sign(base)), signature: (await sign({ ...base, inputTokens: 1 })).signature }, 1000n, delivery)!, /signature/);
+	assert.match(buyer.checkReceipt(ticket, await sign(base), 1000n, { ...delivery, outputHash: 'c'.repeat(64) })!, /text received/);
+	assert.match(buyer.checkReceipt(ticket, await sign(base), 1000n, { ...delivery, maxOutputTokens: 79 })!, /more output tokens/, 'a short answer cannot bill the full cap');
 });
 
 test('helpers only serve models from a server on the same machine', async (t) => {

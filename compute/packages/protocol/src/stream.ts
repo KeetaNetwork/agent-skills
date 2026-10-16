@@ -15,6 +15,37 @@ export function sseData(data: unknown): Uint8Array {
 	return encoder.encode(`data: ${JSON.stringify(data)}\n\n`);
 }
 
+/**
+ * The generated text in one OpenAI stream chunk: answer plus any reasoning,
+ * in that order per choice. Providers hash exactly this text into the
+ * receipt's outputHash, and buyers rebuild it from what they received.
+ */
+export function chunkText(chunk: unknown): string {
+	const choices = (chunk as { choices?: unknown } | null)?.choices;
+	if (!Array.isArray(choices)) {
+		return '';
+	}
+	let text = '';
+	for (const choice of choices as Array<{ delta?: Record<string, unknown> } | null>) {
+		const delta = choice?.delta ?? {};
+		for (const key of ['content', 'reasoning', 'reasoning_content']) {
+			if (typeof delta[key] === 'string') {
+				text += delta[key];
+			}
+		}
+	}
+	return text;
+}
+
+/**
+ * Most output tokens a receipt may bill for text a buyer received. Every
+ * token decodes to at least one byte, so a provider cannot bill more tokens
+ * than bytes delivered; the slack covers special tokens a server strips.
+ */
+export function maxOutputTokensFor(text: string): number {
+	return encoder.encode(text).length + 16;
+}
+
 export function sseEvent(event: string, data: unknown): Uint8Array {
 	return encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
 }

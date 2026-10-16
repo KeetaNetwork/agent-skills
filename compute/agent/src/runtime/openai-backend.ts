@@ -4,7 +4,7 @@
  * returns what a receipt needs: usage, output text, finish reason.
  */
 
-import { estimateTokens, promptText, type ChatCompletionRequest } from '@keeta-compute/protocol';
+import { chunkText, estimateTokens, promptText, type ChatCompletionRequest } from '@keeta-compute/protocol';
 
 export interface Backend {
 	/** e.g. http://127.0.0.1:8081/v1 */
@@ -70,18 +70,18 @@ export async function streamChat(
 			if (data === '[DONE]') {
 				continue;
 			}
-			let chunk: { choices?: Array<{ delta?: { content?: string; reasoning?: string }; finish_reason?: string | null }>; usage?: typeof usage; model?: string };
+			let chunk: { choices?: Array<{ finish_reason?: string | null }>; usage?: typeof usage; model?: string };
 			try {
 				chunk = JSON.parse(data) as typeof chunk;
 			} catch {
 				continue;
 			}
+			const piece = chunkText(chunk);
+			if (piece) {
+				text += piece;
+				contentChunks += 1;
+			}
 			for (const choice of chunk.choices ?? []) {
-				const piece = (choice.delta?.content ?? '') + (choice.delta?.reasoning ?? '');
-				if (piece) {
-					text += piece;
-					contentChunks += 1;
-				}
 				if (choice.finish_reason) {
 					finishReason = choice.finish_reason;
 				}

@@ -293,6 +293,8 @@ export class ControlService {
 		publicOnly: boolean;
 		/** Most the job may cost; offers whose maximum cost is higher are skipped. */
 		budget?: bigint;
+		/** What the buyer owed when `budget` was computed (budget = balance - owed). */
+		owed?: bigint;
 	}): Promise<{ job: JobRecord; ticket: SignedTicket; provider: StoredProvider }> {
 		const now = this.now();
 		let overBudget = 0;
@@ -370,7 +372,18 @@ export class ControlService {
 			coordinatorSig: await this.config.coordinator.sign(ticketMessage(ticket)),
 			relayMac: await ticketMac(this.config.relaySecret, ticket)
 		};
-		await this.store.putJob(job);
+		if (args.budget !== undefined) {
+			/* Re-check against the buyer's open jobs atomically, so parallel requests cannot all spend the same balance. */
+			const cost = maxJobCost(job.price, job);
+			const balance = args.budget + (args.owed ?? 0n);
+			await this.store.putJobIf(job, (open) => {
+				if (owedFor(open) + cost > balance) {
+					throw new PaymentRequiredError(`the buyer account does not hold enough ${NETWORKS[args.network].settlementAsset.symbol} for this job and the ones it still owes for`);
+				}
+			});
+		} else {
+			await this.store.putJob(job);
+		}
 		/*
 		 * Postpay tickets hold a slot until they finish, fail or expire. Router quotes are
 		 * handed to unpaid callers in a 402, so they hold nothing: a provider's own
@@ -403,13 +416,13 @@ export class ControlService {
 			...(Array.isArray(body.excludeProviders) ? { excludeProviders: body.excludeProviders.map((k, i) => assertKeetaAddress(k, `excludeProviders[${i}]`)) } : {}),
 			paymentMode: 'postpay',
 			publicOnly: false,
-			...(budget !== null ? { budget } : {})
+			...(budget !== null ? budget : {})
 		});
 		return { job: redactJob(result.job), ticket: result.ticket, relayUrl: this.config.relayUrl };
 	}
 
 	/** What a pay-later buyer can still commit: its ledger balance less what it already owes. Null when not enforced. */
-	private async buyerBudget(network: NetworkName, buyer: string): Promise<bigint | null> {
+	private async buyerBudget(network: NetworkName, buyer: string): Promise<{ budget: bigint; owed: bigint } | null> {
 		if (!this.config.balanceOf) {
 			return null;
 		}
@@ -420,8 +433,8 @@ export class ControlService {
 			}),
 			this.store.listOpenPostpay(buyer)
 		]);
-		const owed = open.reduce((sum, job) => sum + (job.status === 'completed' && job.amountDue ? BigInt(job.amountDue) : maxJobCost(job.price, job)), 0n);
-		return balance - owed;
+		const owed = owedFor(open);
+		return { budget: balance - owed, owed };
 	}
 
 	/** Public router (x402): the buyer prepays the provider directly before the job runs. */
@@ -866,6 +879,11 @@ function validateReceipt(job: JobRecord, receipt: SignedReceipt['receipt']): str
 function publicProvider(record: StoredProvider): ProviderRecord {
 	const { offeredModels: _offered, ...rest } = record;
 	return rest;
+}
+
+/** What a buyer still owes on open postpay jobs: the amount due once receipted, else the job's maximum cost. */
+function owedFor(open: JobRecord[]): bigint {
+	return open.reduce((sum, job) => sum + (job.status === 'completed' && job.amountDue ? BigInt(job.amountDue) : maxJobCost(job.price, job)), 0n);
 }
 
 function redactJob(job: JobRecord): JobRecord {

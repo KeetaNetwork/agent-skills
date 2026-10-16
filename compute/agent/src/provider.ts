@@ -8,10 +8,12 @@ import {
 	HEARTBEAT_INTERVAL_MS,
 	NETWORKS,
 	canonicalJSON,
+	chunkText,
 	estimateTokens,
 	findCatalogModel,
 	jobAuthMessage,
 	jobCost,
+	maxOutputTokensFor,
 	promptText,
 	receiptMessage,
 	sha256Hex,
@@ -435,16 +437,13 @@ export class Provider {
 			at: startedAt
 		};
 		this.deps.onJob(summary);
-		try {
-			const requested = envelope.request.max_completion_tokens ?? envelope.request.max_tokens ?? ticket.maxOutputTokens;
-			const result = await streamChat(await this.backendFor(model), envelope.request, {
-				networkModelId: ticket.modelId,
-				maxOutputTokens: Math.min(requested, ticket.maxOutputTokens),
-				signal: controller.signal,
-				onChunk: (data) => this.send({ type: 'chunk', id, data })
-			});
-			const inputTokens = Math.min(result.inputTokens, ticket.maxInputTokens);
-			const outputTokens = Math.min(result.outputTokens, ticket.maxOutputTokens);
+		/* What the buyer has actually been sent, so a cancelled job can still be billed for it. */
+		let delivered = '';
+		let deliveredChunks = 0;
+		const bill = async (usage: { inputTokens: number; outputTokens: number; text: string; finishReason: string }) => {
+			const inputTokens = Math.min(usage.inputTokens, ticket.maxInputTokens);
+			/* Never bill more output than the delivered text can hold; the buyer refuses such receipts. */
+			const outputTokens = Math.min(usage.outputTokens, ticket.maxOutputTokens, maxOutputTokensFor(usage.text));
 			const amount = jobCost(ticket.price, { inputTokens, outputTokens });
 			const runtimeBuild = model.backend ? `openai-compatible ${new URL(model.backend.baseUrl).host}` : await this.deps.runtime!.runtimeBuild();
 			const receipt: Receipt = {
@@ -464,8 +463,8 @@ export class Provider {
 				asset: ticket.asset,
 				startedAt,
 				finishedAt: Date.now(),
-				outputHash: await sha256Hex(result.text),
-				finishReason: controller.signal.aborted ? 'cancelled' : result.finishReason
+				outputHash: await sha256Hex(usage.text),
+				finishReason: usage.finishReason
 			};
 			const signed: SignedReceipt = { receipt, signature: await this.deps.node.sign(receiptMessage(receipt)) };
 			this.send({ type: 'receipt', id, receipt: signed });
@@ -478,7 +477,31 @@ export class Provider {
 				s.earnedTotal = (BigInt(s.earnedTotal) + amount).toString();
 			});
 			this.deps.onJob({ ...summary, inputTokens, outputTokens, amount: amount.toString(), status: 'completed', at: Date.now() });
+		};
+		try {
+			const requested = envelope.request.max_completion_tokens ?? envelope.request.max_tokens ?? ticket.maxOutputTokens;
+			const result = await streamChat(await this.backendFor(model), envelope.request, {
+				networkModelId: ticket.modelId,
+				maxOutputTokens: Math.min(requested, ticket.maxOutputTokens),
+				signal: controller.signal,
+				onChunk: (data) => {
+					const piece = chunkText(data);
+					if (piece) {
+						delivered += piece;
+						deliveredChunks += 1;
+					}
+					this.send({ type: 'chunk', id, data });
+				}
+			});
+			await bill({ ...result, finishReason: controller.signal.aborted ? 'cancelled' : result.finishReason });
 		} catch (error) {
+			if (controller.signal.aborted && delivered) {
+				/* The buyer hung up after receiving text: bill what was sent instead of failing the job unpaid. */
+				await bill({ inputTokens: estimateTokens(promptText(envelope.request)), outputTokens: deliveredChunks, text: delivered, finishReason: 'cancelled' }).catch((billError: Error) =>
+					this.deps.log('warn', `could not bill cancelled job ${ticket.jobId}: ${billError.message}`)
+				);
+				return;
+			}
 			const message = controller.signal.aborted ? 'cancelled by the buyer' : (error as Error).message;
 			this.send({ type: 'error', id, code: 'model_failed', message });
 			this.deps.onJob({ ...summary, status: 'failed', error: message, at: Date.now() });

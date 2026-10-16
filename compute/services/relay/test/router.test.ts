@@ -103,6 +103,23 @@ test('a provider that fails before output is never paid', async () => {
 	assert.ok(!calls.includes('settle'));
 });
 
+test('a provider is paid only after it streams text, never for empty chunks', async () => {
+	const empty = { id: 'c1', created: 1, choices: [{ index: 0, delta: { role: 'assistant' }, finish_reason: null }] };
+	for (const stream of [false, true]) {
+		const { router, calls } = setup({ runJob: async () => sse(sseData(empty), sseData({}), sseEvent('keeta.error', { code: 'model_failed', message: 'model crashed' })) });
+		const header = await paymentFor(router);
+		const response = await router.chatCompletions(new Request('http://api/v1/chat/completions', { method: 'POST', body: chatBody({ stream }), headers: { 'payment-signature': header } }));
+		assert.equal(response.status, 502);
+		assert.equal(response.headers.get('payment-response'), null);
+		assert.ok(!calls.includes('settle'));
+	}
+	const { router, calls } = setup({ runJob: async () => sse(sseData(chunk('Hel')), sseEvent('keeta.error', { code: 'model_failed', message: 'model crashed' })) });
+	const header = await paymentFor(router);
+	const response = await router.chatCompletions(new Request('http://api/v1/chat/completions', { method: 'POST', body: chatBody(), headers: { 'payment-signature': header } }));
+	assert.equal(response.status, 502, 'a non-streaming answer that ends in an error is not paid');
+	assert.ok(!calls.includes('settle'));
+});
+
 test('forged, expired or mismatched quotes are rejected before verification', async () => {
 	const { router } = setup();
 	const forged = await makeTicket();

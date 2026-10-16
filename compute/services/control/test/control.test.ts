@@ -207,6 +207,11 @@ test('pay-later buyers need ledger funds for every job they still owe for', asyn
 	assert.equal((await h.call(buyer, 'POST', '/v1/jobs', job)).status, 200);
 	assert.equal((await h.call(buyer, 'POST', '/v1/jobs', job)).status, 402, 'open jobs count against the balance');
 
+	const racer = newSigner();
+	balances.set(racer.publicKey, cost);
+	const raced = await Promise.all([1, 2, 3].map(() => h.call(racer, 'POST', '/v1/jobs', job)));
+	assert.deepEqual(raced.map((r) => r.status).sort(), [200, 402, 402], 'parallel requests cannot spend one balance twice');
+
 	ledgerUp = false;
 	balances.set(buyer.publicKey, cost * 10n);
 	assert.equal((await h.call(buyer, 'POST', '/v1/jobs', job)).status, 503, 'fails closed when the ledger is unreachable');

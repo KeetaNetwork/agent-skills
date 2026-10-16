@@ -12,17 +12,21 @@ import {
 	ValidationError,
 	aggregateCompletion,
 	assertChatRequest,
+	chunkText,
 	estimateTokens,
 	jobAuthMessage,
 	jobCost,
 	maxJobCost,
+	maxOutputTokensFor,
 	promptText,
 	readRelayEvents,
 	receiptMessage,
 	requestedMaxTokens,
+	sha256Hex,
 	timingSafeEqual,
 	type ChatCompletionRequest,
 	type JobEnvelope,
+	type JobRecord,
 	type NetworkModel,
 	type RelayEvent,
 	type SignedReceipt,
@@ -34,7 +38,14 @@ import { ControlError, type ControlClient } from './control-client.ts';
 import type { Ledger, SerialQueue } from './ledger.ts';
 import type { Log } from './runtime/mlx.ts';
 import type { BuyerStatus, JobSummary } from './rpc/types.ts';
-import { today, type StateStore, type UnpaidReceipt } from './state.ts';
+import { today, type Delivery, type StateStore, type UnpaidReceipt } from './state.ts';
+
+/** How long to keep looking for the receipt of a job the buyer hung up on. */
+const LATE_RECEIPT_WINDOW_MS = 15 * 60_000;
+
+async function deliveryOf(text: string): Promise<Delivery> {
+	return { outputHash: await sha256Hex(text), maxOutputTokens: maxOutputTokensFor(text) };
+}
 
 type Account = Parameters<Ledger['send']>[0];
 
@@ -232,54 +243,113 @@ export class Buyer {
 		this.deps.onJob(summary);
 
 		let receipt: SignedReceipt | undefined;
+		/* The text this buyer received, rebuilt exactly as the provider hashes it into the receipt. */
+		let delivered = '';
 		const capture = async function* (events: AsyncIterable<RelayEvent>): AsyncGenerator<RelayEvent> {
 			for await (const event of events) {
 				if (event.type === 'receipt') {
 					receipt = event.receipt;
+				} else if (event.type === 'chunk') {
+					delivered += chunkText(event.data);
 				}
 				yield event;
 			}
 		};
 		const events = capture(readRelayEvents(upstream.body));
 
-		if (body.stream) {
-			res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', 'x-keeta-job': t.jobId });
-			for await (const event of events) {
-				if (event.type === 'chunk') {
-					res.write(encoder.encode(`data: ${JSON.stringify(event.data)}\n\n`));
-				} else if (event.type === 'error') {
-					res.write(encoder.encode(`data: ${JSON.stringify({ error: { code: event.code, message: event.message } })}\n\n`));
+		try {
+			if (body.stream) {
+				res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', 'x-keeta-job': t.jobId });
+				for await (const event of events) {
+					if (event.type === 'chunk') {
+						res.write(encoder.encode(`data: ${JSON.stringify(event.data)}\n\n`));
+					} else if (event.type === 'error') {
+						res.write(encoder.encode(`data: ${JSON.stringify({ error: { code: event.code, message: event.message } })}\n\n`));
+					}
 				}
+				res.write('data: [DONE]\n\n');
+				res.end();
+			} else {
+				const result = await aggregateCompletion(events, body.model);
+				if (result.error && !receipt) {
+					this.deps.onJob({ ...summary, status: 'failed', error: result.error, at: Date.now() });
+					return json(res, 502, { error: { code: 'provider_failed', message: `${result.error}; nothing was charged` } });
+				}
+				json(res, 200, result.completion, { 'x-keeta-job': t.jobId });
 			}
-			res.write('data: [DONE]\n\n');
-			res.end();
-		} else {
-			const result = await aggregateCompletion(events, body.model);
-			if (result.error && !receipt) {
-				this.deps.onJob({ ...summary, status: 'failed', error: result.error, at: Date.now() });
-				return json(res, 502, { error: { code: 'provider_failed', message: `${result.error}; nothing was charged` } });
+		} catch (error) {
+			if (!signal.aborted || (!receipt && !delivered)) {
+				throw error;
 			}
-			json(res, 200, result.completion, { 'x-keeta-job': t.jobId });
+		}
+		if (signal.aborted && !receipt && delivered) {
+			/* The caller hung up after text arrived. The provider bills what it sent; collect that receipt and pay it. */
+			const late = { jobId: t.jobId, network, ticket, maxCost: maxCost.toString(), delivery: await deliveryOf(delivered), since: Date.now() };
+			store.update((s) => s.awaitingReceipts.push(late));
+			this.deps.onJob({ ...summary, status: 'running', at: Date.now() });
+			void this.chaseLateReceipts([2_000, 5_000, 15_000, 30_000]);
+			return;
 		}
 
 		if (!receipt) {
 			this.deps.onJob({ ...summary, status: 'failed', error: 'no receipt', at: Date.now() });
 			return;
 		}
-		const problem = this.checkReceipt(ticket, receipt, maxCost);
+		this.accept(ticket, receipt, maxCost, await deliveryOf(delivered), summary);
+	}
+
+	/** Check a receipt against the ticket and the text received, then queue its payment. */
+	private accept(ticket: SignedTicket, receipt: SignedReceipt, maxCost: bigint, delivery: Delivery, summary: JobSummary): void {
+		const t = ticket.ticket;
+		const problem = this.checkReceipt(ticket, receipt, maxCost, delivery);
 		if (problem) {
 			this.deps.log('warn', `not paying job ${t.jobId}: ${problem}`);
 			this.deps.onJob({ ...summary, status: 'failed', error: problem, at: Date.now() });
 			return;
 		}
-		const unpaid: UnpaidReceipt = { jobId: t.jobId, network, payTo: t.payTo, amount: receipt.receipt.amount, asset: t.asset, receipt, attempts: 0 };
-		store.update((s) => s.unpaid.push(unpaid));
-		store.addToDay('spentByDay', BigInt(receipt.receipt.amount));
+		const unpaid: UnpaidReceipt = { jobId: t.jobId, network: t.network, payTo: t.payTo, amount: receipt.receipt.amount, asset: t.asset, receipt, attempts: 0 };
+		this.deps.store.update((s) => s.unpaid.push(unpaid));
+		this.deps.store.addToDay('spentByDay', BigInt(receipt.receipt.amount));
 		this.deps.onJob({ ...summary, inputTokens: receipt.receipt.inputTokens, outputTokens: receipt.receipt.outputTokens, amount: receipt.receipt.amount, status: 'completed', at: Date.now() });
 		void this.pay(unpaid);
 	}
 
-	checkReceipt(ticket: SignedTicket, signed: SignedReceipt, maxCost: bigint): string | null {
+	/** Look up receipts for jobs the caller hung up on, retrying after each delay. */
+	private async chaseLateReceipts(delays: number[] = []): Promise<void> {
+		for (const delay of [0, ...delays]) {
+			if (delay) {
+				await new Promise((resolve) => setTimeout(resolve, delay).unref?.());
+			}
+			const network = this.deps.store.state.network;
+			const waiting = this.deps.store.state.awaitingReceipts.filter((a) => a.network === network);
+			if (waiting.length === 0) {
+				return;
+			}
+			let jobs: JobRecord[];
+			try {
+				({ jobs } = await this.deps.control.get<{ jobs: JobRecord[] }>(this.deps.spend, '/v1/jobs'));
+			} catch (error) {
+				this.deps.log('warn', `could not look up late receipts: ${(error as Error).message}`);
+				continue;
+			}
+			for (const late of waiting) {
+				const job = jobs.find((j) => j.jobId === late.jobId);
+				const settled = job && job.status !== 'scheduled' && !job.receipt;
+				const stale = Date.now() - late.since > LATE_RECEIPT_WINDOW_MS;
+				if (job?.receipt || settled || stale) {
+					this.deps.store.update((s) => (s.awaitingReceipts = s.awaitingReceipts.filter((a) => a.jobId !== late.jobId)));
+				}
+				const summary: JobSummary = { jobId: late.jobId, role: 'buyer', modelId: late.ticket.ticket.modelId, counterparty: late.ticket.ticket.payTo, inputTokens: 0, outputTokens: 0, amount: '0', status: 'failed', at: Date.now() };
+				if (job?.receipt) {
+					this.accept(late.ticket, job.receipt, BigInt(late.maxCost), late.delivery, summary);
+				} else if (settled || stale) {
+					this.deps.onJob({ ...summary, error: 'the provider sent no receipt' });
+				}
+			}
+		}
+	}
+
+	checkReceipt(ticket: SignedTicket, signed: SignedReceipt, maxCost: bigint, delivery: Delivery): string | null {
 		const t = ticket.ticket;
 		const r = signed.receipt;
 		if (!this.deps.verify(t.nodeKey, receiptMessage(r), signed.signature)) {
@@ -290,6 +360,13 @@ export class Buyer {
 		}
 		if (r.outputTokens > t.maxOutputTokens || r.inputTokens > t.maxInputTokens) {
 			return 'receipt exceeds the token limits';
+		}
+		/* Bind the bill to what arrived: the same text, and no more tokens than that text can hold. */
+		if (r.outputHash !== delivery.outputHash) {
+			return 'receipt output does not match the text received';
+		}
+		if (r.outputTokens > delivery.maxOutputTokens) {
+			return 'receipt bills more output tokens than the text received';
 		}
 		const amount = jobCost(t.price, { inputTokens: r.inputTokens, outputTokens: r.outputTokens });
 		if (r.amount !== amount.toString() || amount > maxCost) {
@@ -341,6 +418,7 @@ export class Buyer {
 	}
 
 	async settle(): Promise<{ paid: number; failed: number }> {
+		await this.chaseLateReceipts();
 		let paid = 0;
 		let failed = 0;
 		for (const unpaid of [...this.deps.store.state.unpaid]) {

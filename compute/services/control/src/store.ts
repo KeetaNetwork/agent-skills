@@ -22,6 +22,12 @@ export interface Store {
 
 	getJob(jobId: string): Promise<JobRecord | null>;
 	putJob(job: JobRecord): Promise<void>;
+	/**
+	 * Write a job only if `admit` accepts it, given the buyer's open postpay jobs.
+	 * Atomic per buyer: concurrent calls for one buyer see each other's jobs.
+	 * `admit` throws to refuse.
+	 */
+	putJobIf(job: JobRecord, admit: (openPostpay: JobRecord[]) => void): Promise<void>;
 	/** Atomic read-modify-write. `update` may throw to abort. */
 	updateJob(jobId: string, update: (job: JobRecord) => JobRecord): Promise<JobRecord>;
 	listJobsByBuyer(buyer: string, limit: number): Promise<JobRecord[]>;
@@ -101,6 +107,16 @@ export class MemoryStore implements Store {
 		this.jobs.set(job.jobId, clone(job));
 	}
 
+	async putJobIf(job: JobRecord, admit: (openPostpay: JobRecord[]) => void) {
+		/* No await between the check and the write, so this is atomic in one process. */
+		admit(this.openPostpay(job.buyer));
+		this.jobs.set(job.jobId, clone(job));
+	}
+
+	private openPostpay(buyer: string) {
+		return [...this.jobs.values()].filter((j) => j.buyer === buyer && j.paymentMode === 'postpay' && (j.status === 'scheduled' || j.status === 'completed')).map(clone);
+	}
+
 	async updateJob(jobId: string, update: (job: JobRecord) => JobRecord) {
 		const current = this.jobs.get(jobId);
 		if (!current) {
@@ -126,7 +142,7 @@ export class MemoryStore implements Store {
 	}
 
 	async listOpenPostpay(buyer: string) {
-		return [...this.jobs.values()].filter((j) => j.buyer === buyer && j.paymentMode === 'postpay' && (j.status === 'scheduled' || j.status === 'completed')).map(clone);
+		return this.openPostpay(buyer);
 	}
 
 	async listJobsByStatus(status: JobStatus, createdBefore: number, limit: number) {

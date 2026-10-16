@@ -22,9 +22,11 @@ Docs for users live in `site/compute/` and are published at https://keeta.ai/com
 1. The buyer's agent asks the control plane for a job (`POST /v1/jobs`), signed by its budget key. The scheduler picks a live provider that offers the model within the buyer's price, context and allowlist limits, and returns a ticket signed by the coordinator key and MACed for the relay. The budget key must hold enough USDC on the ledger to cover the new job's maximum cost plus every job it still owes for; a fresh key with no funds gets HTTP 402. Local development can turn this off with `REQUIRE_BUYER_BALANCE=false`.
 2. The buyer sends the ticket, the request and its own signature over the request to the relay (`POST /v1/jobs/:id/run`). The relay checks the MAC and forwards the job down the provider's WebSocket. Prompts pass through memory only; nothing stores them.
 3. The provider re-checks the ticket (coordinator signature, its own key, expiry, model, price, allowlist, buyer signature), streams tokens from its local model server, and signs a receipt with token counts, price, amount and the weights hash.
-4. The buyer checks the receipt against the ticket, pays the provider's operator with a direct Keeta send referencing the job id, and reports the block (with the receipt) to the control plane, which verifies it on the ledger. Buyers with receipts unpaid after 10 minutes cannot start new jobs.
+4. The buyer checks the receipt against the ticket and against the text it received (same output hash, and no more output tokens than that text can hold), pays the provider's operator with a direct Keeta send referencing the job id, and reports the block (with the receipt) to the control plane, which verifies it on the ledger. Buyers with receipts unpaid after 10 minutes cannot start new jobs.
 
-The public router (`api.keeta.ai`) prepays instead: it answers with HTTP 402 carrying the quote, verifies the x402 payment, runs the job, and settles only after the first token arrives.
+If the buyer hangs up mid-answer, the provider still signs a receipt for the text it sent, and the buyer's agent fetches that receipt from the control plane and pays it.
+
+The public router (`api.keeta.ai`) prepays instead: it answers with HTTP 402 carrying the quote, verifies the x402 payment, runs the job, and settles only once the provider has streamed text (for a non-streaming request, only once the whole answer arrived without an error).
 
 ## Keys
 

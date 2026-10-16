@@ -25,6 +25,7 @@ import {
 	type SignedTicket,
 	readRelayEvents,
 	aggregateCompletion,
+	chunkText,
 	type RelayEvent
 } from '@keeta-compute/protocol';
 
@@ -191,52 +192,82 @@ export function createRouter(deps: RouterDeps) {
 			return errorResponse(502, 'provider_unavailable', 'the provider could not take the job; you were not charged', { 'retry-after': '2' });
 		}
 		const events = readRelayEvents(upstream.body);
-		const first = await events.next();
-		if (first.done || first.value.type !== 'chunk') {
-			const message = first.done ? 'the provider closed the stream' : first.value.type === 'error' ? first.value.message : 'the provider returned no output';
-			return errorResponse(502, 'provider_failed', `${message}; you were not charged`);
-		}
 
-		const settlement = await deps.gateway.settle(payload, requirements);
-		if (!settlement.success) {
-			return errorResponse(402, 'settlement_failed', settlement.errorReason ?? 'the payment could not be settled');
+		/* Pay the provider only once it has produced text: hold back events until the first chunk that carries some. */
+		const held: RelayEvent[] = [];
+		let failure: string | null = 'the provider closed the stream';
+		/* Read with next(): breaking out of for-await would close the generator. */
+		for (let step = await events.next(); !step.done; step = await events.next()) {
+			const event = step.value;
+			held.push(event);
+			if (event.type === 'error') {
+				failure = event.message;
+				break;
+			}
+			if (event.type === 'chunk' && chunkText(event.data) !== '') {
+				failure = null;
+				break;
+			}
 		}
-		const settledHeader = base64Json({ success: true, transaction: settlement.transaction, network: requirements.network, payer: settlement.payer ?? verified.payer });
-		void control(`/v1/router/jobs/${ticket.jobId}/settled`, { method: 'POST', body: { payer: settlement.payer ?? verified.payer, transaction: settlement.transaction ?? '' } }).catch(() => undefined);
-
 		async function* all(): AsyncGenerator<RelayEvent> {
-			yield first.value as RelayEvent;
-			yield* events;
+			yield* held;
+			if (failure === null) {
+				yield* events;
+			}
 		}
 
-		if (body.stream) {
-			const stream = new ReadableStream<Uint8Array>({
-				async start(controller) {
-					for await (const event of all()) {
-						if (event.type === 'chunk') {
-							controller.enqueue(encoder.encode(`data: ${JSON.stringify(event.data)}\n\n`));
-						} else if (event.type === 'receipt') {
-							controller.enqueue(encoder.encode(`event: keeta.receipt\ndata: ${JSON.stringify(event.receipt)}\n\n`));
-						} else {
-							controller.enqueue(encoder.encode(`event: keeta.error\ndata: ${JSON.stringify({ code: event.code, message: event.message })}\n\n`));
-						}
+		if (!body.stream) {
+			/* A non-streaming caller waits for the whole answer anyway, so settle only for a complete one. */
+			const aggregate = failure === null ? await aggregateCompletion(all(), body.model) : null;
+			const error = failure ?? aggregate?.error ?? null;
+			if (error || !aggregate) {
+				return errorResponse(502, 'provider_failed', `${error ?? 'the provider returned no output'}; you were not charged`);
+			}
+			const settled = await settle();
+			if (settled instanceof Response) {
+				return settled;
+			}
+			const headers: Record<string, string> = { 'payment-response': settled };
+			if (aggregate.receipt) {
+				headers['x-keeta-receipt'] = base64Json(aggregate.receipt);
+			}
+			return Response.json(aggregate.completion, { headers });
+		}
+
+		if (failure !== null) {
+			return errorResponse(502, 'provider_failed', `${failure}; you were not charged`);
+		}
+		const settled = await settle();
+		if (settled instanceof Response) {
+			return settled;
+		}
+		const stream = new ReadableStream<Uint8Array>({
+			async start(controller) {
+				for await (const event of all()) {
+					if (event.type === 'chunk') {
+						controller.enqueue(encoder.encode(`data: ${JSON.stringify(event.data)}\n\n`));
+					} else if (event.type === 'receipt') {
+						controller.enqueue(encoder.encode(`event: keeta.receipt\ndata: ${JSON.stringify(event.receipt)}\n\n`));
+					} else {
+						controller.enqueue(encoder.encode(`event: keeta.error\ndata: ${JSON.stringify({ code: event.code, message: event.message })}\n\n`));
 					}
-					controller.enqueue(encoder.encode('data: [DONE]\n\n'));
-					controller.close();
 				}
-			});
-			return new Response(stream, { headers: { 'content-type': 'text/event-stream', 'cache-control': 'no-store', 'payment-response': settledHeader } });
-		}
+				controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+				controller.close();
+			}
+		});
+		return new Response(stream, { headers: { 'content-type': 'text/event-stream', 'cache-control': 'no-store', 'payment-response': settled } });
 
-		const aggregate = await aggregateCompletion(all(), body.model);
-		const headers: Record<string, string> = { 'payment-response': settledHeader };
-		if (aggregate.receipt) {
-			headers['x-keeta-receipt'] = base64Json(aggregate.receipt);
+		/** Settle the x402 payment; returns the payment-response header, or an error response. */
+		async function settle(): Promise<string | Response> {
+			const settlement = await deps.gateway.settle(payload, requirements);
+			if (!settlement.success) {
+				return errorResponse(402, 'settlement_failed', settlement.errorReason ?? 'the payment could not be settled');
+			}
+			const payer = settlement.payer ?? verified.payer;
+			void control(`/v1/router/jobs/${ticket.jobId}/settled`, { method: 'POST', body: { payer, transaction: settlement.transaction ?? '' } }).catch(() => undefined);
+			return base64Json({ success: true, transaction: settlement.transaction, network: requirements.network, payer });
 		}
-		if (aggregate.error) {
-			return errorResponse(502, 'provider_failed', aggregate.error, headers);
-		}
-		return Response.json(aggregate.completion, { headers });
 	}
 
 	return { models, chatCompletions };

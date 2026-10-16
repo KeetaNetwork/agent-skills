@@ -67,12 +67,23 @@ function fakeModelServer(): Server {
 			return;
 		}
 		if (req.method === 'POST' && req.url === '/v1/chat/completions') {
-			const body = JSON.parse(await readBody(req)) as { model: string; stream: boolean };
+			const body = JSON.parse(await readBody(req)) as { model: string; stream: boolean; messages: Array<{ content: string }> };
 			assert.equal(body.model, 'fake');
 			assert.equal(body.stream, true);
+			const slow = body.messages.some((m) => m.content.includes('slowly'));
 			res.writeHead(200, { 'content-type': 'text/event-stream' });
 			for (const piece of ['Hello', ' from', ' Keeta']) {
 				res.write(`data: ${JSON.stringify({ id: 'c1', object: 'chat.completion.chunk', choices: [{ index: 0, delta: { content: piece }, finish_reason: null }] })}\n\n`);
+				if (slow) {
+					/* Stall after each piece until the caller hangs up. */
+					await new Promise<void>((resolve) => {
+						const timer = setTimeout(resolve, 5_000);
+						res.once('close', () => (clearTimeout(timer), resolve()));
+					});
+					if (res.destroyed) {
+						return;
+					}
+				}
 			}
 			res.write(`data: ${JSON.stringify({ id: 'c1', object: 'chat.completion.chunk', choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] })}\n\n`);
 			res.write(`data: ${JSON.stringify({ id: 'c1', object: 'chat.completion.chunk', choices: [], usage: { prompt_tokens: 12, completion_tokens: 3 } })}\n\n`);
@@ -181,6 +192,12 @@ class RelayEmulator {
 		this.lastEnvelope = envelope;
 		const id = randomId('run');
 		this.pending.set(id, res);
+		/* Like the Durable Object: a buyer hanging up cancels the job on the provider. */
+		res.on('close', () => {
+			if (this.pending.delete(id)) {
+				socket.deliver(JSON.stringify({ type: 'cancel', id }));
+			}
+		});
 		res.writeHead(200, { 'content-type': 'text/event-stream' });
 		socket.deliver(JSON.stringify({ type: 'job', id, envelope }));
 	}
@@ -375,6 +392,29 @@ test('a buyer runs a job on a Mac provider and a paired Linux helper, and pays e
 	assert.equal(cancelled!.status, 'failed');
 	assert.equal((await control.store.getProvider(macKey))!.load.active, 0, 'the refused job does not hold the provider');
 	await buyer.rpc['buyer.setPolicy']!({ perRequestMax: '250000' });
+
+	/* A caller that hangs up mid-answer still pays for the text it received, and only for that. */
+	const hangUp = new AbortController();
+	const streaming = await fetch(`${buyerStatus.endpoint}/chat/completions`, {
+		method: 'POST',
+		headers: { authorization: `Bearer ${buyerStatus.token}`, 'content-type': 'application/json' },
+		body: JSON.stringify({ model: MODEL, messages: [{ role: 'user', content: 'Say hello slowly' }], max_tokens: 64, stream: true }),
+		signal: hangUp.signal
+	});
+	const hungUpJob = streaming.headers.get('x-keeta-job')!;
+	const reader = streaming.body!.getReader();
+	let seen = '';
+	while (!seen.includes('Hello')) {
+		seen += new TextDecoder().decode((await reader.read()).value);
+	}
+	hangUp.abort();
+	const paidHungUp = await until('the hung-up job to be paid', async () => {
+		const job = await control.store.getJob(hungUpJob);
+		return job?.status === 'paid' ? job : null;
+	}, 20_000);
+	assert.equal(paidHungUp.receipt!.receipt.finishReason, 'cancelled');
+	assert.equal(paidHungUp.receipt!.receipt.outputTokens, 1, 'billed only for the one piece delivered');
+	assert.equal((await buyer.rpc['buyer.status']!({})).unpaid, 0);
 
 	/* Linux helper: pair by code, approve on the Mac, serve the same model. */
 	const helperDir = tmp('helper');

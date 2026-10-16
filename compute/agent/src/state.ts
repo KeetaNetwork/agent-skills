@@ -6,7 +6,7 @@
 
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { NetworkName, SignedReceipt } from '@keeta-compute/protocol';
+import type { NetworkName, SignedReceipt, SignedTicket } from '@keeta-compute/protocol';
 import type { BuyerPolicy, InstalledModel, JobSummary, ProviderPolicy } from './rpc/types.ts';
 
 export interface OperatorLink {
@@ -29,6 +29,22 @@ export interface UnpaidReceipt {
 	blockHash?: string;
 }
 
+/** A job the buyer hung up on after receiving text; its receipt is fetched from the control plane. */
+export interface AwaitingReceipt {
+	jobId: string;
+	network: NetworkName;
+	ticket: SignedTicket;
+	maxCost: string;
+	delivery: Delivery;
+	since: number;
+}
+
+/** What the buyer actually received, which a receipt must match. */
+export interface Delivery {
+	outputHash: string;
+	maxOutputTokens: number;
+}
+
 export interface HelperConfig {
 	masterNodeKey: string;
 	payTo: string;
@@ -47,6 +63,7 @@ export interface AgentStateFile {
 	models: InstalledModel[];
 	jobs: JobSummary[];
 	unpaid: UnpaidReceipt[];
+	awaitingReceipts: AwaitingReceipt[];
 	spentByDay: Record<string, string>;
 	earnedByDay: Record<string, string>;
 	tokensByDay: Record<string, number>;
@@ -86,6 +103,7 @@ export function defaultState(): AgentStateFile {
 		models: [],
 		jobs: [],
 		unpaid: [],
+		awaitingReceipts: [],
 		spentByDay: {},
 		earnedByDay: {},
 		tokensByDay: {},
