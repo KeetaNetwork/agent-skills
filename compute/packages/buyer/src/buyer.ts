@@ -42,6 +42,7 @@ import {
 } from '@keeta-compute/protocol';
 import { ControlError, type ControlClient } from '@keeta-compute/protocol/client';
 import type { BuyerStatus, JobSummary } from '@keeta-compute/protocol/rpc';
+import { promptTokenLimit, type PromptCount } from '@keeta-compute/tokens';
 import type { Ledger, SerialQueue } from '@keeta-compute/wallet';
 import type { BuyerStore, PendingEscrow } from './store.ts';
 
@@ -74,6 +75,8 @@ export interface BuyerDeps {
 	log: Log;
 	onJob: (job: JobSummary) => void;
 	fetchImpl?: typeof fetch;
+	/** Counts a prompt exactly with its model's pinned tokenizer; without it (or a pin), prompts are priced by their size. */
+	countPrompt?: PromptCount;
 	/** Waits between escrow reports; defaults to ESCROW_RETRY_MS. */
 	escrowRetryMs?: number[];
 }
@@ -206,6 +209,21 @@ export class Buyer {
 		return allowed.length ? models.filter((m) => allowed.includes(m.id)) : models;
 	}
 
+	/**
+	 * The most prompt tokens a ticket pays for: the exact count plus a small
+	 * margin when the model's tokenizer is pinned, so a provider cannot bill
+	 * more input than the prompt has; otherwise the prompt's size bound.
+	 */
+	private async inputLimit(body: ChatCompletionRequest): Promise<number> {
+		const counted = this.deps.countPrompt
+			? await this.deps.countPrompt(body.model, body).catch((error: Error) => {
+					this.deps.log('warn', `could not count the prompt for ${body.model} (${error.message}); pricing it by its size`);
+					return null;
+				})
+			: null;
+		return counted === null ? promptTokenBound(body) : promptTokenLimit(counted);
+	}
+
 	private async complete(body: ChatCompletionRequest, res: ServerResponse, signal: AbortSignal): Promise<void> {
 		const { store, control, spend } = this.deps;
 		const policy = store.state.buyer;
@@ -214,7 +232,7 @@ export class Buyer {
 			throw new HttpError(403, 'model_not_allowed', `${body.model} is not in this Mac's allowed models`);
 		}
 		const maxOutputTokens = requestedMaxTokens(body);
-		const maxInputTokens = promptTokenBound(body);
+		const maxInputTokens = await this.inputLimit(body);
 
 		const { job, quote } = await control.post<{ job: JobRecord; quote: EscrowQuote; relayUrl: string }>(spend, '/v1/jobs', {
 			network,

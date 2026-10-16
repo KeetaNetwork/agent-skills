@@ -13,6 +13,7 @@ import type { AddressInfo } from 'node:net';
 import { p256 } from '@noble/curves/p256';
 import { fromHex, toHex, type HardwareProfile } from '@keeta-compute/protocol';
 import { AgentApp } from '@keeta-compute/agent';
+import type { PromptCount } from '@keeta-compute/tokens';
 import type { CreditExchange, Ledger } from '@keeta-compute/wallet';
 
 export const GB = 1024 ** 3;
@@ -124,7 +125,7 @@ export function fakeModelServer(servedName = 'fake'): Server {
 }
 
 /** A Mac agent as the macOS app runs it, with a P-256 software key standing in for the Secure Enclave. */
-export function macAgent(dataDir: string, options: { ledger?: Ledger; exchange?: CreditExchange; WebSocketImpl?: typeof WebSocket; hardware?: HardwareProfile } = {}) {
+export function macAgent(dataDir: string, options: { ledger?: Ledger; exchange?: CreditExchange; WebSocketImpl?: typeof WebSocket; hardware?: HardwareProfile; countPrompt?: PromptCount } = {}) {
 	const enclaveKey = p256.utils.randomPrivateKey();
 	const app = new AgentApp({
 		dataDir,
@@ -134,6 +135,7 @@ export function macAgent(dataDir: string, options: { ledger?: Ledger; exchange?:
 		...(options.ledger ? { ledgerFor: () => options.ledger! } : {}),
 		...(options.exchange ? { exchangeFor: () => options.exchange! } : {}),
 		...(options.WebSocketImpl ? { WebSocketImpl: options.WebSocketImpl } : {}),
+		...(options.countPrompt ? { countPrompt: options.countPrompt } : {}),
 		buyerPort: 0,
 		hardware: options.hardware ?? mac64,
 		localConditions: async () => ({ onBattery: false, idleSeconds: 1e9 }),

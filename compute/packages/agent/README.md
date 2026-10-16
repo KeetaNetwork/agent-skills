@@ -6,7 +6,7 @@ The node agent. `AgentApp` ties the wallet, provider and buyer together and impl
 - **Wallet operations**: balances, sends, moving credits into and out of the agent budget, buying and cashing out credits. Each call that spends from the operator wallet carries the passkey's PRF output from the app (the CLI unlocks its wallet file with the passphrase instead), and the operator key is dropped after the call.
 - **Fleet**: pairing Linux helpers by code and approving them.
 
-Depends on `@keeta-compute/protocol`, `@keeta-compute/wallet`, `@keeta-compute/provider`, `@keeta-compute/buyer` and `@keeta-compute/runtime-mlx`.
+Depends on `@keeta-compute/protocol`, `@keeta-compute/wallet`, `@keeta-compute/provider`, `@keeta-compute/buyer`, `@keeta-compute/runtime-mlx` and `@keeta-compute/tokens`.
 
 ## Develop
 

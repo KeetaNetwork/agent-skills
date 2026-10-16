@@ -36,6 +36,7 @@ import { ControlError, type ControlClient } from '@keeta-compute/protocol/client
 import type { JobSummary, ProviderStatus } from '@keeta-compute/protocol/rpc';
 import type { MlxRuntime } from '@keeta-compute/runtime-mlx';
 import { streamChat, type Backend } from '@keeta-compute/runtime-openai';
+import type { PromptCount } from '@keeta-compute/tokens';
 import { idleSeconds, onBattery } from './hardware.ts';
 import type { ModelManager, StoredModel } from './models/manager.ts';
 import type { ProviderStore } from './store.ts';
@@ -61,6 +62,8 @@ export interface ProviderDeps {
 	 */
 	earnings?: () => { today: string; total: string };
 	WebSocketImpl?: typeof WebSocket;
+	/** Counts a prompt exactly with its model's pinned tokenizer; without it (or a pin), prompts are sized by their bytes. */
+	countPrompt?: PromptCount;
 	/** Testing: skip battery/idle probes. */
 	localConditions?: () => Promise<{ onBattery: boolean; idleSeconds: number }>;
 }
@@ -360,7 +363,7 @@ export class Provider {
 	}
 
 	/** Every check the node makes itself before running anything (plan §5.5 step 3, §6.2). */
-	async checkJob(envelope: JobEnvelope): Promise<{ model: StoredModel } | { error: string; code: string }> {
+	async checkJob(envelope: JobEnvelope): Promise<{ model: StoredModel; promptTokens: number | null } | { error: string; code: string }> {
 		const state = this.deps.store.state;
 		const signed = envelope?.ticket;
 		const ticket = signed?.ticket;
@@ -403,13 +406,20 @@ export class Provider {
 		} catch (error) {
 			return { code: 'invalid_request', error: (error as Error).message };
 		}
-		if (promptTokenBound(envelope.request) > ticket.maxInputTokens) {
+		/* With a pinned tokenizer the node counts the prompt exactly, the way the buyer priced it; otherwise it sizes it by its bytes. */
+		let promptTokens: number | null;
+		try {
+			promptTokens = this.deps.countPrompt ? await this.deps.countPrompt(ticket.modelId, envelope.request, { localDir: model.path }) : null;
+		} catch (error) {
+			return { code: 'model_failed', error: `could not load the ${ticket.modelId} tokenizer to count the prompt: ${(error as Error).message}` };
+		}
+		if ((promptTokens ?? promptTokenBound(envelope.request)) > ticket.maxInputTokens) {
 			return { code: 'invalid_request', error: 'the prompt is larger than the ticket allows' };
 		}
 		if (this.state !== 'online' || this.active.size >= state.provider.maxConcurrentJobs) {
 			return { code: 'busy', error: 'provider is not taking jobs right now' };
 		}
-		return { model };
+		return { model, promptTokens };
 	}
 
 	private async backendFor(model: StoredModel): Promise<Backend> {
@@ -452,7 +462,7 @@ export class Provider {
 			}
 			return;
 		}
-		const { model } = checked;
+		const { model, promptTokens } = checked;
 		const controller = new AbortController();
 		this.active.set(id, controller);
 		const startedAt = Date.now();
@@ -522,17 +532,20 @@ export class Provider {
 					this.send({ type: 'chunk', id, data });
 				}
 			});
-			await bill({ ...result, finishReason: controller.signal.aborted ? 'cancelled' : result.finishReason });
+			/* A server that reports no usage leaves the prompt to an estimate; the exact count replaces it when there is one. */
+			const inputTokens = result.exactUsage || promptTokens === null ? result.inputTokens : promptTokens;
+			await bill({ ...result, inputTokens, finishReason: controller.signal.aborted ? 'cancelled' : result.finishReason });
 		} catch (error) {
 			if (controller.signal.aborted && delivered) {
 				/*
 				 * The buyer hung up after receiving text: bill what was sent instead of
 				 * failing the job unpaid. The model's prompt count only arrives at the end
 				 * of the stream, and the prompt was already read in full, so the input is
-				 * billed at the bound the ticket priced and the buyer escrowed; an estimate
-				 * would let a dense prompt (CJK, say) pay for a fraction of its tokens.
+				 * billed at the exact count, or without a pinned tokenizer at the bound the
+				 * ticket priced and the buyer escrowed; an estimate would let a dense
+				 * prompt (CJK, say) pay for a fraction of its tokens.
 				 */
-				await bill({ inputTokens: promptTokenBound(envelope.request), outputTokens: deliveredChunks, text: delivered, finishReason: 'cancelled' }).catch((billError: Error) =>
+				await bill({ inputTokens: promptTokens ?? promptTokenBound(envelope.request), outputTokens: deliveredChunks, text: delivered, finishReason: 'cancelled' }).catch((billError: Error) =>
 					this.deps.log('warn', `could not bill cancelled job ${ticket.jobId}: ${billError.message}`)
 				);
 				return;

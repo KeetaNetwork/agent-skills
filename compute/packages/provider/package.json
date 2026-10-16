@@ -15,6 +15,7 @@
   "dependencies": {
     "@keeta-compute/protocol": "0.1.0",
     "@keeta-compute/runtime-mlx": "0.1.0",
-    "@keeta-compute/runtime-openai": "0.1.0"
+    "@keeta-compute/runtime-openai": "0.1.0",
+    "@keeta-compute/tokens": "0.1.0"
   }
 }

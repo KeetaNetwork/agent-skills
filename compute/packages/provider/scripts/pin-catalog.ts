@@ -1,7 +1,8 @@
 /**
  * Pins every catalog model to the current commit of its Hugging Face repo and
  * records the weights hash those files produce, in the same form the provider
- * computes after a download (see src/models/download.ts). Writes
+ * computes after a download (see src/models/download.ts), and the SHA-256 of
+ * each tokenizer file, which buyers and providers count prompts with. Writes
  * catalog-pins.ts in @keeta-compute/protocol. Needs network access to huggingface.co.
  *
  *   npm run catalog:pin                 pin every model (from compute/)
@@ -14,7 +15,7 @@
 import { createHash } from 'node:crypto';
 import { writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { CATALOG, CATALOG_PINS, type CatalogPin } from '@keeta-compute/protocol';
+import { CATALOG, CATALOG_PINS, TOKENIZER_FILES, type CatalogPin } from '@keeta-compute/protocol';
 import { listRepoFiles, weightsHashFrom } from '../src/models/download.ts';
 
 async function resolveCommit(repo: string): Promise<string> {
@@ -44,7 +45,11 @@ async function pin(repo: string): Promise<CatalogPin> {
 		}
 		entries.push([file.path, createHash('sha256').update(Buffer.from(await response.arrayBuffer())).digest('hex')]);
 	}
-	return { revision, weightsHash: weightsHashFrom(entries) };
+	const tokenizer = Object.fromEntries(entries.filter(([path]) => (TOKENIZER_FILES as readonly string[]).includes(path)).sort(([a], [b]) => a.localeCompare(b)));
+	if (!tokenizer['tokenizer.json']) {
+		console.warn(`\n  ${repo} has no tokenizer.json at its root; its prompts will be priced by size`);
+	}
+	return { revision, weightsHash: weightsHashFrom(entries), ...(tokenizer['tokenizer.json'] ? { tokenizer } : {}) };
 }
 
 const only = new Set(process.argv.slice(2));

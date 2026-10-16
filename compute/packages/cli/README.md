@@ -26,7 +26,7 @@ npm run build:linux-x64 -w @keeta-compute/cli
 npm run build:linux-arm64 -w @keeta-compute/cli
 ```
 
-Depends on `@keeta-compute/agent`, `@keeta-compute/protocol`, `@keeta-compute/provider`, `@keeta-compute/runtime-openai` and `@keeta-compute/wallet`.
+Depends on `@keeta-compute/agent`, `@keeta-compute/protocol`, `@keeta-compute/provider`, `@keeta-compute/runtime-openai`, `@keeta-compute/tokens` and `@keeta-compute/wallet`.
 
 ## Develop
 

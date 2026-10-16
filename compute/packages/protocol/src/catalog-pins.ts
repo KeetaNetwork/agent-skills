@@ -5,12 +5,16 @@
  *
  * A pinned model installs only from that commit and only if the hash matches,
  * and the control plane drops offers of it that advertise another hash. On the
- * main network, unpinned catalog models cannot be installed or offered.
+ * main network, unpinned catalog models cannot be installed or offered. Its
+ * tokenizer files are pinned too: buyers price prompts by their exact token
+ * count and providers check that count before running anything.
  */
 
 export interface CatalogPin {
 	revision: string;
 	weightsHash: string;
+	/** SHA-256 of each tokenizer file at that commit (see TOKENIZER_FILES), so buyers and providers count prompts with the same tokenizer. */
+	tokenizer?: Record<string, string>;
 }
 
 export const CATALOG_PINS: Record<string, CatalogPin> = {};

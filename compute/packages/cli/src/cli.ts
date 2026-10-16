@@ -43,7 +43,7 @@ export interface CliIO {
 	/** A yes/no question; absent when there is no terminal to ask on. */
 	confirm?: (question: string) => Promise<boolean>;
 	/** Testing and embedding: passed through to AgentApp. */
-	app?: Partial<Pick<AppOptions, 'ledgerFor' | 'exchangeFor' | 'fetchImpl' | 'WebSocketImpl' | 'buyerPort' | 'hardware' | 'localConditions'>>;
+	app?: Partial<Pick<AppOptions, 'ledgerFor' | 'exchangeFor' | 'fetchImpl' | 'WebSocketImpl' | 'buyerPort' | 'hardware' | 'localConditions' | 'countPrompt'>>;
 	sleep?: (ms: number) => Promise<void>;
 }
 

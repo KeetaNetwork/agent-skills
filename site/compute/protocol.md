@@ -85,7 +85,7 @@ Structured output is compiled before the first token, so requests are bounded: `
 | `nodeKey` | The provider chosen |
 | `modelId` | Model id |
 | `buyer` | The paying key |
-| `maxInputTokens`, `maxOutputTokens` | Token limits for the job |
+| `maxInputTokens`, `maxOutputTokens` | Token limits for the job. For a catalog model with a pinned tokenizer, the input limit is the prompt's exact token count plus 16 tokens and 1%; the provider recounts the prompt and refuses a ticket below its count. Otherwise it is a bound from the prompt's size. |
 | `price` | `{inputPerMillion, outputPerMillion}`, credit base units |
 | `asset` | The credit token (app jobs), or the stablecoin the router was paid in |
 | `payTo` | Where payment goes |

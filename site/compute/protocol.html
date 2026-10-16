@@ -131,7 +131,7 @@ sha256hex(body)</code></pre>
 <tr><td><code>nodeKey</code></td><td class="wrap">The provider chosen</td></tr>
 <tr><td><code>modelId</code></td><td class="wrap">Model id</td></tr>
 <tr><td><code>buyer</code></td><td class="wrap">The paying key</td></tr>
-<tr><td><code>maxInputTokens</code>, <code>maxOutputTokens</code></td><td class="wrap">Token limits for the job</td></tr>
+<tr><td><code>maxInputTokens</code>, <code>maxOutputTokens</code></td><td class="wrap">Token limits for the job. For a catalog model with a pinned tokenizer, the input limit is the prompt's exact token count plus 16 tokens and 1%; the provider recounts the prompt and refuses a ticket below its count. Otherwise it is a bound from the prompt's size.</td></tr>
 <tr><td><code>price</code></td><td class="wrap"><code>{inputPerMillion, outputPerMillion}</code>, credit base units</td></tr>
 <tr><td><code>asset</code></td><td class="wrap">The credit token (app jobs), or the stablecoin the router was paid in</td></tr>
 <tr><td><code>payTo</code></td><td class="wrap">Where payment goes</td></tr>

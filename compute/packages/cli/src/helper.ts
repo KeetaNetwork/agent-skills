@@ -8,7 +8,7 @@
  */
 
 import { hostname } from 'node:os';
-import { resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 import {
 	CREDIT_DECIMALS,
 	CREDIT_SYMBOL,
@@ -26,6 +26,7 @@ import { StateStore } from '@keeta-compute/agent';
 import { ControlClient } from '@keeta-compute/protocol/client';
 import { ModelManager, Provider, detectHardware, hashDirectory } from '@keeta-compute/provider';
 import { waitForServer } from '@keeta-compute/runtime-openai';
+import { TokenizerCache, type PromptCount } from '@keeta-compute/tokens';
 import { fileAccount } from '@keeta-compute/wallet';
 
 export interface HelperIO {
@@ -33,6 +34,8 @@ export interface HelperIO {
 	fetchImpl?: typeof fetch;
 	sleep?: (ms: number) => Promise<void>;
 	WebSocketImpl?: typeof WebSocket;
+	/** Counts prompts; defaults to the catalog's pinned tokenizers, cached under the data directory. */
+	countPrompt?: PromptCount;
 }
 
 const defaultSleep = (ms: number) => new Promise<void>((done) => setTimeout(done, ms));
@@ -153,6 +156,7 @@ export async function runHelper(args: { dataDir: string }, io: HelperIO, log: Lo
 		log,
 		onJob: (job) => log('info', `job ${job.jobId} ${job.status} ${job.outputTokens} tokens`),
 		onChange: () => undefined,
+		countPrompt: io.countPrompt ?? new TokenizerCache({ dir: join(args.dataDir, 'tokenizers'), log, ...(io.fetchImpl ? { fetchImpl: io.fetchImpl } : {}) }).count,
 		...(io.WebSocketImpl ? { WebSocketImpl: io.WebSocketImpl } : {})
 	});
 	provider.start();

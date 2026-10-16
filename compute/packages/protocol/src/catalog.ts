@@ -40,6 +40,8 @@ export interface CatalogModel {
 	/** Suggested price in settlement-asset base units per million tokens. */
 	suggestedPrice: { inputPerMillion: string; outputPerMillion: string };
 	weightsHash?: string;
+	/** Pinned tokenizer files and their SHA-256 (from catalog-pins.ts); prompts of a model without them are priced by their size. */
+	tokenizer?: Record<string, string>;
 	/** True when no single machine can hold the model (multi-Mac cluster only). */
 	requiresCluster?: boolean;
 	tags: string[];
@@ -261,8 +263,18 @@ for (const model of CATALOG) {
 	if (pin) {
 		model.source = { ...model.source, revision: pin.revision };
 		model.weightsHash = pin.weightsHash;
+		if (pin.tokenizer) {
+			model.tokenizer = pin.tokenizer;
+		}
 	}
 }
+
+/**
+ * The files that make up a model's tokenizer and chat template, as Hugging
+ * Face repositories keep them; a repository has some of them. They are what
+ * a prompt is counted with (see @keeta-compute/tokens).
+ */
+export const TOKENIZER_FILES = ['tokenizer.json', 'tokenizer_config.json', 'chat_template.jinja', 'chat_template.json'] as const;
 
 export function findCatalogModel(id: string): CatalogModel | undefined {
 	return CATALOG.find((model) => model.id === id);

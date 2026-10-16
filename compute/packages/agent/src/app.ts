@@ -6,6 +6,7 @@
  * node key in the options and calls `open`.
  */
 
+import { join } from 'node:path';
 import {
 	LOCAL_API_PORT,
 	MIN_PROVIDER_MEMORY_BYTES,
@@ -31,6 +32,7 @@ import { ControlClient } from '@keeta-compute/protocol/client';
 import { RPC_ERRORS, type AgentNotifications, type AgentState, type AppToAgent, type AssetBalance, type FleetHelper, type JobSummary, type WalletState } from '@keeta-compute/protocol/rpc';
 import { ModelManager, Provider, detectHardware } from '@keeta-compute/provider';
 import { MlxRuntime } from '@keeta-compute/runtime-mlx';
+import { TokenizerCache, type PromptCount } from '@keeta-compute/tokens';
 import {
 	AnchorCreditExchange,
 	KeetaLedger,
@@ -74,6 +76,8 @@ export interface AppOptions {
 	localConditions?: () => Promise<{ onBattery: boolean; idleSeconds: number }>;
 	/** Skip launching the MLX runtime (tests, non-Mac hosts). */
 	noRuntime?: boolean;
+	/** Counts prompts; defaults to the pinned tokenizers, kept under the data directory. */
+	countPrompt?: PromptCount;
 }
 
 type Params<K extends keyof AppToAgent> = AppToAgent[K]['params'];
@@ -104,6 +108,7 @@ export class AgentApp {
 	private ledger: Ledger | null = null;
 	private runtime: MlxRuntime | null = null;
 	private models: ModelManager | null = null;
+	private tokenizers: TokenizerCache | null = null;
 	private provider: Provider | null = null;
 	private buyer: Buyer | null = null;
 	private spend: KeetaAccount | null = null;
@@ -230,6 +235,8 @@ export class AgentApp {
 		this.wallet = null;
 		this.credits = null;
 		this.earned = { today: '0', total: '0' };
+		this.tokenizers ??= new TokenizerCache({ dir: join(this.options.dataDir, 'tokenizers'), log: this.log, ...(this.options.fetchImpl ? { fetchImpl: this.options.fetchImpl } : {}) });
+		const countPrompt = this.options.countPrompt ?? this.tokenizers.count;
 		this.provider = new Provider({
 			store: this.store,
 			control: this.control,
@@ -247,6 +254,7 @@ export class AgentApp {
 			onJob: this.onJob,
 			onChange: this.emitState,
 			earnings: () => this.earned,
+			countPrompt,
 			...(this.options.WebSocketImpl ? { WebSocketImpl: this.options.WebSocketImpl } : {}),
 			...(this.options.localConditions ? { localConditions: this.options.localConditions } : {})
 		});
@@ -260,6 +268,7 @@ export class AgentApp {
 			verify: verifyKeetaSignature,
 			log: this.log,
 			onJob: this.onJob,
+			countPrompt,
 			...(this.options.fetchImpl ? { fetchImpl: this.options.fetchImpl } : {})
 		});
 		if (!online) {

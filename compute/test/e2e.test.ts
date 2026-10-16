@@ -22,7 +22,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ONE_CREDIT, availableAssets, chunkText, maxJobCost, maxOutputTokensFor, randomId, sha256Hex, sseData, sseEvent, toHex, type HardwareProfile, type JobEnvelope, type ProviderFrame } from '@keeta-compute/protocol';
+import { ONE_CREDIT, availableAssets, chunkText, maxJobCost, maxOutputTokensFor, promptTokenBound, randomId, sha256Hex, sseData, sseEvent, toHex, type ChatCompletionRequest, type HardwareProfile, type JobEnvelope, type ProviderFrame } from '@keeta-compute/protocol';
 import { Account } from '@keeta-compute/protocol/keeta';
 import { startServer } from '../services/control/src/server.ts';
 import { checkEnvelope, checkProviderToken } from '../services/relay/src/relay.ts';
@@ -32,6 +32,8 @@ import { fxAccount, quoteAmount } from '../services/fx/src/server.ts';
 import * as cli from '@keeta-compute/cli';
 import { addHelperModel, pairHelper, runHelper } from '@keeta-compute/cli';
 import type { ModelManager } from '@keeta-compute/provider';
+import { PromptCounter, promptTokenLimit, type PromptCount } from '@keeta-compute/tokens';
+import { byteTokenizerFiles } from '@keeta-compute/tokens/testing';
 import type { CreditExchange, Ledger } from '@keeta-compute/wallet';
 import { GB, fakeModelServer, listen, macAgent as makeMacAgent, readBody, until } from './support/harness.ts';
 import { FakeLedger, newTokenAddress } from './support/ledger.ts';
@@ -199,7 +201,20 @@ class FakeSocket extends EventTarget {
 
 const linux128: HardwareProfile = { os: 'linux', osVersion: 'Ubuntu 24.04', chip: 'NVIDIA H100', memoryBytes: 128 * GB, freeDiskBytes: 2000 * GB };
 
-const macAgent = (dataDir: string, ledger: Ledger, exchange: CreditExchange) => makeMacAgent(dataDir, { ledger, exchange, WebSocketImpl: FakeSocket as unknown as typeof WebSocket });
+/*
+ * The model's tokenizer, as a pinned catalog model's would be: buyers price
+ * tickets with its exact count and providers check it. `undercount` makes the
+ * buyer Mac price prompts as if they were empty, as a buyer cheating on input
+ * would.
+ */
+const tokenizer = new PromptCounter(byteTokenizerFiles());
+const exactCount = (request: ChatCompletionRequest) => tokenizer.count(request)!;
+const countPrompt: PromptCount = async (modelId, request) => (modelId === MODEL ? exactCount(request) : null);
+let undercount = false;
+const buyerCountPrompt: PromptCount = async (modelId, request) => (undercount ? 0 : countPrompt(modelId, request));
+
+const macAgent = (dataDir: string, ledger: Ledger, exchange: CreditExchange, count = countPrompt) =>
+	makeMacAgent(dataDir, { ledger, exchange, WebSocketImpl: FakeSocket as unknown as typeof WebSocket, countPrompt: count });
 
 /* -------------------------------------------------------------- test */
 
@@ -289,7 +304,7 @@ test('a buyer buys credits with a stablecoin, escrows each job at ticket time, a
 	assert.ok(relay.sockets.has(macKey));
 
 	/* Buyer Mac: buys credits with a stablecoin through the FX provider, into the agent budget its endpoint spends from. */
-	const buyer = macAgent(tmp('buyer'), ledger, exchange);
+	const buyer = macAgent(tmp('buyer'), ledger, exchange, buyerCountPrompt);
 	cleanups.push(() => buyer.app.shutdown());
 	await buyer.rpc['agent.initialize']!(init(buyer.nodePublicKey, 'Laptop'));
 	const buyerEntropy = toHex(crypto.getRandomValues(new Uint8Array(32)));
@@ -341,6 +356,9 @@ test('a buyer buys credits with a stablecoin, escrows each job at ticket time, a
 
 	const paidFirst = await paidOut('the first job to be paid out', first.jobId);
 	assert.equal(paidFirst.status, 'paid');
+	const hello: ChatCompletionRequest = { model: MODEL, messages: [{ role: 'user', content: 'Say hello' }], max_tokens: 64 };
+	assert.equal(paidFirst.maxInputTokens, promptTokenLimit(exactCount(hello)), 'the ticket pays for the exact prompt count plus a small margin');
+	assert.ok(paidFirst.maxInputTokens < promptTokenBound(hello), 'tighter than pricing the prompt by its size');
 	assert.equal(paidFirst.settlement!.reason, 'delivered');
 	assert.equal(paidFirst.nodeKey, macKey);
 	assert.equal(paidFirst.payTo, operator);
@@ -403,7 +421,11 @@ test('a buyer buys credits with a stablecoin, escrows each job at ticket time, a
 	assert.equal(paidHungUp.settlement!.reason, 'delivered', 'the relay recorded the text it forwarded before the hang-up');
 	assert.equal(paidHungUp.receipt!.receipt.finishReason, 'cancelled');
 	assert.equal(paidHungUp.receipt!.receipt.outputTokens, 1, 'billed only for the one piece delivered');
-	assert.equal(paidHungUp.receipt!.receipt.inputTokens, paidHungUp.maxInputTokens, 'the prompt was read in full: input is billed at the bound the ticket priced, not an estimate');
+	assert.equal(
+		paidHungUp.receipt!.receipt.inputTokens,
+		exactCount({ model: MODEL, messages: [{ role: 'user', content: 'Say hello slowly' }], max_tokens: 64, stream: true }),
+		'the prompt was read in full: input is billed at its exact count, not an estimate'
+	);
 	const hungUpBill = BigInt(paidHungUp.receipt!.receipt.amount);
 	assert.equal(ledger.sendsFor(hungUpJob, spendKey).length, 1, 'one escrow send per job');
 	const hungUpPayout = ledger.sendsFor(hungUpJob, SETTLEMENT);
@@ -415,6 +437,26 @@ test('a buyer buys credits with a stablecoin, escrows each job at ticket time, a
 		return (await buyerJob(hungUpJob))?.status === 'paid';
 	});
 	assert.equal((await buyer.rpc['buyer.status']!({})).spentToday, (3n + hungUpBill).toString(), 'counted once');
+
+	/* A buyer that prices a ticket below the prompt's real count is refused by the provider before it prefills anything, and gets its escrow back in full. */
+	undercount = true;
+	const lowball = await fetch(`${buyerStatus.endpoint}/chat/completions`, {
+		method: 'POST',
+		headers: { authorization: `Bearer ${buyerStatus.token}`, 'content-type': 'application/json' },
+		body: JSON.stringify({ model: MODEL, messages: [{ role: 'user', content: 'Say hello' }], max_tokens: 64 })
+	});
+	undercount = false;
+	assert.notEqual(lowball.status, 200);
+	assert.match(await lowball.text(), /larger than the ticket allows/);
+	const [lowballed] = await control.store.listJobsByBuyer(spendKey, 1);
+	assert.equal(lowballed!.maxInputTokens, promptTokenLimit(0));
+	const refunded = await until('the under-priced job to be refunded', async () => {
+		await buyer.rpc['buyer.settle']!({});
+		const job = await control.store.getJob(lowballed!.jobId);
+		return job?.settlement?.blockHash ? job : null;
+	}, 20_000);
+	assert.deepEqual([refunded.status, refunded.settlement!.reason, refunded.receipt], ['failed', 'failed', undefined]);
+	assert.deepEqual(ledger.sendsFor(lowballed!.jobId, SETTLEMENT).map((s) => [s.to, s.amount]), [[spendKey, ledger.sendsFor(lowballed!.jobId, spendKey)[0]!.amount]], 'the whole escrow comes back');
 
 	/* Linux helper: pair by code, approve on the Mac, serve the same model. */
 	const helperDir = tmp('helper');
@@ -433,7 +475,7 @@ test('a buyer buys credits with a stablecoin, escrows each job at ticket time, a
 	assert.equal((await paired).payTo, operator);
 
 	await addHelperModel({ dataDir: helperDir, id: MODEL, url: modelUrl, servedName: 'fake', weights: weightsDir, priceIn: '0.10', priceOut: '0.40' }, { out: () => undefined });
-	const helper = await runHelper({ dataDir: helperDir }, { out: () => undefined, WebSocketImpl: FakeSocket as unknown as typeof WebSocket }, () => undefined);
+	const helper = await runHelper({ dataDir: helperDir }, { out: () => undefined, WebSocketImpl: FakeSocket as unknown as typeof WebSocket, countPrompt }, () => undefined);
 	cleanups.push(() => helper.stop());
 	const helperKey = claimed.claim.nodeKey as string;
 	await until('the helper to come online', async () => relay.sockets.has(helperKey) && (await control.store.getProvider(helperKey))?.status === 'online');
@@ -480,7 +522,8 @@ test('a buyer buys credits with a stablecoin, escrows each job at ticket time, a
 			WebSocketImpl: FakeSocket as unknown as typeof WebSocket,
 			buyerPort: 0,
 			hardware: linux128,
-			localConditions: async () => ({ onBattery: false, idleSeconds: 1e9 })
+			localConditions: async () => ({ onBattery: false, idleSeconds: 1e9 }),
+			countPrompt
 		}
 	};
 	const { operator: linuxOperator, nodeKey: linuxKey } = await cli.init({ dataDir: linuxDir, network: 'test', controlUrl: control.url, relayUrl: relay.url, name: 'h100' }, io);

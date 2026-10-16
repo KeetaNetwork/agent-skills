@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@keeta-compute/protocol": "0.1.0",
+    "@keeta-compute/tokens": "0.1.0",
     "@keeta-compute/wallet": "0.1.0"
   }
 }
