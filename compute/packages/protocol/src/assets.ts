@@ -41,11 +41,13 @@ export const KEETA_STABLECOINS: readonly string[] = ASSET_DEFINITIONS.filter((a)
 export const DEFAULT_ASSET_SYMBOL = 'KUSD';
 
 /*
- * USDC addresses match the defaults shipped in @x402/keeta 2.28.0
- * (DEFAULT_ASSETS).
+ * USDC on each network. The test network's is the token its anchor resolver
+ * lists as `$USDC`, which the EVM anchors bridge Circle's test USDC to. (The
+ * test default in @x402/keeta 2.28.0, keeta_apna75…, was never created on the
+ * test network.) The main network's matches @x402/keeta's DEFAULT_ASSETS.
  */
 const USDC_PINS: Record<NetworkName, AssetPin> = {
-	test: { address: 'keeta_apna75yhhvnv4ei7ape55hndk4yepno7a7i2mhtiwahiygixjcnmvswxhnmnk', decimals: 6 },
+	test: { address: 'keeta_aosjk5tgpgxr3qazd2abxyhj4srqua5c3xgz4lmgxuyrrwzryiqng4vacgwai', decimals: 6 },
 	main: { address: 'keeta_amnkge74xitii5dsobstldatv3irmyimujfjotftx7plaaaseam4bntb7wnna', decimals: 6 }
 };
 

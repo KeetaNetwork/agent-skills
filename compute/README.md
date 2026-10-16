@@ -164,7 +164,7 @@ The suite funds itself from a fixed test-network account whose seed is in `test/
 
 The seed is public on purpose, so anyone can top the account up and run the suite. It must only ever hold test-network coins. The same seed gives the same address on the main network, so never send it real funds; the suite refuses to run anywhere but the test network.
 
-1. Test USDC (`keeta_apna75yhhvnv4ei7ape55hndk4yepno7a7i2mhtiwahiygixjcnmvswxhnmnk`) comes from Circle's test-USDC faucet bridged to the account (see the `bridge-crypto` skill). 1 test USDC covers hundreds of runs.
+1. Test USDC (`keeta_aosjk5tgpgxr3qazd2abxyhj4srqua5c3xgz4lmgxuyrrwzryiqng4vacgwai`, the test network's `$USDC`) comes from Circle's test-USDC faucet (faucet.circle.com) bridged by the test network's EVM anchor. `npm run live:deposit-address` prints a Base Sepolia address that forwards USDC to the account; it is currently `0x160fa8576b17f8b9c80106eaba060c48108427b2`, for Circle's Base Sepolia USDC (`0x036CbD53842c5426634e7929541eC2318f3dCF7e`). 1 test USDC covers hundreds of runs.
 2. KTA for fees: `curl -sS -X POST https://faucet.test.keeta.com/ -H 'Content-Type: application/x-www-form-urlencoded' --data "address=keeta_aabpcmdf36xopdmazjtbjlhh4zoyfg7pscd2avvcs3fcflpcica5wqeh375fmci&amount=10"`. 20 KTA or more is comfortable.
 3. Once KUSD is pinned on the test network, the router quotes in it, so the account also needs a little test KUSD for `router.test.ts`.
 

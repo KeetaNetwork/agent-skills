@@ -209,7 +209,7 @@ curl -sS -X POST https://faucet.test.keeta.com/ \
 | SDK alias | `'test'` | `'main'` |
 | Network ID, x402 CAIP-2 | `1413829460`, `keeta:1413829460` | `21378`, `keeta:21378` |
 | KTA base token | `keeta_anyiff4v34alvumupagmdyosydeq24lc4def5mrpmmyhx3j6vj2uucckeqn52` | `keeta_anqdilpazdekdu4acw65fj7smltcp26wbrildkqtszqvverljpwpezmd44ssg` |
-| USDC | varies by bridge provider, for example `keeta_apna75yhhvnv4ei7ape55hndk4yepno7a7i2mhtiwahiygixjcnmvswxhnmnk` in the public examples | `keeta_amnkge74xitii5dsobstldatv3irmyimujfjotftx7plaaaseam4bntb7wnna` |
+| USDC | `keeta_aosjk5tgpgxr3qazd2abxyhj4srqua5c3xgz4lmgxuyrrwzryiqng4vacgwai` (what the resolver lists as `$USDC` and the EVM anchors bridge Circle's test USDC to; the `keeta_apna75…` address in some examples was never created) | `keeta_amnkge74xitii5dsobstldatv3irmyimujfjotftx7plaaaseam4bntb7wnna` |
 | Wallet (Keeta Personal) | <https://wallet.test.keeta.com> | <https://wallet.keeta.com> |
 | Explorer | <https://explorer.test.keeta.com> | <https://explorer.keeta.com> |
 | Faucet | <https://faucet.test.keeta.com> | none |
