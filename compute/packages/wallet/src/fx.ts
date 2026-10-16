@@ -87,19 +87,28 @@ export interface CreditExchange {
 const STATUS_POLL_MS = 1_000;
 const STATUS_TIMEOUT_MS = 120_000;
 
+/**
+ * The anchor SDK's FX client: for `account`'s swaps, or for estimates when
+ * `account` is null. Estimates are not signed, but the SDK refuses to build
+ * a client without a signer, so a throwaway key stands in: it holds nothing
+ * and signs nothing. Exported for tests.
+ */
+export function fxClient(network: NetworkName, account: Account | null, fx: string) {
+	const KeetaNetAnchor = KeetaAnchor.KeetaNet;
+	/* The anchor SDK carries its own keetanet-client; its Account accepts ours (same key types). */
+	const signer = account ?? KeetaNetAnchor.lib.Account.fromSeed(KeetaNetAnchor.lib.Account.generateRandomSeed({ asString: true }), 0);
+	const user = KeetaNetAnchor.UserClient.fromNetwork(network, signer as never);
+	const root = KeetaNetAnchor.lib.Account.fromPublicKeyString(fx as never);
+	/* A test-network FX provider may be served over plain http (a local or staging deployment); on main it must be https. */
+	const exchange = new KeetaAnchor.FX.Client(user, { root, metadataConfig: { allowInsecureProtocols: network === 'test' }, signer: signer as never, account: signer as never } as never);
+	return { user, exchange };
+}
+
 export class AnchorCreditExchange implements CreditExchange {
 	constructor(private readonly network: NetworkName) {}
 
 	private client(account: Account | null, fx: string) {
-		const KeetaNetAnchor = KeetaAnchor.KeetaNet;
-		/* The anchor SDK carries its own keetanet-client; its Account accepts ours (same key types). */
-		const user = account
-			? KeetaNetAnchor.UserClient.fromNetwork(this.network, account as never)
-			: KeetaNetAnchor.UserClient.fromNetwork(this.network, null, { account: KeetaNetAnchor.lib.Account.fromPublicKeyString(fx as never) });
-		const root = KeetaNetAnchor.lib.Account.fromPublicKeyString(fx as never);
-		/* A test-network FX provider may be served over plain http (a local or staging deployment); on main it must be https. */
-		const exchange = new KeetaAnchor.FX.Client(user, { root, metadataConfig: { allowInsecureProtocols: this.network === 'test' }, ...(account ? { signer: account as never, account: account as never } : {}) } as never);
-		return { user, exchange };
+		return fxClient(this.network, account, fx);
 	}
 
 	private conversion(request: SwapRequest) {

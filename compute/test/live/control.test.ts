@@ -11,7 +11,7 @@
 
 import { after, before, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { jobCost, operatorLinkMessage, receiptMessage, type EscrowQuote, type JobRecord, type Offer, type Receipt, type SignedTicket, type Signer } from '@keeta-compute/protocol';
+import { NO_SHOW_FEE, jobCost, operatorLinkMessage, receiptMessage, type EscrowQuote, type JobRecord, type Offer, type Receipt, type SignedTicket, type Signer } from '@keeta-compute/protocol';
 import { Account, accountSigner } from '@keeta-compute/protocol/keeta';
 import { startServer } from '../../services/control/src/server.ts';
 import { ledgerSettlement } from '../../services/control/src/config.ts';
@@ -123,8 +123,9 @@ test('a job is quoted only to a buyer holding its cost in credits, and ticketed 
 	assert.equal(q.token, credits.token, 'quoted in this run\'s credit token');
 	assert.equal(q.settlement, settlement);
 	const due = BigInt(q.maxCost);
-	/* 200 in at 1/M + 100 out at 4/M. */
-	assert.equal(due, 600n);
+	/* 200 in at 1/M + 100 out at 4/M is 600, raised to the no-show fee every escrow covers. */
+	assert.equal(due, NO_SHOW_FEE);
+	assert.equal(due, 1_000n);
 	const refusal = (blockHash: string) => reportEscrow(q.jobId, blockHash).then(() => assert.fail('the escrow was accepted'), (error: ControlError) => error);
 
 	/* A key holding no credits gets no quote: the control plane reads its balance from the ledger first. */

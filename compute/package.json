@@ -16,7 +16,7 @@
     "test": "npm test --workspaces --if-present",
     "test:e2e": "node --import tsx --test test/e2e.test.ts",
     "test:worker": "node --import tsx --test --test-timeout=300000 test/worker.test.ts",
-    "test:live": "node --import tsx --test --test-concurrency=1 --test-timeout=900000 test/live/*.test.ts",
+    "test:live": "node --import tsx --test --test-concurrency=1 --test-timeout=900000 --test-force-exit test/live/*.test.ts",
     "live:deposit-address": "node --import tsx test/live/deposit-address.ts",
     "assets:pin": "npm run pin-assets -w @keeta-compute/fx --",
     "credits:create": "npm run create-credits -w @keeta-compute/fx",

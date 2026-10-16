@@ -1,6 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import * as KeetaAnchor from '@keetanetwork/anchor';
 import { SwapLimitError, pickQuote, swapLimit, type SwapOrder } from '../src/index.ts';
+import { fxClient } from '../src/fx.ts';
 
 const quotes = (...amounts: bigint[]) => amounts.map((convertedAmount, i) => ({ id: i, quote: { convertedAmount } }));
 const order = (affinity: 'from' | 'to', limit: bigint): SwapOrder => ({ fx: 'keeta_fx', from: 'keeta_a', to: 'keeta_b', affinity, amount: 1_000_000n, limit });
@@ -22,4 +24,20 @@ test('a sale takes the quote paying most and refuses one below what the operator
 	assert.equal(pickQuote(quotes(990_000n, 996_000n, 995_500n), order('from', 995_000n)).id, 1);
 	assert.throws(() => pickQuote(quotes(994_999n), order('from', 995_000n)), (error: Error) => error instanceof SwapLimitError && /less than the 995000 you confirmed/.test(error.message));
 	assert.throws(() => pickQuote([], order('from', 995_000n)), /does not trade this pair/);
+});
+
+test('an estimate needs no wallet: the FX client is built with a throwaway key, and a swap with the wallet itself', async () => {
+	const Account = KeetaAnchor.KeetaNet.lib.Account;
+	const random = () => Account.fromSeed(Account.generateRandomSeed({ asString: true }), 0);
+	const fx = random().publicKeyString.get();
+
+	const estimate = fxClient('test', null, fx);
+	assert.equal(estimate.user.account.hasPrivateKey, true, 'the SDK refuses a client without a signer');
+	const another = fxClient('test', null, fx);
+	assert.notEqual(another.user.account.publicKeyString.get(), estimate.user.account.publicKeyString.get(), 'a fresh key each time');
+
+	const wallet = random();
+	const swap = fxClient('test', wallet as never, fx);
+	assert.equal(swap.user.account.publicKeyString.get(), wallet.publicKeyString.get(), 'swaps are signed by the wallet');
+	await Promise.all([estimate, another, swap].map(({ user }) => user.destroy()));
 });
