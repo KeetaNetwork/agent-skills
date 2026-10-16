@@ -326,6 +326,17 @@ test('Linux helpers pair by code with check string and master approval', async (
 	assert.equal(registered.status, 200);
 	assert.equal((registered.body as { provider: { payTo: string } }).provider.payTo, operator.publicKey, 'helper earnings go to the master wallet');
 
+	/* The helper serves under the Mac's allowlist, whatever it reports itself. */
+	const listed = newSigner();
+	const stranger = newSigner();
+	await h.call(master, 'POST', '/v1/providers/heartbeat', { status: 'paused', offers: [], access: { mode: 'allowlist', allow: [listed.publicKey] } });
+	await h.call(helper, 'POST', '/v1/providers/heartbeat', { status: 'online', offers: [offer('qwen3-8b')], access: { mode: 'public', allow: [] }, load: { active: 0, capacity: 4 } });
+	const job = { network: 'test', model: 'qwen3-8b', maxInputTokens: 10, maxOutputTokens: 10 };
+	assert.equal((await h.call(stranger, 'POST', '/v1/jobs', job)).status, 503, 'buyers off the Mac allowlist are not scheduled on its helpers');
+	assert.equal((await h.call(listed, 'POST', '/v1/jobs', job)).status, 200);
+	await h.call(master, 'POST', '/v1/providers/heartbeat', { status: 'paused', offers: [], access: { mode: 'public', allow: [] } });
+	assert.equal((await h.call(stranger, 'POST', '/v1/jobs', job)).status, 200, 'and follow the Mac when it opens up');
+
 	const fleet = await h.call(master, 'GET', '/v1/fleet');
 	assert.equal((fleet.body as { helpers: unknown[] }).helpers.length, 1);
 	assert.equal((await h.call(master, 'DELETE', `/v1/fleet/${helper.publicKey}`)).status, 200);

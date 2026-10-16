@@ -216,7 +216,8 @@ export class ControlService {
 				status: eligible ? status : 'paused',
 				offers: pinned,
 				offeredModels: [...new Set(pinned.map((o) => o.modelId))],
-				...(access ? { access } : {}),
+				/* A helper's access is its master Mac's; the scheduler reads it from there. */
+				...(access && current.kind !== 'linux-helper' ? { access } : {}),
 				load: { active, capacity },
 				lastHeartbeat: now
 			};
@@ -298,8 +299,16 @@ export class ControlService {
 	}): Promise<{ job: JobRecord; ticket: SignedTicket; provider: StoredProvider }> {
 		const now = this.now();
 		let overBudget = 0;
-		const candidates = (await this.store.listLiveProviders(args.network, now - PROVIDER_STALE_MS, args.modelId))
-			.filter((provider) => provider.status === 'online' && provider.load.active < provider.load.capacity)
+		const live = (await this.store.listLiveProviders(args.network, now - PROVIDER_STALE_MS, args.modelId)).filter(
+			(provider) => provider.status === 'online' && provider.load.active < provider.load.capacity
+		);
+		/* Helpers serve under their master Mac's current access policy, so the Mac's allowlist covers its whole fleet. */
+		const masters = new Map<string, StoredProvider | null>();
+		for (const key of new Set(live.flatMap((p) => (p.kind === 'linux-helper' && p.masterNodeKey ? [p.masterNodeKey] : [])))) {
+			masters.set(key, await this.store.getProvider(key));
+		}
+		const allows = (policy: AccessPolicy) => policy.mode !== 'allowlist' || (!args.publicOnly && policy.allow.includes(args.buyer));
+		const candidates = live
 			.filter((provider) => !args.excludeProviders?.includes(provider.nodeKey))
 			.filter((provider) => !args.allowedProviders?.length || args.allowedProviders.includes(provider.nodeKey) || args.allowedProviders.includes(provider.payTo))
 			.flatMap((provider) => {
@@ -311,8 +320,14 @@ export class ControlService {
 					return [];
 				}
 				const access: AccessPolicy = offer.access.mode === 'allowlist' ? offer.access : provider.access;
-				if (access.mode === 'allowlist' && (args.publicOnly || !access.allow.includes(args.buyer))) {
+				if (!allows(access)) {
 					return [];
+				}
+				if (provider.kind === 'linux-helper') {
+					const master = provider.masterNodeKey ? masters.get(provider.masterNodeKey) : null;
+					if (!master || !allows(master.access)) {
+						return [];
+					}
 				}
 				if (args.maxPrice && (BigInt(offer.price.inputPerMillion) > BigInt(args.maxPrice.inputPerMillion) || BigInt(offer.price.outputPerMillion) > BigInt(args.maxPrice.outputPerMillion))) {
 					return [];
@@ -745,6 +760,7 @@ export class ControlService {
 			throw new AuthError('approval signature does not verify');
 		}
 		await this.store.updatePairing(pairingId, (current) => ({ ...current, status: 'approved' }));
+		const master = await this.store.getProvider(masterNodeKey);
 		const { name, ...hardware } = claim.descriptor;
 		const now = this.now();
 		await this.store.putProvider({
@@ -758,7 +774,8 @@ export class ControlService {
 			tier: hardwareTier(hardware),
 			offers: [],
 			offeredModels: [],
-			access: { mode: 'public', allow: [] },
+			/* For display; scheduling always reads the master's current policy. */
+			access: master?.access ?? { mode: 'allowlist', allow: [] },
 			status: 'paused',
 			load: { active: 0, capacity: 1 },
 			lastHeartbeat: 0,
