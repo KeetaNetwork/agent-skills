@@ -1,13 +1,11 @@
-# Linux helper
+# Linux
 
 Status: test-network preview.
 
-The Linux helper adds a Linux machine you own (a home server, a workstation, a GPU box) to your Mac's fleet as extra provider capacity.
+`keeta-compute-agent` runs Keeta Compute on a Linux machine you own (a home server, a workstation, a GPU box). It runs in one of two modes:
 
-- It is provider-only. It has no wallet, no balance and cannot buy.
-- Every payment it earns goes to the paired Mac's wallet.
-- The Mac holds the policy: prices, access mode, pause and revoke.
-- It is tiered by what it proves in its benchmark, like a Mac.
+- **Full node** (the default): everything the macOS app does, from the command line. The machine has its own wallet, sells capacity paid to that wallet, buys inference for agents on the machine through a local OpenAI-compatible endpoint, and can pair helpers of its own.
+- **Helper**: provider-only capacity in another node's fleet. It has no wallet, no balance and cannot buy; every payment it earns goes to the node it paired with (a Mac or a Linux full node), which holds its policy.
 
 ## Install
 
@@ -15,56 +13,97 @@ The Linux helper adds a Linux machine you own (a home server, a workstation, a G
 curl -fsSL https://keeta.ai/compute/install-helper.sh | sh
 ```
 
-Read the [install script](https://keeta.ai/compute/install-helper.sh) before you run it. It installs the `keeta-compute-agent` command.
+Read the [install script](https://keeta.ai/compute/install-helper.sh) before you run it. It installs the `keeta-compute-agent` command for both modes.
 
-## Pair with your Mac
+## Full node
 
-1. In the Mac app, open Fleet → Add a Linux machine. The app shows a one-time pairing code. It expires in 10 minutes and works once.
-2. On the Linux machine:
+### Create the wallet
+
+```bash
+keeta-compute-agent init
+```
+
+- `init` creates the operator wallet: 32 random bytes, encrypted with your passphrase (scrypt and AES-256-GCM) in `~/.keeta-compute/operator-wallet.json`, mode `0600`.
+- It prints a 24-word recovery phrase once. Write it down; it is never shown again. The phrase is also a standard Keeta passphrase for the same account.
+- To restore on a new machine, run `keeta-compute-agent init --restore` and enter the phrase.
+- The passphrase is read from `KEETA_COMPUTE_PASSPHRASE`, or asked for on the terminal.
+- Options: `--network test|main` (default `test`), `--control URL`, `--relay URL`, `--name NAME`.
+
+Every command takes `--data-dir DIR` (default `$KEETA_COMPUTE_HOME` or `~/.keeta-compute`).
+
+### Sell capacity
+
+The agent does not run models itself. Run any OpenAI-compatible server on the same machine, such as llama.cpp's `llama-server`, vLLM or SGLang, then register each model:
+
+```bash
+keeta-compute-agent models add \
+  --id qwen3-8b \
+  --url http://127.0.0.1:8080/v1 \
+  --served-name <name the server uses for the model> \
+  --weights <path-to-weights>
+keeta-compute-agent provide --on
+keeta-compute-agent run
+```
+
+- `--id` is the network model id from the [catalog](https://keeta.ai/compute/models.md).
+- `--served-name` is the `model` value your local server expects.
+- `--weights` is hashed, and the hash appears on every receipt the node signs.
+- Keep the server bound to `127.0.0.1`. The agent refuses servers on other hosts.
+- `models offer ID --price-in 0.10 --price-out 0.40` sets prices in USDC per million tokens; `--off` stops offering a model; `--access allowlist --allow KEY,...` limits it to listed buyers.
+- `provide --access allowlist --allow KEY,...` sets the default for every model; `--max-jobs N` sets concurrency.
+
+### Buy inference
+
+While `run` is running, agents on the machine can call `http://127.0.0.1:11435/v1` with the token from `keeta-compute-agent token`. Requests are paid from the agent budget, a separate local key.
+
+```bash
+keeta-compute-agent wallet fund-budget 5
+keeta-compute-agent buy --per-request-max 0.25 --daily-max 5
+```
+
+### Other commands
+
+| Command | What it does |
+| --- | --- |
+| `status` | Node key, operator, network, endpoints, balances, policies and models (`--json` for scripts). |
+| `wallet` | Addresses and balances of the operator wallet and the agent budget. |
+| `wallet send TO AMOUNT` | Send USDC from the operator wallet (`--asset kta` for KTA, `--memo TEXT` for a memo). Needs the passphrase. |
+| `wallet fund-budget AMOUNT` / `wallet drain-budget AMOUNT` | Move funds into or out of the agent budget. Draining needs no passphrase. |
+| `wallet test-funds` | Request test-network KTA for fees. |
+| `models list` / `models remove ID` | List or forget registered models. |
+| `token [--rotate]` | Print or replace the local endpoint token. |
+| `pair` | Show a pairing code for a helper and approve it after you compare check strings. |
+| `fleet list` / `fleet approve ID` / `fleet reject ID` / `fleet revoke KEY` | Manage helpers. |
+| `config` | Switch network (`--network main`) or coordinator (`--control URL`, `--relay URL`). Linking the wallet on a new network asks for the passphrase. |
+
+## Helper
+
+1. On the master, create a one-time pairing code: in the Mac app, open Fleet → Add a Linux machine; on a Linux full node, run `keeta-compute-agent pair`. The code expires in 10 minutes and works once.
+2. On the helper:
 
    ```bash
    keeta-compute-agent helper pair <CODE>
    ```
 
-3. Both machines show a short check string, such as `K7M-Q2X`. Compare them. If they differ, reject the claim on the Mac.
-4. Approve the machine on the Mac. It joins the fleet, paid to the Mac's address.
+3. Both machines show a short check string, such as `K7M-Q2X`. Compare them. If they differ, reject the claim on the master.
+4. Approve the machine on the master. It joins the fleet, paid to the master's wallet.
+5. Register models with `keeta-compute-agent helper add-model` (same options as `models add`), then run `keeta-compute-agent helper run`.
 
-The code alone cannot pair a machine: pairing completes only after you approve it on the Mac.
+The code alone cannot pair a machine: pairing completes only after you approve it on the master.
 
-## Serve a model
+## Run as a service
 
-The helper does not run models itself. Run any OpenAI-compatible server on the same machine, such as llama.cpp's `llama-server`, vLLM or SGLang, then register each model with the helper:
-
-```bash
-keeta-compute-agent helper add-model \
-  --id qwen3-8b \
-  --url http://127.0.0.1:8080/v1 \
-  --served-name <name the server uses for the model> \
-  --weights <path-to-weights>
-```
-
-- `--id` is the network model id from the [catalog](https://keeta.ai/compute/models.md).
-- `--served-name` is the `model` value your local server expects.
-- `--weights` is hashed, and the hash appears on every receipt the helper signs.
-- Keep the server bound to `127.0.0.1`. The helper is the only thing that should reach it.
-
-## Run
-
-```bash
-keeta-compute-agent helper run
-```
-
-As a systemd service, in `/etc/systemd/system/keeta-compute-helper.service`:
+In `/etc/systemd/system/keeta-compute.service`:
 
 ```ini
 [Unit]
-Description=Keeta Compute helper
+Description=Keeta Compute
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 User=keeta
-ExecStart=/usr/local/bin/keeta-compute-agent helper run
+ExecStart=/usr/local/bin/keeta-compute-agent run
 Restart=on-failure
 RestartSec=5
 
@@ -73,14 +112,14 @@ WantedBy=multi-user.target
 ```
 
 ```bash
-sudo systemctl enable --now keeta-compute-helper
+sudo systemctl enable --now keeta-compute
 ```
 
-Adjust `User` and the `ExecStart` path to match where the install script put the binary (`command -v keeta-compute-agent`). Run `helper pair` as that same user so the service finds its key.
+For a helper, use `helper run` in `ExecStart`. Adjust `User` and the `ExecStart` path to match where the install script put the binary (`command -v keeta-compute-agent`). Run `init` or `helper pair` as that same user so the service finds its keys. `run` never needs the passphrase; only wallet sends and linking do.
 
 ## Keys and revocation
 
-- Pairing creates the helper's own node key. It signs receipts and requests; it cannot move funds.
-- The key is stored in a keyfile with mode `0600`, readable only by the user that runs the helper.
-- Revoking the machine in the Mac app (Fleet) cuts it off: its credentials stop working and it gets no more jobs.
-- If the machine is lost or compromised, revoke it from the Mac first, then delete the keyfile.
+- Each machine has its own node key in a `0600` keyfile. It signs receipts and requests; it cannot move funds.
+- On a full node, the operator wallet is encrypted at rest and decrypted only for a send or a link, then wiped from memory. The agent budget key is a `0600` keyfile holding only what you moved into it.
+- Revoking a helper on its master (Fleet, or `fleet revoke`) cuts it off: its credentials stop working and it gets no more jobs.
+- If a machine is lost or compromised, revoke it from its master (for a helper), move funds out with the recovery phrase on another machine (for a full node), then delete the keyfiles.

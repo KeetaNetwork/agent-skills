@@ -32,7 +32,7 @@ Payments settle on Keeta. Prompts and outputs never go on chain.
 - [macOS app](https://keeta.ai/compute/app.md): install, provide capacity, get paid, buy for local agents.
 - [Models](https://keeta.ai/compute/models.md): the catalog, memory needs, licenses and suggested prices.
 - [Public API router](https://keeta.ai/compute/router.md): endpoints, x402 payment flow, receipts, errors.
-- [Linux helper](https://keeta.ai/compute/helper.md): add a Linux machine to a Mac's fleet as extra capacity.
+- [Linux](https://keeta.ai/compute/helper.md): run a full node from the command line with its own wallet, or add a machine to a fleet as a helper.
 - [Protocol](https://keeta.ai/compute/protocol.md): identities, signed requests, jobs, receipts, pricing math.
 
 Each page is also served as Markdown: add `.md` to its path, for example `https://keeta.ai/compute/router.md`.

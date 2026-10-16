@@ -424,6 +424,49 @@ test('Linux helpers pair by code with check string and master approval', async (
 	assert.equal((await h.call(helper, 'POST', '/v1/providers/heartbeat', { status: 'online', offers: [] })).status, 404, 'revoked helper is cut off');
 });
 
+test('Linux nodes with their own wallet register with a link proof and can pair helpers', async () => {
+	const h = harness();
+	const node = newSigner();
+	const operator = newSigner();
+	const linux = hardware(128, 'linux');
+	const register = (body: Record<string, unknown>) => h.call(node, 'POST', '/v1/providers/register', { network: 'test', kind: 'linux', name: 'gpu-box', hardware: linux, ...body });
+	assert.equal((await register({ payTo: operator.publicKey })).status, 400, 'the link proof is required');
+	const forged = await newSigner().sign(operatorLinkMessage({ nodeKey: node.publicKey, payTo: operator.publicKey, network: 'test', issuedAt: h.now() }));
+	assert.equal((await register({ payTo: operator.publicKey, link: { issuedAt: h.now(), signature: forged } })).status, 401, 'signed by someone else');
+	const issuedAt = h.now();
+	const link = await operator.sign(operatorLinkMessage({ nodeKey: node.publicKey, payTo: operator.publicKey, network: 'test', issuedAt }));
+	const registered = await register({ payTo: operator.publicKey, link: { issuedAt, signature: link } });
+	assert.equal(registered.status, 200, JSON.stringify(registered.body));
+	const provider = (registered.body as { provider: { kind: string; payTo: string } }).provider;
+	assert.equal(provider.kind, 'linux');
+	assert.equal(provider.payTo, operator.publicKey, 'a Linux node is paid to its own operator');
+
+	/* It schedules and earns like a Mac. */
+	await h.call(node, 'POST', '/v1/providers/heartbeat', { status: 'online', offers: [offer('qwen3-8b')], load: { active: 0, capacity: 1 } });
+	const job = await h.call(newSigner(), 'POST', '/v1/jobs', { network: 'test', model: 'qwen3-8b', maxInputTokens: 10, maxOutputTokens: 10 });
+	assert.equal(job.status, 200, JSON.stringify(job.body));
+	assert.equal((job.body as { ticket: { ticket: { payTo: string } } }).ticket.ticket.payTo, operator.publicKey);
+
+	/* And it can be a pairing master; its helpers pay its operator. */
+	const code = generatePairingCode();
+	const created = await h.call(node, 'POST', '/v1/pairing', { codeHash: await pairingCodeHash(code) });
+	assert.equal(created.status, 200, JSON.stringify(created.body));
+	const { pairingId } = created.body as { pairingId: string };
+	const helper = newSigner();
+	assert.equal((await h.call(helper, 'POST', '/v1/pairing/claim', { codeHash: await pairingCodeHash(code), descriptor: { ...linux, name: 'gpu-2' } })).status, 200);
+	const approvalSig = await node.sign(pairingApprovalMessage({ pairingId, helperNodeKey: helper.publicKey, masterNodeKey: node.publicKey, payTo: operator.publicKey }));
+	assert.equal((await h.call(node, 'POST', `/v1/pairing/${pairingId}/approve`, { approvalSig })).status, 200);
+	const helperRegistered = await h.call(helper, 'POST', '/v1/providers/register', { network: 'test', kind: 'linux-helper', name: 'gpu-2', hardware: linux });
+	assert.equal((helperRegistered.body as { provider: { payTo: string } }).provider.payTo, operator.publicKey);
+
+	/* A helper cannot pair helpers of its own, nor claim to be a full node without a link. */
+	const nested = await h.call(helper, 'POST', '/v1/pairing', { codeHash: await pairingCodeHash(generatePairingCode()) });
+	assert.equal(nested.status, 403);
+	assert.match(JSON.stringify(nested.body), /Mac or Linux node/);
+	assert.equal((await h.call(helper, 'POST', '/v1/providers/register', { network: 'test', kind: 'linux', hardware: linux, payTo: operator.publicKey })).status, 400);
+	assert.equal((await h.call(newSigner(), 'POST', '/v1/providers/register', { network: 'test', kind: 'linux-box', hardware: linux })).status, 400);
+});
+
 test('sweep expires unused tickets and confirms late payments', async () => {
 	let ledger: 'pending' | 'confirmed' = 'pending';
 	const h = harness({ verifyPayment: async () => ledger });

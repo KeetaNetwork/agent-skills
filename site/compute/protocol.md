@@ -8,8 +8,8 @@ Every party is a Keeta public key (`keeta_…`). Every signature is a Keeta acco
 
 | Key | Held by | Used for |
 | --- | --- | --- |
-| Node key | Each Mac or Linux helper | Signs requests to the network and the receipts for its jobs. Cannot move funds. |
-| Payout address (`payTo`) | The operator's wallet (passkey on the Mac) | Receives every payment for the operator's machines, including paired Linux helpers |
+| Node key | Each Mac, Linux node or Linux helper | Signs requests to the network and the receipts for its jobs. Cannot move funds. |
+| Payout address (`payTo`) | The operator's wallet (passkey on the Mac, an encrypted wallet file on a Linux node) | Receives every payment for the operator's machines, including paired Linux helpers |
 | Buyer key | The paying account | Pays providers; is what provider allowlists list |
 
 At onboarding the operator signs a link message tying each node key to its payout address.

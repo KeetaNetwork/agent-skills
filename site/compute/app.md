@@ -49,7 +49,7 @@ A tier describes what a machine proves in its benchmark, not the badge on it.
 - **Pause.** Take the Mac off the network at any time, and resume when you want.
 - **Public.** Any buyer on the network can use your offered models.
 - **Allowlist.** Only jobs paid from buyer addresses on your list (`keeta_…`). The scheduler never sends an unlisted buyer's job to you, and your Mac checks the paying address on the ticket again before it runs anything.
-- **More machines.** Add Linux machines to your fleet with the [Linux helper](https://keeta.ai/compute/helper.md). Their earnings go to this Mac's wallet.
+- **More machines.** Add Linux machines to your fleet as [helpers](https://keeta.ai/compute/helper.md). Their earnings go to this Mac's wallet.
 
 ## Get paid
 

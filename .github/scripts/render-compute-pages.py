@@ -15,11 +15,11 @@ PAGES = {
     "app": ("macOS app", "Install the Keeta Compute macOS app, provide inference capacity, get paid in USDC, and buy inference for local agents."),
     "models": ("Models", "The Keeta Compute model catalog: memory, disk, license and suggested price per million tokens in USDC."),
     "router": ("Public API router", "The Keeta Compute public API router: OpenAI-compatible endpoints paid per request with x402 on Keeta."),
-    "helper": ("Linux helper", "Add a Linux machine to a Keeta Compute fleet as provider-only capacity paid to the paired Mac."),
+    "helper": ("Linux", "Run Keeta Compute on Linux: a full node with its own wallet, or a helper in a fleet."),
     "protocol": ("Protocol", "Keeta Compute protocol: identities, signed requests, job lifecycle, tickets, receipts and pricing math."),
 }
 CURRENT = ' aria-current="page"'
-NAV = [("index", "Compute"), ("app", "macOS app"), ("models", "Models"), ("router", "API router"), ("helper", "Linux helper"), ("protocol", "Protocol")]
+NAV = [("index", "Compute"), ("app", "macOS app"), ("models", "Models"), ("router", "API router"), ("helper", "Linux"), ("protocol", "Protocol")]
 
 
 def href(url: str) -> str:

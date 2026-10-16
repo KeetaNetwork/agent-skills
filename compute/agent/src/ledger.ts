@@ -36,7 +36,8 @@ export class KeetaLedger implements Ledger {
 	}
 
 	async balances(account: Account): Promise<Balances> {
-		const client = this.client(account);
+		/* Reading another account's balances (the operator, by public key) needs no signer. */
+		const client = account.hasPrivateKey ? this.client(account) : KeetaNet.UserClient.fromNetwork(this.network, null, { account });
 		try {
 			const [usdc, kta] = await Promise.all([client.balance(this.token(client, 'usdc')), client.balance(client.baseToken)]);
 			return { usdc, kta };

@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#ffffff" />
     <meta name="color-scheme" content="light" />
-    <title>Linux helper | Keeta Compute</title>
-    <meta name="description" content="Add a Linux machine to a Keeta Compute fleet as provider-only capacity paid to the paired Mac." />
+    <title>Linux | Keeta Compute</title>
+    <meta name="description" content="Run Keeta Compute on Linux: a full node with its own wallet, or a helper in a fleet." />
     <link rel="canonical" href="https://keeta.ai/compute/helper" />
     <link rel="alternate" type="text/markdown" href="/compute/helper.md" title="This page as Markdown" />
     <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
@@ -50,70 +50,103 @@
           <a href="/compute/app">macOS app</a>
           <a href="/compute/models">Models</a>
           <a href="/compute/router">API router</a>
-          <a href="/compute/helper" aria-current="page">Linux helper</a>
+          <a href="/compute/helper" aria-current="page">Linux</a>
           <a href="/compute/protocol">Protocol</a>
         </nav>
       </aside>
       <article class="docs-body">
         <p class="eyebrow"><span aria-hidden="true"></span>Test-network preview</p>
-<h1 id="linux-helper">Linux helper</h1>
+<h1 id="linux">Linux</h1>
 <p>Status: test-network preview.</p>
-<p>The Linux helper adds a Linux machine you own (a home server, a workstation, a GPU box) to your Mac's fleet as extra provider capacity.</p>
+<p><code>keeta-compute-agent</code> runs Keeta Compute on a Linux machine you own (a home server, a workstation, a GPU box). It runs in one of two modes:</p>
 <ul>
-<li>It is provider-only. It has no wallet, no balance and cannot buy.</li>
-<li>Every payment it earns goes to the paired Mac's wallet.</li>
-<li>The Mac holds the policy: prices, access mode, pause and revoke.</li>
-<li>It is tiered by what it proves in its benchmark, like a Mac.</li>
+<li><strong>Full node</strong> (the default): everything the macOS app does, from the command line. The machine has its own wallet, sells capacity paid to that wallet, buys inference for agents on the machine through a local OpenAI-compatible endpoint, and can pair helpers of its own.</li>
+<li><strong>Helper</strong>: provider-only capacity in another node's fleet. It has no wallet, no balance and cannot buy; every payment it earns goes to the node it paired with (a Mac or a Linux full node), which holds its policy.</li>
 </ul>
 <h2 id="install">Install</h2>
 <pre><code class="language-bash">curl -fsSL https://keeta.ai/compute/install-helper.sh | sh</code></pre>
-<p>Read the <a href="/compute/install-helper.sh">install script</a> before you run it. It installs the <code>keeta-compute-agent</code> command.</p>
-<h2 id="pair-with-your-mac">Pair with your Mac</h2>
-<ol>
-<li>In the Mac app, open Fleet → Add a Linux machine. The app shows a one-time pairing code. It expires in 10 minutes and works once.</li>
-<li><p>On the Linux machine:</p>
-<pre><code class="language-bash">keeta-compute-agent helper pair &lt;CODE&gt;</code></pre></li>
-<li>Both machines show a short check string, such as <code>K7M-Q2X</code>. Compare them. If they differ, reject the claim on the Mac.</li>
-<li>Approve the machine on the Mac. It joins the fleet, paid to the Mac's address.</li>
-</ol>
-<p>The code alone cannot pair a machine: pairing completes only after you approve it on the Mac.</p>
-<h2 id="serve-a-model">Serve a model</h2>
-<p>The helper does not run models itself. Run any OpenAI-compatible server on the same machine, such as llama.cpp's <code>llama-server</code>, vLLM or SGLang, then register each model with the helper:</p>
-<pre><code class="language-bash">keeta-compute-agent helper add-model \
+<p>Read the <a href="/compute/install-helper.sh">install script</a> before you run it. It installs the <code>keeta-compute-agent</code> command for both modes.</p>
+<h2 id="full-node">Full node</h2>
+<h3 id="create-the-wallet">Create the wallet</h3>
+<pre><code class="language-bash">keeta-compute-agent init</code></pre>
+<ul>
+<li><code>init</code> creates the operator wallet: 32 random bytes, encrypted with your passphrase (scrypt and AES-256-GCM) in <code>~/.keeta-compute/operator-wallet.json</code>, mode <code>0600</code>.</li>
+<li>It prints a 24-word recovery phrase once. Write it down; it is never shown again. The phrase is also a standard Keeta passphrase for the same account.</li>
+<li>To restore on a new machine, run <code>keeta-compute-agent init --restore</code> and enter the phrase.</li>
+<li>The passphrase is read from <code>KEETA_COMPUTE_PASSPHRASE</code>, or asked for on the terminal.</li>
+<li>Options: <code>--network test|main</code> (default <code>test</code>), <code>--control URL</code>, <code>--relay URL</code>, <code>--name NAME</code>.</li>
+</ul>
+<p>Every command takes <code>--data-dir DIR</code> (default <code>$KEETA_COMPUTE_HOME</code> or <code>~/.keeta-compute</code>).</p>
+<h3 id="sell-capacity">Sell capacity</h3>
+<p>The agent does not run models itself. Run any OpenAI-compatible server on the same machine, such as llama.cpp's <code>llama-server</code>, vLLM or SGLang, then register each model:</p>
+<pre><code class="language-bash">keeta-compute-agent models add \
   --id qwen3-8b \
   --url http://127.0.0.1:8080/v1 \
   --served-name &lt;name the server uses for the model&gt; \
-  --weights &lt;path-to-weights&gt;</code></pre>
+  --weights &lt;path-to-weights&gt;
+keeta-compute-agent provide --on
+keeta-compute-agent run</code></pre>
 <ul>
 <li><code>--id</code> is the network model id from the <a href="/compute/models">catalog</a>.</li>
 <li><code>--served-name</code> is the <code>model</code> value your local server expects.</li>
-<li><code>--weights</code> is hashed, and the hash appears on every receipt the helper signs.</li>
-<li>Keep the server bound to <code>127.0.0.1</code>. The helper is the only thing that should reach it.</li>
+<li><code>--weights</code> is hashed, and the hash appears on every receipt the node signs.</li>
+<li>Keep the server bound to <code>127.0.0.1</code>. The agent refuses servers on other hosts.</li>
+<li><code>models offer ID --price-in 0.10 --price-out 0.40</code> sets prices in USDC per million tokens; <code>--off</code> stops offering a model; <code>--access allowlist --allow KEY,...</code> limits it to listed buyers.</li>
+<li><code>provide --access allowlist --allow KEY,...</code> sets the default for every model; <code>--max-jobs N</code> sets concurrency.</li>
 </ul>
-<h2 id="run">Run</h2>
-<pre><code class="language-bash">keeta-compute-agent helper run</code></pre>
-<p>As a systemd service, in <code>/etc/systemd/system/keeta-compute-helper.service</code>:</p>
+<h3 id="buy-inference">Buy inference</h3>
+<p>While <code>run</code> is running, agents on the machine can call <code>http://127.0.0.1:11435/v1</code> with the token from <code>keeta-compute-agent token</code>. Requests are paid from the agent budget, a separate local key.</p>
+<pre><code class="language-bash">keeta-compute-agent wallet fund-budget 5
+keeta-compute-agent buy --per-request-max 0.25 --daily-max 5</code></pre>
+<h3 id="other-commands">Other commands</h3>
+<table>
+<thead><tr><th>Command</th><th>What it does</th></tr></thead>
+<tbody>
+<tr><td><code>status</code></td><td class="wrap">Node key, operator, network, endpoints, balances, policies and models (<code>--json</code> for scripts).</td></tr>
+<tr><td><code>wallet</code></td><td class="wrap">Addresses and balances of the operator wallet and the agent budget.</td></tr>
+<tr><td><code>wallet send TO AMOUNT</code></td><td class="wrap">Send USDC from the operator wallet (<code>--asset kta</code> for KTA, <code>--memo TEXT</code> for a memo). Needs the passphrase.</td></tr>
+<tr><td><code>wallet fund-budget AMOUNT</code> / <code>wallet drain-budget AMOUNT</code></td><td class="wrap">Move funds into or out of the agent budget. Draining needs no passphrase.</td></tr>
+<tr><td><code>wallet test-funds</code></td><td class="wrap">Request test-network KTA for fees.</td></tr>
+<tr><td><code>models list</code> / <code>models remove ID</code></td><td class="wrap">List or forget registered models.</td></tr>
+<tr><td><code>token [--rotate]</code></td><td class="wrap">Print or replace the local endpoint token.</td></tr>
+<tr><td><code>pair</code></td><td class="wrap">Show a pairing code for a helper and approve it after you compare check strings.</td></tr>
+<tr><td><code>fleet list</code> / <code>fleet approve ID</code> / <code>fleet reject ID</code> / <code>fleet revoke KEY</code></td><td class="wrap">Manage helpers.</td></tr>
+<tr><td><code>config</code></td><td class="wrap">Switch network (<code>--network main</code>) or coordinator (<code>--control URL</code>, <code>--relay URL</code>). Linking the wallet on a new network asks for the passphrase.</td></tr>
+</tbody>
+</table>
+<h2 id="helper">Helper</h2>
+<ol>
+<li>On the master, create a one-time pairing code: in the Mac app, open Fleet → Add a Linux machine; on a Linux full node, run <code>keeta-compute-agent pair</code>. The code expires in 10 minutes and works once.</li>
+<li><p>On the helper:</p>
+<pre><code class="language-bash">keeta-compute-agent helper pair &lt;CODE&gt;</code></pre></li>
+<li>Both machines show a short check string, such as <code>K7M-Q2X</code>. Compare them. If they differ, reject the claim on the master.</li>
+<li>Approve the machine on the master. It joins the fleet, paid to the master's wallet.</li>
+<li>Register models with <code>keeta-compute-agent helper add-model</code> (same options as <code>models add</code>), then run <code>keeta-compute-agent helper run</code>.</li>
+</ol>
+<p>The code alone cannot pair a machine: pairing completes only after you approve it on the master.</p>
+<h2 id="run-as-a-service">Run as a service</h2>
+<p>In <code>/etc/systemd/system/keeta-compute.service</code>:</p>
 <pre><code class="language-ini">[Unit]
-Description=Keeta Compute helper
+Description=Keeta Compute
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 User=keeta
-ExecStart=/usr/local/bin/keeta-compute-agent helper run
+ExecStart=/usr/local/bin/keeta-compute-agent run
 Restart=on-failure
 RestartSec=5
 
 [Install]
 WantedBy=multi-user.target</code></pre>
-<pre><code class="language-bash">sudo systemctl enable --now keeta-compute-helper</code></pre>
-<p>Adjust <code>User</code> and the <code>ExecStart</code> path to match where the install script put the binary (<code>command -v keeta-compute-agent</code>). Run <code>helper pair</code> as that same user so the service finds its key.</p>
+<pre><code class="language-bash">sudo systemctl enable --now keeta-compute</code></pre>
+<p>For a helper, use <code>helper run</code> in <code>ExecStart</code>. Adjust <code>User</code> and the <code>ExecStart</code> path to match where the install script put the binary (<code>command -v keeta-compute-agent</code>). Run <code>init</code> or <code>helper pair</code> as that same user so the service finds its keys. <code>run</code> never needs the passphrase; only wallet sends and linking do.</p>
 <h2 id="keys-and-revocation">Keys and revocation</h2>
 <ul>
-<li>Pairing creates the helper's own node key. It signs receipts and requests; it cannot move funds.</li>
-<li>The key is stored in a keyfile with mode <code>0600</code>, readable only by the user that runs the helper.</li>
-<li>Revoking the machine in the Mac app (Fleet) cuts it off: its credentials stop working and it gets no more jobs.</li>
-<li>If the machine is lost or compromised, revoke it from the Mac first, then delete the keyfile.</li>
+<li>Each machine has its own node key in a <code>0600</code> keyfile. It signs receipts and requests; it cannot move funds.</li>
+<li>On a full node, the operator wallet is encrypted at rest and decrypted only for a send or a link, then wiped from memory. The agent budget key is a <code>0600</code> keyfile holding only what you moved into it.</li>
+<li>Revoking a helper on its master (Fleet, or <code>fleet revoke</code>) cuts it off: its credentials stop working and it gets no more jobs.</li>
+<li>If a machine is lost or compromised, revoke it from its master (for a helper), move funds out with the recovery phrase on another machine (for a full node), then delete the keyfiles.</li>
 </ul>
         <p class="docs-source">This page as Markdown: <a href="/compute/helper.md">helper.md</a>. Every Compute page for agents: <a href="/llms.txt">llms.txt</a>.</p>
       </article>

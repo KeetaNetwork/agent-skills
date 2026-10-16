@@ -25,6 +25,7 @@ import {
 	type JobEnvelope,
 	type Offer,
 	type ProviderFrame,
+	type ProviderKind,
 	type Receipt,
 	type RelayFrame,
 	type SignedReceipt,
@@ -46,9 +47,9 @@ export interface ProviderDeps {
 	verify: Verifier;
 	models: ModelManager;
 	runtime: MlxRuntime | null;
-	kind: 'mac' | 'linux-helper';
+	kind: ProviderKind;
 	hardware: () => HardwareProfile | null;
-	/** Registration fields beyond the basics (mac: payTo + link proof). Null when not ready (no wallet yet). */
+	/** Registration fields beyond the basics (mac, linux: payTo + link proof). Null when not ready (no wallet yet). */
 	registration: () => Record<string, unknown> | null;
 	log: Log;
 	onJob: (job: JobSummary) => void;
@@ -72,7 +73,8 @@ export class Provider {
 	/** Job ids already run or running, until shortly after their tickets expire. */
 	private readonly claimed = new Map<string, number>();
 	private readonly pendingReceipts: SignedReceipt[] = [];
-	private stopped = false;
+	/* Stopped until start(), so a poke on a provider that was never started (CLI one-shot commands) stays offline. */
+	private stopped = true;
 	private reconnectDelay = 1000;
 	private earnedTotal = '0';
 
@@ -224,6 +226,34 @@ export class Provider {
 		}
 	}
 
+	/** Register (or re-register after a change) with the control plane. Null when there is no wallet yet. */
+	async register(): Promise<{ eligible: boolean } | null> {
+		const registration = this.deps.registration();
+		const hardware = this.deps.hardware();
+		if (!registration || !hardware) {
+			return null;
+		}
+		await this.ensureRegistered(registration, hardware);
+		return { eligible: this.eligible };
+	}
+
+	private async ensureRegistered(registration: Record<string, unknown>, hardware: HardwareProfile): Promise<void> {
+		const { store, control, node } = this.deps;
+		const registrationKey = canonicalJSON({ registration, network: store.state.network, name: store.state.machineName });
+		if (this.registeredKey === registrationKey) {
+			return;
+		}
+		const result = await control.post<{ eligible: boolean }>(node, '/v1/providers/register', {
+			network: store.state.network,
+			kind: this.deps.kind,
+			name: store.state.machineName,
+			hardware,
+			...registration
+		});
+		this.eligible = result.eligible;
+		this.registeredKey = registrationKey;
+	}
+
 	private async beat(): Promise<void> {
 		const { store, control, node } = this.deps;
 		const registration = this.deps.registration();
@@ -236,18 +266,7 @@ export class Provider {
 			const config = await control.get<{ coordinatorKey: string }>(null, '/v1/config');
 			this.coordinatorKey = config.coordinatorKey;
 		}
-		const registrationKey = canonicalJSON({ registration, network: store.state.network, name: store.state.machineName });
-		if (this.registeredKey !== registrationKey) {
-			const result = await control.post<{ eligible: boolean }>(node, '/v1/providers/register', {
-				network: store.state.network,
-				kind: this.deps.kind,
-				name: store.state.machineName,
-				hardware,
-				...registration
-			});
-			this.eligible = result.eligible;
-			this.registeredKey = registrationKey;
-		}
+		await this.ensureRegistered(registration, hardware);
 		const local = await this.localState();
 		const offers = await this.readyOffers(local === 'online');
 		const online = local === 'online' && offers.length > 0;

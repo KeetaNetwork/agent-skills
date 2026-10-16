@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "The Keeta Compute agent: wallet, provider loop, local buyer endpoint, model manager. Bundled into the macOS app and shipped as the Linux helper.",
+  "description": "The Keeta Compute agent: wallet, provider loop, local buyer endpoint, model manager. Bundled into the macOS app and shipped as the Linux CLI (full node or helper).",
   "bin": {
     "keeta-compute-agent": "src/main.ts"
   },

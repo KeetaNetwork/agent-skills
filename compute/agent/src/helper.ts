@@ -1,8 +1,10 @@
 /**
- * Linux helper satellites (plan §5.7): a headless provider that pairs with a
- * Mac by code, serves models from a local OpenAI-compatible server (vLLM,
- * llama.cpp, SGLang), and pays the Mac operator's wallet. Its node key lives
- * in a 0600 file and never holds funds.
+ * Linux helper satellites (plan §5.7): a headless provider that pairs by code
+ * with a master (a Mac, or a Linux node with its own wallet; see cli.ts),
+ * serves models from a local OpenAI-compatible server (vLLM, llama.cpp,
+ * SGLang), and pays the master operator's wallet. Its node key lives in a
+ * 0600 file and never holds funds. A machine that should keep its own
+ * earnings runs the full CLI (`keeta-compute-agent init`) instead.
  */
 
 import { hostname } from 'node:os';
@@ -58,8 +60,8 @@ export async function pairHelper(
 		codeHash: await pairingCodeHash(code),
 		descriptor: { ...hardware, name }
 	});
-	io.out(`Paired with code. On your Mac, confirm this check string matches: ${claim.checkString}`);
-	io.out('Waiting for approval on the Mac...');
+	io.out(`Paired with code. On the master (your Mac or Linux node), confirm this check string matches: ${claim.checkString}`);
+	io.out('Waiting for approval on the master...');
 	const sleep = io.sleep ?? defaultSleep;
 	for (;;) {
 		const pairing = await control.get<PairingRecord>(node, `/v1/pairing/${encodeURIComponent(claim.pairingId)}`);

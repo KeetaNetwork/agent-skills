@@ -50,7 +50,7 @@
           <a href="/compute/app">macOS app</a>
           <a href="/compute/models">Models</a>
           <a href="/compute/router">API router</a>
-          <a href="/compute/helper">Linux helper</a>
+          <a href="/compute/helper">Linux</a>
           <a href="/compute/protocol" aria-current="page">Protocol</a>
         </nav>
       </aside>
@@ -63,8 +63,8 @@
 <table>
 <thead><tr><th>Key</th><th>Held by</th><th>Used for</th></tr></thead>
 <tbody>
-<tr><td>Node key</td><td>Each Mac or Linux helper</td><td class="wrap">Signs requests to the network and the receipts for its jobs. Cannot move funds.</td></tr>
-<tr><td>Payout address (<code>payTo</code>)</td><td>The operator's wallet (passkey on the Mac)</td><td class="wrap">Receives every payment for the operator's machines, including paired Linux helpers</td></tr>
+<tr><td>Node key</td><td>Each Mac, Linux node or Linux helper</td><td class="wrap">Signs requests to the network and the receipts for its jobs. Cannot move funds.</td></tr>
+<tr><td>Payout address (<code>payTo</code>)</td><td>The operator's wallet (passkey on the Mac, an encrypted wallet file on a Linux node)</td><td class="wrap">Receives every payment for the operator's machines, including paired Linux helpers</td></tr>
 <tr><td>Buyer key</td><td>The paying account</td><td class="wrap">Pays providers; is what provider allowlists list</td></tr>
 </tbody>
 </table>

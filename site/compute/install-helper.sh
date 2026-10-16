@@ -1,5 +1,6 @@
 #!/bin/sh
-# Installs keeta-compute-agent, the Keeta Compute Linux helper.
+# Installs keeta-compute-agent, Keeta Compute for Linux (a full node with its
+# own wallet, or a helper paired with another node).
 #
 #   curl -fsSL https://keeta.ai/compute/install-helper.sh | sh
 #
@@ -28,7 +29,7 @@ fail() {
 	exit 1
 }
 
-[ "$(uname -s)" = "Linux" ] || fail "the helper runs on Linux; on a Mac, install the Keeta Compute app instead"
+[ "$(uname -s)" = "Linux" ] || fail "this installs the Linux agent; on a Mac, install the Keeta Compute app instead"
 
 case "$(uname -m)" in
 	x86_64 | amd64) arch="x64" ;;
@@ -52,7 +53,7 @@ if [ -n "${KEETA_COMPUTE_VERSION:-}" ]; then
 else
 	version="$VERSION"
 	if [ "$arch" = "x64" ]; then expected="$SHA256_X64"; else expected="$SHA256_ARM64"; fi
-	[ -n "$version" ] && [ -n "$expected" ] || fail "no helper release has been published yet"
+	[ -n "$version" ] && [ -n "$expected" ] || fail "no Linux release has been published yet"
 fi
 base="https://github.com/$REPO/releases/download/$version"
 asset="$NAME-linux-$arch"
@@ -85,12 +86,15 @@ esac
 
 cat <<NEXT
 
-Next:
-  1. In the Mac app, open Fleet and choose Add a Linux machine.
-  2. Run: $NAME helper pair <CODE>
-  3. Register a model served by a local OpenAI-compatible server:
-     $NAME helper add-model --id <catalog id> --url http://127.0.0.1:8080/v1 --served-name <name> --weights <path>
-  4. Run: $NAME helper run
+Next, as a full node with its own wallet:
+  1. Run: $NAME init
+  2. Register a model served by a local OpenAI-compatible server:
+     $NAME models add --id <catalog id> --url http://127.0.0.1:8080/v1 --served-name <name> --weights <path>
+  3. Run: $NAME provide --on, then $NAME run
+
+Or as a helper paid to another node: $NAME helper pair <CODE> (code from the
+Mac app's Fleet or \`$NAME pair\` on a Linux node), then helper add-model and
+helper run.
 
 Guide: https://keeta.ai/compute/helper
 NEXT

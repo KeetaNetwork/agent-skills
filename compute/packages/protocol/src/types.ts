@@ -33,7 +33,8 @@ export interface Offer {
 	contextLength: number;
 }
 
-export type ProviderKind = 'mac' | 'linux-helper';
+/** 'mac' and 'linux' pay their own operator; a 'linux-helper' pays the master that paired it. */
+export type ProviderKind = 'mac' | 'linux' | 'linux-helper';
 
 export interface ProviderRecord {
 	/** The node's Keeta public key: its identity and the key that signs receipts. */
@@ -41,7 +42,7 @@ export interface ProviderRecord {
 	/** Account every payment for this node settles to (the operator's published key). */
 	payTo: string;
 	kind: ProviderKind;
-	/** For Linux helpers, the macOS master that paired them. */
+	/** For Linux helpers, the master (a Mac or a Linux node with its own wallet) that paired them. */
 	masterNodeKey?: string;
 	name: string;
 	network: NetworkName;

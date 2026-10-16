@@ -2,30 +2,60 @@
 /**
  * keeta-compute-agent
  *
- *   app --data-dir DIR           JSON-RPC over stdin/stdout for the macOS app
- *   helper pair CODE [--control URL] [--name NAME] [--data-dir DIR]
- *   helper add-model --id ID --url URL --served-name NAME --weights DIR
- *                    [--price-in USDC] [--price-out USDC] [--context N]
- *   helper run [--data-dir DIR]
- *   helper status [--data-dir DIR]
- *   version
+ * The macOS app runs `app` and drives the agent over JSON-RPC. On Linux the
+ * same agent is a full node from the command line (cli.ts): its own
+ * encrypted operator wallet, provider loop, local buyer endpoint, models and
+ * helper fleet. `helper ...` keeps the satellite mode: a provider paired with
+ * a Mac or a Linux node that pays that node's operator.
+ *
+ * Every command takes --data-dir DIR (default $KEETA_COMPUTE_HOME or
+ * ~/.keeta-compute). The wallet passphrase comes from
+ * $KEETA_COMPUTE_PASSPHRASE or a hidden prompt on the terminal.
  */
 
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 import { AGENT_VERSION, AgentApp } from './app.ts';
+import * as cli from './cli.ts';
 import { addHelperModel, helperStatus, pairHelper, runHelper } from './helper.ts';
 import { RpcPeer } from './rpc/peer.ts';
 import type { Log } from './runtime/mlx.ts';
 
-const USAGE = `usage:
-  keeta-compute-agent app --data-dir DIR
-  keeta-compute-agent helper pair CODE [--control URL] [--name NAME]
-  keeta-compute-agent helper add-model --id ID --url URL --served-name NAME --weights DIR [--price-in USDC] [--price-out USDC] [--context N]
-  keeta-compute-agent helper run
-  keeta-compute-agent helper status
-  keeta-compute-agent version`;
+const USAGE = `usage: keeta-compute-agent COMMAND [--data-dir DIR]
+
+Linux node (own wallet, provides and buys):
+  init [--network test|main] [--control URL] [--relay URL] [--name NAME] [--restore]
+  status [--json]
+  config [--network test|main] [--control URL] [--relay URL] [--name NAME]
+  wallet                                   balances and addresses
+  wallet send TO AMOUNT [--asset usdc|kta] [--memo TEXT]
+  wallet fund-budget AMOUNT [--asset usdc|kta]
+  wallet drain-budget AMOUNT [--asset usdc|kta]
+  wallet test-funds
+  models list
+  models add --id ID --url URL --served-name NAME --weights DIR [--price-in USDC] [--price-out USDC] [--context N] [--name NAME]
+  models offer ID [--on|--off] [--price-in USDC] [--price-out USDC] [--access public|allowlist|default] [--allow KEY,...]
+  models remove ID
+  provide [--on|--off] [--max-jobs N] [--access public|allowlist] [--allow KEY,...]
+  buy [--per-request-max USDC] [--daily-max USDC]
+  token [--rotate]
+  pair
+  fleet list | approve PAIRING_ID | reject PAIRING_ID | revoke NODE_KEY
+  run
+
+Linux helper (paired satellite, pays its master's operator):
+  helper pair CODE [--control URL] [--name NAME]
+  helper add-model --id ID --url URL --served-name NAME --weights DIR [--price-in USDC] [--price-out USDC] [--context N]
+  helper run
+  helper status
+
+macOS app:
+  app
+
+  version
+
+The passphrase is read from KEETA_COMPUTE_PASSPHRASE or asked for on the terminal.`;
 
 function defaultDataDir(): string {
 	return process.env.KEETA_COMPUTE_HOME ?? join(homedir(), '.keeta-compute');
@@ -82,7 +112,7 @@ async function runHelperCommand(argv: string[]): Promise<void> {
 		case 'pair': {
 			const code = positionals[0];
 			if (!code) {
-				throw new Error('pair needs the code shown on your Mac');
+				throw new Error('pair needs the code shown on your Mac or Linux node');
 			}
 			await pairHelper({ dataDir, code, ...(values.control ? { controlUrl: values.control } : {}), ...(values.name ? { name: values.name } : {}) }, io);
 			return;
@@ -127,6 +157,271 @@ async function runHelperCommand(argv: string[]): Promise<void> {
 	}
 }
 
+/* ------------------------------------------------------------ terminal */
+
+/** Read one line from the terminal without echoing it. */
+function readHidden(prompt: string): Promise<string> {
+	const stdin = process.stdin;
+	if (!stdin.isTTY) {
+		return Promise.reject(new Error('no terminal to ask for the passphrase on; set KEETA_COMPUTE_PASSPHRASE'));
+	}
+	process.stderr.write(prompt);
+	return new Promise((resolve, reject) => {
+		let value = '';
+		stdin.setRawMode(true);
+		stdin.resume();
+		stdin.setEncoding('utf8');
+		const done = (error?: Error) => {
+			stdin.setRawMode(false);
+			stdin.pause();
+			stdin.off('data', onData);
+			process.stderr.write('\n');
+			if (error) {
+				reject(error);
+			} else {
+				resolve(value);
+			}
+		};
+		const onData = (chunk: string) => {
+			for (const char of chunk) {
+				if (char === '\r' || char === '\n' || char === '\u0004') {
+					done();
+					return;
+				}
+				if (char === '\u0003') {
+					done(new Error('cancelled'));
+					return;
+				}
+				if (char === '\u007f' || char === '\b') {
+					value = value.slice(0, -1);
+				} else {
+					value += char;
+				}
+			}
+		};
+		stdin.on('data', onData);
+	});
+}
+
+/** Read one line from stdin, for a recovery phrase piped in. */
+async function readLine(): Promise<string> {
+	let text = '';
+	process.stdin.setEncoding('utf8');
+	for await (const chunk of process.stdin) {
+		text += chunk as string;
+		if (text.includes('\n')) {
+			break;
+		}
+	}
+	return text.split('\n')[0]!;
+}
+
+async function askPassphrase(confirm: boolean): Promise<string> {
+	const fromEnv = process.env.KEETA_COMPUTE_PASSPHRASE;
+	if (fromEnv) {
+		return fromEnv;
+	}
+	const first = await readHidden(confirm ? 'New wallet passphrase: ' : 'Wallet passphrase: ');
+	if (confirm && (await readHidden('Repeat the passphrase: ')) !== first) {
+		throw new Error('the passphrases do not match');
+	}
+	return first;
+}
+
+async function askYesNo(question: string): Promise<boolean> {
+	process.stderr.write(`${question} [y/N] `);
+	const answer = await readLine();
+	return /^y(es)?$/i.test(answer.trim());
+}
+
+function terminalIO(): cli.CliIO {
+	return {
+		out: (line) => process.stdout.write(`${line}\n`),
+		log: stderrLog,
+		passphrase: askPassphrase,
+		recoveryPhrase: () => (process.stdin.isTTY ? readHidden('Recovery phrase (24 words): ') : readLine()),
+		...(process.stdin.isTTY ? { confirm: askYesNo } : {})
+	};
+}
+
+function waitForSignal(stop: () => void): Promise<never> {
+	for (const signal of ['SIGTERM', 'SIGINT'] as const) {
+		process.on(signal, () => {
+			stop();
+			process.exit(0);
+		});
+	}
+	return new Promise(() => undefined);
+}
+
+/* ----------------------------------------------------------- Linux node */
+
+async function runNodeCommand(command: string, argv: string[]): Promise<void> {
+	const { values, positionals } = parseArgs({
+		args: argv,
+		allowPositionals: true,
+		options: {
+			'data-dir': { type: 'string' },
+			network: { type: 'string' },
+			control: { type: 'string' },
+			relay: { type: 'string' },
+			name: { type: 'string' },
+			restore: { type: 'boolean' },
+			json: { type: 'boolean' },
+			asset: { type: 'string' },
+			memo: { type: 'string' },
+			id: { type: 'string' },
+			url: { type: 'string' },
+			'served-name': { type: 'string' },
+			weights: { type: 'string' },
+			'price-in': { type: 'string' },
+			'price-out': { type: 'string' },
+			context: { type: 'string' },
+			on: { type: 'boolean' },
+			off: { type: 'boolean' },
+			access: { type: 'string' },
+			allow: { type: 'string' },
+			'max-jobs': { type: 'string' },
+			'per-request-max': { type: 'string' },
+			'daily-max': { type: 'string' },
+			rotate: { type: 'boolean' }
+		}
+	});
+	const dataDir = values['data-dir'] ?? defaultDataDir();
+	const io = terminalIO();
+	const [sub, ...args] = positionals;
+	if (values.on && values.off) {
+		throw new Error('pass --on or --off, not both');
+	}
+	const enabled = values.on ? true : values.off ? false : undefined;
+	const configArgs = {
+		dataDir,
+		...(values.network ? { network: values.network } : {}),
+		...(values.control ? { controlUrl: values.control } : {}),
+		...(values.relay ? { relayUrl: values.relay } : {}),
+		...(values.name ? { name: values.name } : {})
+	};
+	switch (command) {
+		case 'init':
+			await cli.init({ ...configArgs, ...(values.restore ? { restore: true } : {}) }, io);
+			return;
+		case 'config':
+			await cli.config(configArgs, io);
+			return;
+		case 'status':
+			await cli.status({ dataDir, ...(values.json ? { json: true } : {}) }, io);
+			return;
+		case 'wallet': {
+			const asset = values.asset ? { asset: values.asset } : {};
+			switch (sub) {
+				case undefined:
+				case 'show':
+					await cli.walletShow({ dataDir }, io);
+					return;
+				case 'send':
+					if (!args[0] || !args[1]) {
+						throw new Error('wallet send needs TO and AMOUNT');
+					}
+					await cli.walletSend({ dataDir, to: args[0], amount: args[1], ...asset, ...(values.memo ? { memo: values.memo } : {}) }, io);
+					return;
+				case 'fund-budget':
+					await cli.walletFundBudget({ dataDir, amount: args[0] ?? '', ...asset }, io);
+					return;
+				case 'drain-budget':
+					await cli.walletDrainBudget({ dataDir, amount: args[0] ?? '', ...asset }, io);
+					return;
+				case 'test-funds':
+					await cli.walletTestFunds({ dataDir }, io);
+					return;
+			}
+			break;
+		}
+		case 'models':
+			switch (sub) {
+				case undefined:
+				case 'list':
+					cli.modelsList({ dataDir }, io);
+					return;
+				case 'add':
+					if (!values.id || !values.url || !values['served-name'] || !values.weights) {
+						throw new Error('models add needs --id, --url, --served-name and --weights');
+					}
+					await addHelperModel(
+						{
+							dataDir,
+							id: values.id,
+							url: values.url,
+							servedName: values['served-name'],
+							weights: values.weights,
+							...(values['price-in'] ? { priceIn: values['price-in'] } : {}),
+							...(values['price-out'] ? { priceOut: values['price-out'] } : {}),
+							...(values.context ? { context: Number(values.context) } : {}),
+							...(values.name ? { name: values.name } : {})
+						},
+						io
+					);
+					return;
+				case 'offer':
+					if (!args[0]) {
+						throw new Error('models offer needs the model id');
+					}
+					await cli.modelsOffer(
+						{
+							dataDir,
+							modelId: args[0],
+							...(enabled !== undefined ? { offered: enabled } : {}),
+							...(values['price-in'] ? { priceIn: values['price-in'] } : {}),
+							...(values['price-out'] ? { priceOut: values['price-out'] } : {}),
+							...(values.access ? { access: values.access } : {}),
+							...(values.allow ? { allow: values.allow } : {})
+						},
+						io
+					);
+					return;
+				case 'remove':
+					if (!args[0]) {
+						throw new Error('models remove needs the model id');
+					}
+					await cli.modelsRemove({ dataDir, modelId: args[0] }, io);
+					return;
+			}
+			break;
+		case 'provide':
+			await cli.provide(
+				{
+					dataDir,
+					...(enabled !== undefined ? { enabled } : {}),
+					...(values['max-jobs'] ? { maxJobs: values['max-jobs'] } : {}),
+					...(values.access ? { access: values.access } : {}),
+					...(values.allow ? { allow: values.allow } : {})
+				},
+				io
+			);
+			return;
+		case 'buy':
+			await cli.buy({ dataDir, ...(values['per-request-max'] ? { perRequestMax: values['per-request-max'] } : {}), ...(values['daily-max'] ? { dailyMax: values['daily-max'] } : {}) }, io);
+			return;
+		case 'token':
+			await cli.token({ dataDir, ...(values.rotate ? { rotate: true } : {}) }, io);
+			return;
+		case 'pair':
+			await cli.pair({ dataDir }, io);
+			return;
+		case 'fleet':
+			await cli.fleet({ dataDir, action: sub ?? 'list', ...(args[0] ? { target: args[0] } : {}) }, io);
+			return;
+		case 'run': {
+			const app = await cli.run({ dataDir }, io);
+			io.out('Running. Press Ctrl-C to stop.');
+			await waitForSignal(() => app.shutdown());
+			return;
+		}
+	}
+	throw new Error(USAGE);
+}
+
+const NODE_COMMANDS = new Set(['init', 'config', 'status', 'wallet', 'models', 'provide', 'buy', 'token', 'pair', 'fleet', 'run']);
+
 async function main(argv: string[]): Promise<void> {
 	const [command, ...rest] = argv;
 	switch (command) {
@@ -143,8 +438,13 @@ async function main(argv: string[]): Promise<void> {
 			process.stdout.write(`${AGENT_VERSION}\n`);
 			return;
 		default:
+			if (command && NODE_COMMANDS.has(command)) {
+				await runNodeCommand(command, rest);
+				/* One-shot commands may leave a balance read in flight; do not wait for it. */
+				process.exit(0);
+			}
 			process.stderr.write(`${USAGE}\n`);
-			process.exit(command ? 2 : 0);
+			process.exit(command && command !== 'help' && command !== '--help' ? 2 : 0);
 	}
 }
 

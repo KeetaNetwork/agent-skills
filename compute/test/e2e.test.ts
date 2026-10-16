@@ -1,10 +1,12 @@
 /**
  * End to end, in one process, with no network: the control plane (memory
  * store), a Node emulation of the relay that reuses the Worker's checks, two
- * agents (a Mac provider and a Mac buyer), a paired Linux helper, a fake
- * OpenAI-compatible model server and a fake ledger. Every signature is real:
- * the Mac node keys are P-256 keys emulating the Secure Enclave, the operator
- * comes from passkey PRF entropy, and the buyer pays from its budget key.
+ * agents (a Mac provider and a Mac buyer), a paired Linux helper, a Linux CLI
+ * node with its own wallet, a fake OpenAI-compatible model server and a fake
+ * ledger. Every signature is real: the Mac node keys are P-256 keys emulating
+ * the Secure Enclave, the Mac operator comes from passkey PRF entropy, the
+ * Linux operator from its encrypted wallet file, and buyers pay from their
+ * budget keys.
  */
 
 import { test } from 'node:test';
@@ -20,6 +22,7 @@ import { Account } from '@keeta-compute/protocol/keeta';
 import { startServer } from '../services/control/src/server.ts';
 import { checkEnvelope, checkProviderToken } from '../services/relay/src/relay.ts';
 import { AgentApp } from '../agent/src/app.ts';
+import * as cli from '../agent/src/cli.ts';
 import { addHelperModel, pairHelper, runHelper } from '../agent/src/helper.ts';
 import type { Balances, Ledger } from '../agent/src/ledger.ts';
 import type { ModelManager } from '../agent/src/models/manager.ts';
@@ -246,6 +249,7 @@ class FakeSocket extends EventTarget {
 type Handlers = Record<string, (params: unknown) => Promise<any>>;
 
 const mac64: HardwareProfile = { os: 'macos', osVersion: '15.4', chip: 'Apple M4 Max', memoryBytes: 64 * GB, freeDiskBytes: 500 * GB };
+const linux128: HardwareProfile = { os: 'linux', osVersion: 'Ubuntu 24.04', chip: 'NVIDIA H100', memoryBytes: 128 * GB, freeDiskBytes: 2000 * GB };
 
 function macAgent(dataDir: string, ledger: Ledger) {
 	const enclaveKey = p256.utils.randomPrivateKey();
@@ -450,4 +454,68 @@ test('a buyer runs a job on a Mac provider and a paired Linux helper, and pays e
 	assert.equal(paidSecond.nodeKey, helperKey);
 	assert.equal(ledger.sends.find((s) => s.reference === second.jobId)!.to, operator, 'helpers pay the Mac operator');
 	assert.equal((await control.store.getProvider(helperKey))!.stats.earned, '3');
+
+	/* Linux CLI node: its own wallet and operator, registered as kind 'linux'. */
+	const linuxDir = tmp('linux');
+	const out: string[] = [];
+	const io: cli.CliIO = {
+		out: (line) => out.push(line),
+		log: () => undefined,
+		passphrase: async () => 'linux node passphrase',
+		recoveryPhrase: async () => {
+			throw new Error('not restoring');
+		},
+		app: {
+			ledgerFor: () => ledger,
+			WebSocketImpl: FakeSocket as unknown as typeof WebSocket,
+			buyerPort: 0,
+			hardware: linux128,
+			localConditions: async () => ({ onBattery: false, idleSeconds: 1e9 })
+		}
+	};
+	const { operator: linuxOperator, nodeKey: linuxKey } = await cli.init({ dataDir: linuxDir, network: 'test', controlUrl: control.url, relayUrl: relay.url, name: 'h100' }, io);
+	assert.notEqual(linuxOperator, operator, 'the Linux node has its own operator');
+	assert.ok(out.some((line) => line.split(/\s+/).filter((w) => /^\d+\.$/.test(w)).length === 6), 'the recovery phrase is shown once at creation');
+	const registeredLinux = await control.store.getProvider(linuxKey);
+	assert.equal(registeredLinux?.kind, 'linux', 'init registers without going online');
+	assert.equal(registeredLinux?.payTo, linuxOperator);
+	assert.equal(registeredLinux?.status, 'paused');
+
+	await addHelperModel({ dataDir: linuxDir, id: MODEL, url: modelUrl, servedName: 'fake', weights: weightsDir, priceIn: '0.10', priceOut: '0.40' }, { out: () => undefined });
+	await cli.provide({ dataDir: linuxDir, enabled: true }, io);
+	const linuxNode = await cli.run({ dataDir: linuxDir }, io);
+	cleanups.push(() => linuxNode.shutdown());
+	await until('the Linux node to come online', async () => relay.sockets.has(linuxKey) && (await control.store.getProvider(linuxKey))?.status === 'online');
+
+	await buyer.rpc['buyer.setPolicy']!({ allowedProviders: [linuxKey] });
+	const third = await complete();
+	assert.equal(third.body.choices[0]!.message.content, 'Hello from Keeta');
+	const paidThird = await until('the Linux job to be paid', async () => {
+		const job = await control.store.getJob(third.jobId);
+		return job?.status === 'paid' ? job : null;
+	});
+	assert.equal(paidThird.nodeKey, linuxKey);
+	assert.equal(paidThird.payTo, linuxOperator);
+	assert.equal(ledger.sends.find((s) => s.reference === third.jobId)!.to, linuxOperator, 'the Linux node is paid to its own operator');
+
+	/* The Linux node buys too, through its own local endpoint and budget key. */
+	const linuxBuyer = linuxNode.state().buyer!;
+	const linuxSpend = linuxNode.state().wallet?.spend ?? (await linuxNode.refreshWallet()).spend;
+	const bought = await fetch(`${linuxBuyer.endpoint}/chat/completions`, {
+		method: 'POST',
+		headers: { authorization: `Bearer ${linuxBuyer.token}`, 'content-type': 'application/json' },
+		body: JSON.stringify({ model: MODEL, messages: [{ role: 'user', content: 'Say hello' }], max_tokens: 64 })
+	});
+	assert.equal(bought.status, 200);
+	const boughtJob = bought.headers.get('x-keeta-job')!;
+	await until('the Linux node to pay for its job', async () => (await control.store.getJob(boughtJob))?.status === 'paid');
+	assert.equal(ledger.sends.find((s) => s.reference === boughtJob)!.from, linuxSpend);
+
+	/* Wallet commands use the encrypted wallet; a wrong passphrase moves nothing. */
+	const sendsBefore = ledger.sends.length;
+	await cli.walletFundBudget({ dataDir: linuxDir, amount: '1.5' }, io);
+	const funded = ledger.sends.at(-1)!;
+	assert.deepEqual([funded.from, funded.to, funded.amount, funded.asset], [linuxOperator, linuxSpend, 1_500_000n, 'usdc']);
+	await assert.rejects(cli.walletSend({ dataDir: linuxDir, to: operator, amount: '1' }, { ...io, passphrase: async () => 'not the passphrase' }), /wrong passphrase/);
+	assert.equal(ledger.sends.length, sendsBefore + 1);
 });

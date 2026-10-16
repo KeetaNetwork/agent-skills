@@ -148,16 +148,17 @@ export class ControlService {
 	async registerProvider(nodeKey: string, body: Record<string, unknown>) {
 		const network = this.assertNetwork(body.network);
 		const kind = body.kind as ProviderKind;
-		if (kind !== 'mac' && kind !== 'linux-helper') {
-			throw new ValidationError('kind must be mac or linux-helper');
+		if (kind !== 'mac' && kind !== 'linux' && kind !== 'linux-helper') {
+			throw new ValidationError('kind must be mac, linux or linux-helper');
 		}
 		const hardware = assertHardware(body.hardware);
-		const name = typeof body.name === 'string' ? body.name.slice(0, 80) : 'Mac';
+		const name = typeof body.name === 'string' ? body.name.slice(0, 80) : kind === 'mac' ? 'Mac' : 'Linux';
 		const existing = await this.store.getProvider(nodeKey);
 
 		let payTo: string;
 		let masterNodeKey: string | undefined;
-		if (kind === 'mac') {
+		if (kind === 'mac' || kind === 'linux') {
+			/* Full nodes (the macOS app, the Linux CLI) pay their own operator, proven by its signature. */
 			payTo = assertKeetaAddress(body.payTo, 'payTo');
 			const link = body.link as { issuedAt?: number; signature?: string } | undefined;
 			if (!link || typeof link.issuedAt !== 'number' || typeof link.signature !== 'string') {
@@ -170,7 +171,7 @@ export class ControlService {
 		} else {
 			/* Helpers register only through an approved pairing (see approvePairing). */
 			if (!existing || existing.kind !== 'linux-helper' || !existing.masterNodeKey) {
-				throw new ForbiddenError('Linux helpers are registered by pairing with a Mac');
+				throw new ForbiddenError('Linux helpers are registered by pairing with a Mac or a Linux node that has its own wallet');
 			}
 			payTo = existing.payTo;
 			masterNodeKey = existing.masterNodeKey;
@@ -229,7 +230,7 @@ export class ControlService {
 				status: eligible ? status : 'paused',
 				offers: pinned,
 				offeredModels: [...new Set(pinned.map((o) => o.modelId))],
-				/* A helper's access is its master Mac's; the scheduler reads it from there. */
+				/* A helper's access is its master's; the scheduler reads it from there. */
 				...(access && current.kind !== 'linux-helper' ? { access } : {}),
 				load: { active, capacity },
 				lastHeartbeat: now
@@ -328,7 +329,7 @@ export class ControlService {
 		const live = (await this.store.listLiveProviders(args.network, now - PROVIDER_STALE_MS, args.modelId)).filter(
 			(provider) => provider.status === 'online' && provider.load.active < provider.load.capacity
 		);
-		/* Helpers serve under their master Mac's current access policy, so the Mac's allowlist covers its whole fleet. */
+		/* Helpers serve under their master's current access policy, so the master's allowlist covers its whole fleet. */
 		const masters = new Map<string, StoredProvider | null>();
 		for (const key of new Set(live.flatMap((p) => (p.kind === 'linux-helper' && p.masterNodeKey ? [p.masterNodeKey] : [])))) {
 			masters.set(key, await this.store.getProvider(key));
@@ -795,8 +796,9 @@ export class ControlService {
 			throw new ValidationError('codeHash must be a sha256 hex digest');
 		}
 		const master = await this.store.getProvider(masterNodeKey);
-		if (!master || master.kind !== 'mac') {
-			throw new ForbiddenError('only a registered Mac can pair helpers');
+		/* Any node with its own operator wallet can be a master; a helper cannot pair helpers of its own. */
+		if (!master || (master.kind !== 'mac' && master.kind !== 'linux')) {
+			throw new ForbiddenError('only a registered Mac or Linux node with its own wallet can pair helpers');
 		}
 		if (await this.store.findPairingByCodeHash(codeHash)) {
 			throw new ConflictError('code already used');
@@ -848,7 +850,7 @@ export class ControlService {
 	async approvePairing(masterNodeKey: string, pairingId: string, body: Record<string, unknown>) {
 		const pairing = await this.pairingStatus(masterNodeKey, pairingId);
 		if (pairing.masterNodeKey !== masterNodeKey) {
-			throw new ForbiddenError('only the Mac that created the code can approve it');
+			throw new ForbiddenError('only the node that created the code can approve it');
 		}
 		if (pairing.status !== 'claimed' || !pairing.claim) {
 			throw new ConflictError(`pairing is ${pairing.status}`);
@@ -888,7 +890,7 @@ export class ControlService {
 	async rejectPairing(masterNodeKey: string, pairingId: string) {
 		const pairing = await this.pairingStatus(masterNodeKey, pairingId);
 		if (pairing.masterNodeKey !== masterNodeKey) {
-			throw new ForbiddenError('only the Mac that created the code can reject it');
+			throw new ForbiddenError('only the node that created the code can reject it');
 		}
 		await this.store.updatePairing(pairingId, (current) => ({ ...current, status: 'rejected' }));
 		return { rejected: true };

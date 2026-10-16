@@ -1,6 +1,6 @@
 # Keeta Compute
 
-A marketplace for AI inference capacity, settled on Keeta. Mac owners install the app, pick models their machine can run, and sell capacity. Buyers (people, local agents, or anyone through the public x402 router) pay per token in USDC. Linux machines join a Mac's fleet as helpers and are paid to the Mac's wallet.
+A marketplace for AI inference capacity, settled on Keeta. Mac owners install the app, pick models their machine can run, and sell capacity. Buyers (people, local agents, or anyone through the public x402 router) pay per token in USDC. Linux machines run the same agent from the command line: as full nodes with their own wallet that sell and buy like the app, or as helpers in another node's fleet, paid to that node's wallet.
 
 Status: test-network preview. Nothing here touches Keeta mainnet unless an operator selects it in the app, and the control plane only enables `test` unless `NETWORKS` says otherwise.
 
@@ -9,11 +9,11 @@ Status: test-network preview. Nothing here touches Keeta mainnet unless an opera
 | Path | What it is |
 | --- | --- |
 | `packages/protocol` | Shared types, model catalog, hardware tiers, pricing, signed message formats, validation, Keeta key helpers. `catalog.json` is generated from it. |
-| `services/control` | Control plane on Firebase (Functions + Firestore): provider registry, scheduler, job tickets, receipts, payment checks, Linux helper pairing. |
+| `services/control` | Control plane on Firebase (Functions + Firestore): provider registry, scheduler, job tickets, receipts, payment checks, pairing of Linux helpers to a Mac or Linux master. |
 | `services/relay` | Cloudflare Worker: the provider relay (one Durable Object per node, outbound WebSocket from the provider) and the public OpenAI-compatible router paid with x402. |
-| `agent` | The agent daemon. Bundled into the macOS app, where it talks JSON-RPC over stdio, and shipped as the Linux helper CLI. Provider loop, local buyer endpoint, budget wallet, model manager. |
+| `agent` | The agent daemon. Bundled into the macOS app, where it talks JSON-RPC over stdio, and shipped as the Linux CLI (`src/cli.ts`: a full node with its own encrypted wallet, plus the `helper` satellite mode). Provider loop, local buyer endpoint, budget wallet, model manager. |
 | `macos` | The SwiftUI app: onboarding, passkey wallet, Secure Enclave node key, models, provide, use, fleet. |
-| `test/e2e.test.ts` | Runs control, a relay emulation, two Macs and a paired helper in one process with real signatures and a fake ledger. |
+| `test/e2e.test.ts` | Runs control, a relay emulation, two Macs, a paired helper and a Linux CLI node in one process with real signatures and a fake ledger. |
 
 Docs for users live in `site/compute/` and are published at https://keeta.ai/compute.
 
@@ -30,8 +30,8 @@ The public router (`api.keeta.ai`) prepays instead: it answers with HTTP 402 car
 
 ## Keys
 
-- **Operator wallet**: derived from a passkey PRF output (no seed phrase). Receives earnings and funds the agent budget. Never stored by the app.
-- **Node key**: P-256 in the Secure Enclave on a Mac (a 0600 file on a Linux helper). Signs receipts and requests; holds no funds.
+- **Operator wallet**: derived from 32 bytes of entropy, read as a 24-word mnemonic and used as a Keeta passphrase. On a Mac the entropy is a passkey PRF output (no seed phrase) and is never stored. On a Linux node it is random, shown once as the recovery phrase, and kept in `operator-wallet.json` (0600) encrypted with scrypt and AES-256-GCM under the user's passphrase. Receives earnings and funds the agent budget.
+- **Node key**: P-256 in the Secure Enclave on a Mac (a 0600 file on a Linux node or helper). Signs receipts and requests; holds no funds.
 - **Agent budget**: a local key holding only what the operator moved into it. Local agents spend from it, within per-request and daily limits.
 
 ## Develop
@@ -50,6 +50,14 @@ Run the control plane locally with an in-memory store:
 COORDINATOR_SEED=$(node -e "import('@keetanetwork/keetanet-client').then(k=>console.log(k.lib.Account.generateRandomSeed({asString:true})))") \
 RELAY_SECRET=dev ROUTER_SECRET=dev ALLOW_SMALL_PROVIDERS=true \
 node --import tsx services/control/src/server.ts
+```
+
+Try the Linux CLI against it with a throwaway data directory (`run` also needs a relay; see `services/relay`):
+
+```bash
+export KEETA_COMPUTE_HOME=$(mktemp -d) KEETA_COMPUTE_PASSPHRASE=dev-passphrase
+node --import tsx agent/src/main.ts init --control http://127.0.0.1:8787
+node --import tsx agent/src/main.ts status
 ```
 
 Build the agent binaries (needs [bun](https://bun.sh)):
@@ -74,5 +82,5 @@ Nothing is deployed by CI. Each step below is run by hand by someone with access
    - Set `CONTROL_URL`, `NETWORK` and `FACILITATOR_URL` in `wrangler.toml`, then `wrangler deploy`.
    - `RELAY_SECRET` must match the control plane's; it signs provider connect tokens and ticket MACs.
    - Optional fallback: set `FALLBACK_PAY_TO` (keeta.ai's receiving address) and `FALLBACK_MODELS` (JSON: model id → `{"route": "<OpenRouter slug>", "price": {...}, "contextLength": N}`) on the control plane, and `wrangler secret put OPENROUTER_API_KEY` on the worker. Price each model above its OpenRouter cost. Leaving `FALLBACK_MODELS` empty keeps the fallback off.
-3. **Linux helper**: build the binaries and attach them to a GitHub release (`keeta-compute-agent-linux-x64`, `...-linux-arm64`). Then set `VERSION`, `SHA256_X64` and `SHA256_ARM64` in `site/compute/install-helper.sh` to that tag and the binaries' SHA-256 through a reviewed PR; the installer refuses anything else, so a replaced release asset is never installed.
+3. **Linux CLI**: build the binaries and attach them to a GitHub release (`keeta-compute-agent-linux-x64`, `...-linux-arm64`). Then set `VERSION`, `SHA256_X64` and `SHA256_ARM64` in `site/compute/install-helper.sh` to that tag and the binaries' SHA-256 through a reviewed PR; the installer refuses anything else, so a replaced release asset is never installed.
 4. **macOS app**: see `macos/README.md` for signing, notarization and the associated domain needed by passkeys.

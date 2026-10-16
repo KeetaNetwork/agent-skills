@@ -1,6 +1,9 @@
 /**
- * App mode: the agent behind the macOS app. Implements the RPC contract in
- * rpc/types.ts and wires wallet, provider, buyer, models and fleet together.
+ * App mode: the agent behind the macOS app, and the engine of the Linux CLI.
+ * Implements the RPC contract in rpc/types.ts and wires wallet, provider,
+ * buyer, models and fleet together. The macOS app calls `initialize` with its
+ * Secure Enclave node key; the CLI passes a software node key in the options
+ * and calls `open`.
  */
 
 import {
@@ -15,6 +18,7 @@ import {
 	type HardwareProfile,
 	type NetworkName,
 	type PairingRecord,
+	type ProviderKind,
 	type ProviderRecord,
 	type Signer
 } from '@keeta-compute/protocol';
@@ -35,8 +39,15 @@ export const AGENT_VERSION = '0.1.0';
 
 export interface AppOptions {
 	dataDir: string;
-	signDigest: (digestHex: string) => Promise<string>;
+	/** macOS: signs with the Secure Enclave node key through the app. */
+	signDigest?: (digestHex: string) => Promise<string>;
+	/** Linux CLI: a software node key (keys.ts fileAccount) used instead of signDigest. */
+	nodeAccount?: KeetaAccount;
+	/** What this node registers as with the control plane. Defaults to 'mac'. */
+	kind?: Exclude<ProviderKind, 'linux-helper'>;
 	notify: <K extends keyof AgentNotifications>(method: K, params: AgentNotifications[K]) => void;
+	/** Where log lines go; defaults to stderr. Lines also reach `notify` as event.log. */
+	log?: Log;
 	ledgerFor?: (network: NetworkName) => Ledger;
 	fetchImpl?: typeof fetch;
 	WebSocketImpl?: typeof WebSocket;
@@ -71,7 +82,11 @@ export class AgentApp {
 	constructor(private readonly options: AppOptions) {
 		this.store = new StateStore(options.dataDir);
 		this.log = (level, message) => {
-			process.stderr.write(`[${level}] ${message}\n`);
+			if (options.log) {
+				options.log(level, message);
+			} else {
+				process.stderr.write(`[${level}] ${message}\n`);
+			}
 			if (level !== 'debug') {
 				options.notify('event.log', { level, message });
 			}
@@ -123,8 +138,34 @@ export class AgentApp {
 			s.relayUrl = params.relayUrl.replace(/\/$/, '');
 			s.machineName = params.machineName.slice(0, 80) || 'Mac';
 		});
-		this.node = enclaveNodeAccount(params.nodePublicKey, this.options.signDigest);
-		this.nodeSigner = accountSigner(this.node);
+		this.node = this.options.nodeAccount ?? enclaveNodeAccount(params.nodePublicKey, this.requireSignDigest());
+		await this.setup(true);
+		return this.state();
+	}
+
+	/**
+	 * CLI: start from the settings already in the data directory. With
+	 * `online` false nothing connects: the provider loop and the local
+	 * endpoint stay off, for one-shot commands such as wallet sends.
+	 */
+	async open(args: { online: boolean }): Promise<AgentState> {
+		if (!this.options.nodeAccount) {
+			throw new RpcError(RPC_ERRORS.invalidParams, 'open needs a software node account');
+		}
+		this.node = this.options.nodeAccount;
+		await this.setup(args.online);
+		return this.state();
+	}
+
+	private requireSignDigest() {
+		if (!this.options.signDigest) {
+			throw new RpcError(RPC_ERRORS.invalidParams, 'no node signer configured');
+		}
+		return this.options.signDigest;
+	}
+
+	private async setup(online: boolean): Promise<void> {
+		this.nodeSigner = accountSigner(this.node!);
 		this.hardware = this.options.hardware ?? (await detectHardware(this.options.dataDir));
 		if (!this.options.noRuntime && process.platform === 'darwin') {
 			this.runtime ??= new MlxRuntime(this.options.dataDir, this.log);
@@ -136,11 +177,10 @@ export class AgentApp {
 				this.emitState();
 			}
 		});
-		await this.startNetwork();
-		return this.state();
+		await this.startNetwork(online);
 	}
 
-	private async startNetwork(): Promise<void> {
+	private async startNetwork(online = true): Promise<void> {
 		this.provider?.stop();
 		await this.buyer?.close();
 		if (this.walletTimer) {
@@ -159,7 +199,7 @@ export class AgentApp {
 			verify: verifyKeetaSignature,
 			models: this.models!,
 			runtime: this.runtime,
-			kind: 'mac',
+			kind: this.options.kind ?? 'mac',
 			hardware: () => this.hardware,
 			registration: () => {
 				const link = this.store.state.operatorLinks[this.store.state.network];
@@ -183,6 +223,9 @@ export class AgentApp {
 			onJob: this.onJob,
 			...(this.options.fetchImpl ? { fetchImpl: this.options.fetchImpl } : {})
 		});
+		if (!online) {
+			return;
+		}
 		const port = this.options.buyerPort ?? LOCAL_API_PORT;
 		try {
 			await this.buyer.listen(port);
@@ -196,7 +239,7 @@ export class AgentApp {
 		this.walletTimer.unref?.();
 	}
 
-	private async checkControl(): Promise<void> {
+	async checkControl(): Promise<boolean> {
 		try {
 			await this.control!.get(null, '/v1/config');
 			this.controlReachable = true;
@@ -204,6 +247,12 @@ export class AgentApp {
 			this.controlReachable = false;
 		}
 		this.emitState();
+		return this.controlReachable;
+	}
+
+	/** Register with the control plane now (normally the provider loop does it). Null without a wallet. */
+	async register(): Promise<{ eligible: boolean } | null> {
+		return this.requireInit().provider.register();
 	}
 
 	async setNetwork(params: Params<'agent.setNetwork'>): Result<'agent.setNetwork'> {
@@ -241,7 +290,7 @@ export class AgentApp {
 		}
 		const account = await operatorAccount(entropy);
 		if (account.publicKeyString.get() !== this.linkedOperator()) {
-			throw new RpcError(RPC_ERRORS.noOperator, 'this passkey does not belong to the wallet on this Mac');
+			throw new RpcError(RPC_ERRORS.noOperator, this.options.kind === 'linux' ? 'this wallet is not the operator linked on this machine' : 'this passkey does not belong to the wallet on this Mac');
 		}
 		return account;
 	}
