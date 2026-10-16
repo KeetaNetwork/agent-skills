@@ -2,9 +2,9 @@
 
 Status: test-network preview. Nothing on these pages runs on the Keeta main network yet. Hostnames such as `api.keeta.ai` are the planned production endpoints.
 
-Keeta Compute is a market for AI inference on Apple Silicon Macs, paid per request in USDC on Keeta Network.
+Keeta Compute is a market for AI inference from spare compute (Apple Silicon Macs and Linux GPU machines), paid per request in USDC on Keeta Network.
 
-- **Providers.** A Mac sells its spare inference capacity. It runs open-weight models and is paid per completed request, in USDC, straight to its own wallet.
+- **Providers.** A Mac or a Linux machine sells its spare inference capacity. It runs open-weight models and is paid per completed request, in USDC, straight to its own wallet.
 - **Buyers on a Mac.** The same macOS app buys inference for the agents running on that Mac, through a local OpenAI-compatible endpoint, within spend limits you set.
 - **Everyone else.** A public API router at `https://api.keeta.ai/v1` serves the same models to servers and other platforms. It speaks the OpenAI chat API and charges per request with x402.
 

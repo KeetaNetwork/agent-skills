@@ -11,7 +11,7 @@ from pathlib import Path
 
 DIR = Path(sys.argv[1])
 PAGES = {
-    "index": ("Keeta Compute", "Keeta Compute: Macs sell spare AI inference capacity and are paid per request in USDC on Keeta Network."),
+    "index": ("Keeta Compute", "Keeta Compute: spare compute sells AI inference and is paid per request in USDC on Keeta Network."),
     "app": ("macOS app", "Install the Keeta Compute macOS app, provide inference capacity, get paid in USDC, and buy inference for local agents."),
     "models": ("Models", "The Keeta Compute model catalog: memory, disk, license and suggested price per million tokens in USDC."),
     "router": ("Public API router", "The Keeta Compute public API router: OpenAI-compatible endpoints paid per request with x402 on Keeta."),
