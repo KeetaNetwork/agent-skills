@@ -69,8 +69,8 @@ keeta-compute-agent buy --per-request-max 0.25 --daily-max 5
 | --- | --- |
 | `status` | Node key, operator, network, endpoints, balances, policies and models (`--json` for scripts). |
 | `wallet` | Addresses of the operator wallet and the agent budget, and their credits, stablecoins and KTA, read from the ledger. |
-| `wallet buy-credits AMOUNT [--with KUSD] [--keep]` | Buy credits with a stablecoin through keeta.ai's exchange; they go to the agent budget unless `--keep`. Needs the passphrase. |
-| `wallet sell-credits AMOUNT [--to KUSD]` | Cash out credits from the operator wallet for a stablecoin. Needs the passphrase. |
+| `wallet buy-credits AMOUNT [--with KUSD] [--keep]` | Buy credits with a stablecoin through keeta.ai's exchange; they go to the agent budget unless `--keep`. Shows the estimate and the most you'll pay (0.5% over it); a price past that swaps nothing. Needs the passphrase. |
+| `wallet sell-credits AMOUNT [--to KUSD]` | Cash out credits from the operator wallet for a stablecoin, receiving at least 0.5% under the estimate it shows. Needs the passphrase. |
 | `wallet send TO AMOUNT` | Send credits from the operator wallet (`--asset KUSD` or another stablecoin, `--asset kta` for KTA, `--memo TEXT` for a memo). Needs the passphrase. |
 | `wallet fund-budget AMOUNT` / `wallet drain-budget AMOUNT` | Move credits into or out of the agent budget. Draining needs no passphrase. |
 | `wallet test-funds` | Request test-network KTA for fees. |

@@ -42,10 +42,10 @@ final class RPCCodecTests: XCTestCase {
     }
 
     func testEncodesCreditSwaps() throws {
-        let buy = try RPCCodec.encodeRequest(id: .number(10), method: AgentRPC.WalletBuyCredits.name, params: BuyCreditsParams(entropy: "ab", amount: "5000000", with: "KUSD"))
-        XCTAssertEqual(string(buy), #"{"id":10,"jsonrpc":"2.0","method":"wallet.buyCredits","params":{"amount":"5000000","entropy":"ab","with":"KUSD"}}"# + "\n")
-        let sell = try RPCCodec.encodeRequest(id: .number(11), method: AgentRPC.WalletSellCredits.name, params: SellCreditsParams(entropy: "ab", amount: "1000000", to: "KEUR"))
-        XCTAssertEqual(string(sell), #"{"id":11,"jsonrpc":"2.0","method":"wallet.sellCredits","params":{"amount":"1000000","entropy":"ab","to":"KEUR"}}"# + "\n")
+        let buy = try RPCCodec.encodeRequest(id: .number(10), method: AgentRPC.WalletBuyCredits.name, params: BuyCreditsParams(entropy: "ab", amount: "5000000", with: "KUSD", maxPay: "5025000"))
+        XCTAssertEqual(string(buy), #"{"id":10,"jsonrpc":"2.0","method":"wallet.buyCredits","params":{"amount":"5000000","entropy":"ab","maxPay":"5025000","with":"KUSD"}}"# + "\n")
+        let sell = try RPCCodec.encodeRequest(id: .number(11), method: AgentRPC.WalletSellCredits.name, params: SellCreditsParams(entropy: "ab", amount: "1000000", to: "KEUR", minReceive: "995000"))
+        XCTAssertEqual(string(sell), #"{"id":11,"jsonrpc":"2.0","method":"wallet.sellCredits","params":{"amount":"1000000","entropy":"ab","minReceive":"995000","to":"KEUR"}}"# + "\n")
         let quote = try RPCCodec.encodeRequest(id: .number(12), method: AgentRPC.WalletCreditQuote.name, params: CreditQuoteParams(side: .buy, amount: "1000000", stablecoin: "KJPY"))
         XCTAssertEqual(string(quote), #"{"id":12,"jsonrpc":"2.0","method":"wallet.creditQuote","params":{"amount":"1000000","side":"buy","stablecoin":"KJPY"}}"# + "\n")
         let fund = try RPCCodec.encodeRequest(id: .number(13), method: AgentRPC.WalletFundBudget.name, params: FundBudgetParams(entropy: "ab", amount: "1", asset: .credits))
@@ -56,6 +56,11 @@ final class RPCCodecTests: XCTestCase {
         let result = try RPCCodec.decodeResult(AgentRPC.WalletBuyCredits.Result.self, from: body)
         XCTAssertEqual(result.credits, "5000000")
         XCTAssertEqual(result.budgetBlockHash, "CD")
+
+        let quoted = line(#"{"jsonrpc":"2.0","id":12,"result":{"amount":"1000000","limit":"1005000"}}"#)
+        guard case let .success(_, quoteBody) = try RPCCodec.parse(quoted) else { return XCTFail("expected success") }
+        let creditQuote = try RPCCodec.decodeResult(AgentRPC.WalletCreditQuote.Result.self, from: quoteBody)
+        XCTAssertEqual(creditQuote.limit, "1005000", "the limit the operator confirms comes with the estimate")
 
         let settled = line(#"{"jsonrpc":"2.0","id":14,"result":{"reported":1,"settled":2}}"#)
         guard case let .success(_, settleBody) = try RPCCodec.parse(settled) else { return XCTFail("expected success") }

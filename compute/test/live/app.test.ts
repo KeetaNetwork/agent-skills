@@ -26,7 +26,7 @@ import { MODEL, startStack, type Stack } from './stack.ts';
 announceSkip();
 
 const COMPUTE = fileURLToPath(new URL('../..', import.meta.url));
-const CLI = join(COMPUTE, 'agent', 'src', 'main.ts');
+const CLI = join(COMPUTE, 'packages', 'cli', 'src', 'main.ts');
 const LINUX_PASSPHRASE = 'live linux node passphrase';
 
 const scratch = new Scratch();
@@ -172,7 +172,8 @@ test("the Mac provider's earnings are its credits on the ledger, and it cashes t
 	funder.track(await operatorAccount(entropy));
 	await funder.fundKta([operator]);
 	const usdcBefore = await funder.balance(operator, 'usdc');
-	const sold = await stack.mac.rpc['wallet.sellCredits']!({ entropy, amount: earned.toString(), to: USDC.symbol });
+	const priced = await stack.mac.rpc['wallet.creditQuote']!({ side: 'sell', amount: earned.toString(), stablecoin: USDC.symbol });
+	const sold = await stack.mac.rpc['wallet.sellCredits']!({ entropy, amount: earned.toString(), to: USDC.symbol, minReceive: priced.limit });
 	assert.equal(sold.received, earned.toString(), 'credits cash out to USDC one to one');
 	await until('the USDC to reach the operator', async () => (await funder.balance(operator, 'usdc')) >= usdcBefore + earned, 60_000, 1_000);
 	assert.equal(await funder.balance(operator, token), 0n);

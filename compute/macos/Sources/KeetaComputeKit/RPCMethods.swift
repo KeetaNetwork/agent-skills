@@ -122,13 +122,16 @@ public struct BuyCreditsParams: Codable, Sendable, Equatable {
     public var amount: String
     /// Stablecoin symbol to pay with, e.g. "KUSD".
     public var with: String
+    /// The most stablecoin (base units) the operator confirmed paying: `wallet.creditQuote`'s `limit`.
+    public var maxPay: String
     /// Move the credits into the agent budget (the agent's default) or keep them in the operator account.
     public var toBudget: Bool?
 
-    public init(entropy: String, amount: String, with: String, toBudget: Bool? = nil) {
+    public init(entropy: String, amount: String, with: String, maxPay: String, toBudget: Bool? = nil) {
         self.entropy = entropy
         self.amount = amount
         self.with = with
+        self.maxPay = maxPay
         self.toBudget = toBudget
     }
 }
@@ -140,11 +143,14 @@ public struct SellCreditsParams: Codable, Sendable, Equatable {
     public var amount: String
     /// Stablecoin symbol to receive, e.g. "KUSD".
     public var to: String
+    /// The least stablecoin (base units) the operator confirmed receiving: `wallet.creditQuote`'s `limit`.
+    public var minReceive: String
 
-    public init(entropy: String, amount: String, to: String) {
+    public init(entropy: String, amount: String, to: String, minReceive: String) {
         self.entropy = entropy
         self.amount = amount
         self.to = to
+        self.minReceive = minReceive
     }
 }
 
@@ -231,8 +237,10 @@ public struct BlockHashResult: Codable, Sendable, Equatable {
 }
 
 public struct CreditQuoteResult: Codable, Sendable, Equatable {
-    /// Stablecoin base units.
+    /// Stablecoin base units: the estimate.
     public var amount: String
+    /// Stablecoin base units the operator confirms with it: the most a buy may cost, or the least a sale may bring.
+    public var limit: String
 }
 
 public struct BuyCreditsResult: Codable, Sendable, Equatable {

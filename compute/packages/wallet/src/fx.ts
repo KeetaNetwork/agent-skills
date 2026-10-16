@@ -23,6 +23,51 @@ export interface SwapRequest {
 	amount: bigint;
 }
 
+/**
+ * A swap the operator confirmed: the request, and the furthest the price may
+ * move from the estimate they saw. For 'to' (buying credits) `limit` is the
+ * most of `from` to pay; for 'from' (selling them) the least of `to` to
+ * receive. A quote outside it is refused before anything is signed.
+ */
+export interface SwapOrder extends SwapRequest {
+	limit: bigint;
+}
+
+/** How far a swap may move from its estimate before it is refused: 0.5%. */
+export const SWAP_TOLERANCE_BPS = 50n;
+
+/** The limit to confirm with an estimate: at most 0.5% more to pay when buying, at least 0.5% less to receive when selling. */
+export function swapLimit(request: Pick<SwapRequest, 'affinity'>, estimate: bigint): bigint {
+	return request.affinity === 'to' ? (estimate * (10_000n + SWAP_TOLERANCE_BPS) + 9_999n) / 10_000n : (estimate * (10_000n - SWAP_TOLERANCE_BPS)) / 10_000n;
+}
+
+export class SwapLimitError extends Error {}
+
+/**
+ * The best quote within the order's limit: the cheapest when buying an exact
+ * amount, the one paying most when selling. Throws when even the best is
+ * outside the limit the operator confirmed.
+ */
+export function pickQuote<T extends { quote: { convertedAmount: bigint } }>(quotes: T[], order: SwapOrder): T {
+	const buying = order.affinity === 'to';
+	const best = [...quotes].sort((a, b) => {
+		const diff = buying ? a.quote.convertedAmount - b.quote.convertedAmount : b.quote.convertedAmount - a.quote.convertedAmount;
+		return diff > 0n ? 1 : diff < 0n ? -1 : 0;
+	})[0];
+	if (!best) {
+		throw new Error('the keeta.ai FX provider does not trade this pair');
+	}
+	const amount = best.quote.convertedAmount;
+	if (buying ? amount > order.limit : amount < order.limit) {
+		throw new SwapLimitError(
+			buying
+				? `the keeta.ai FX provider now asks ${amount} base units, more than the ${order.limit} you confirmed; nothing was swapped. Check the new price and try again.`
+				: `the keeta.ai FX provider now pays ${amount} base units, less than the ${order.limit} you confirmed; nothing was swapped. Check the new price and try again.`
+		);
+	}
+	return best;
+}
+
 export interface SwapResult {
 	exchangeId: string;
 	/** The swap's block on the ledger. */
@@ -35,8 +80,8 @@ export interface SwapResult {
 export interface CreditExchange {
 	/** The other side of a swap: what `from` costs for an exact `to`, or what an exact `from` brings in `to`. */
 	estimate(request: SwapRequest): Promise<bigint>;
-	/** Swap on `account`'s own balances; resolves once the exchange completed on the ledger. */
-	swap(account: Account, request: SwapRequest): Promise<SwapResult>;
+	/** Swap on `account`'s own balances within the order's limit; resolves once the exchange completed on the ledger. */
+	swap(account: Account, order: SwapOrder): Promise<SwapResult>;
 }
 
 const STATUS_POLL_MS = 1_000;
@@ -75,15 +120,11 @@ export class AnchorCreditExchange implements CreditExchange {
 		}
 	}
 
-	async swap(account: Account, request: SwapRequest): Promise<SwapResult> {
-		const { user, exchange } = this.client(account, request.fx);
+	async swap(account: Account, order: SwapOrder): Promise<SwapResult> {
+		const { user, exchange } = this.client(account, order.fx);
 		try {
-			const quotes = await exchange.getQuotes(this.conversion(request));
-			/* Buying an exact amount: the cheapest quote; selling an exact amount: the one paying most. */
-			const quote = (quotes ?? []).sort((a, b) => (request.affinity === 'to' ? Number(a.quote.convertedAmount - b.quote.convertedAmount) : Number(b.quote.convertedAmount - a.quote.convertedAmount)))[0];
-			if (!quote) {
-				throw new Error('the keeta.ai FX provider does not trade this pair');
-			}
+			/* The signed quote is what executes, so it is checked against the confirmed limit before anything is signed. */
+			const quote = pickQuote(await exchange.getQuotes(this.conversion(order)) ?? [], order);
 			const created = await quote.createExchange();
 			const deadline = Date.now() + STATUS_TIMEOUT_MS;
 			for (let status = created.exchange; ; status = await created.getExchangeStatus()) {
@@ -92,8 +133,8 @@ export class AnchorCreditExchange implements CreditExchange {
 					return {
 						exchangeId: status.exchangeID,
 						blockHash: status.blockhash,
-						sent: request.affinity === 'to' ? other : request.amount,
-						received: request.affinity === 'to' ? request.amount : other
+						sent: order.affinity === 'to' ? other : order.amount,
+						received: order.affinity === 'to' ? order.amount : other
 					};
 				}
 				if (status.status === 'failed') {

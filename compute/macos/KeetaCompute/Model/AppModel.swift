@@ -374,26 +374,26 @@ final class AppModel: ObservableObject {
         await refreshWallet()
     }
 
-    /// What `amount` credits cost in a stablecoin ('buy'), or bring when cashed out ('sell'), without swapping.
-    func creditQuote(side: CreditSide, amount: String, stablecoin: String) async throws -> String {
-        try await client.call(AgentRPC.WalletCreditQuote.self, CreditQuoteParams(side: side, amount: amount, stablecoin: stablecoin), timeout: .seconds(30)).amount
+    /// What `amount` credits cost in a stablecoin ('buy'), or bring when cashed out ('sell'), without swapping, and the limit to confirm with it.
+    func creditQuote(side: CreditSide, amount: String, stablecoin: String) async throws -> CreditQuoteResult {
+        try await client.call(AgentRPC.WalletCreditQuote.self, CreditQuoteParams(side: side, amount: amount, stablecoin: stablecoin), timeout: .seconds(30))
     }
 
-    /// Buy credits with a stablecoin from the operator account through the FX service; they go to the agent budget unless `toBudget` is false.
-    func buyCredits(amount: String, with stablecoin: String, toBudget: Bool) async throws -> BuyCreditsResult {
+    /// Buy credits with a stablecoin from the operator account through the FX service, paying at most `maxPay`; they go to the agent budget unless `toBudget` is false.
+    func buyCredits(amount: String, with stablecoin: String, maxPay: String, toBudget: Bool) async throws -> BuyCreditsResult {
         let client = self.client
         let result = try await passkeys.withEntropy { entropy in
-            try await client.call(AgentRPC.WalletBuyCredits.self, BuyCreditsParams(entropy: entropy, amount: amount, with: stablecoin, toBudget: toBudget), timeout: .seconds(120))
+            try await client.call(AgentRPC.WalletBuyCredits.self, BuyCreditsParams(entropy: entropy, amount: amount, with: stablecoin, maxPay: maxPay, toBudget: toBudget), timeout: .seconds(120))
         }
         await refreshWallet()
         return result
     }
 
-    /// Cash out credits from the operator account for a stablecoin.
-    func sellCredits(amount: String, to stablecoin: String) async throws -> SellCreditsResult {
+    /// Cash out credits from the operator account for a stablecoin, receiving at least `minReceive`.
+    func sellCredits(amount: String, to stablecoin: String, minReceive: String) async throws -> SellCreditsResult {
         let client = self.client
         let result = try await passkeys.withEntropy { entropy in
-            try await client.call(AgentRPC.WalletSellCredits.self, SellCreditsParams(entropy: entropy, amount: amount, to: stablecoin), timeout: .seconds(120))
+            try await client.call(AgentRPC.WalletSellCredits.self, SellCreditsParams(entropy: entropy, amount: amount, to: stablecoin, minReceive: minReceive), timeout: .seconds(120))
         }
         await refreshWallet()
         return result

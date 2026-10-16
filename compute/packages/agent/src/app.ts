@@ -41,6 +41,7 @@ import {
 	resolveStablecoin,
 	resolveWalletAsset,
 	spendAccount,
+	swapLimit,
 	type Balances,
 	type CreditExchange,
 	type KeetaAccount,
@@ -426,6 +427,14 @@ export class AgentApp {
 		return BigInt(amount);
 	}
 
+	/** The swap limit the operator confirmed (wallet.creditQuote's `limit`); a swap never runs without one. */
+	private assertLimit(limit: unknown, name: string): bigint {
+		if (typeof limit !== 'string' || !/^\d{1,30}$/.test(limit)) {
+			throw new RpcError(RPC_ERRORS.invalidParams, `${name} must be the limit the operator confirmed, in stablecoin base units (wallet.creditQuote returns it)`);
+		}
+		return BigInt(limit);
+	}
+
 	async send(params: Params<'wallet.send'>): Result<'wallet.send'> {
 		const { ledger } = this.requireInit();
 		const amount = this.assertAmount(params.amount);
@@ -484,17 +493,19 @@ export class AgentApp {
 	async creditQuote(params: Params<'wallet.creditQuote'>): Result<'wallet.creditQuote'> {
 		this.requireInit();
 		const { request } = await this.swapFor(params.side === 'sell' ? 'sell' : 'buy', this.assertAmount(params.amount), params.stablecoin);
-		return { amount: (await this.exchange().estimate(request)).toString() };
+		const estimate = await this.exchange().estimate(request);
+		return { amount: estimate.toString(), limit: swapLimit(request, estimate).toString() };
 	}
 
 	/** Buy exactly `amount` credits with a stablecoin from the operator account, then fund the agent budget with them. */
 	async buyCredits(params: Params<'wallet.buyCredits'>): Result<'wallet.buyCredits'> {
 		const { ledger, spend } = this.requireInit();
 		const amount = this.assertAmount(params.amount);
+		const limit = this.assertLimit(params.maxPay, 'maxPay');
 		const { request } = await this.swapFor('buy', amount, params.with);
 		const operator = await this.operatorFromEntropy(params.entropy);
 		const key = operator.publicKeyString.get();
-		const swap = await this.queue.run(key, () => this.exchange().swap(operator, request));
+		const swap = await this.queue.run(key, () => this.exchange().swap(operator, { ...request, limit }));
 		let budgetBlockHash: string | undefined;
 		if (params.toBudget !== false) {
 			budgetBlockHash = await this.queue.run(key, () => ledger.send(operator, spend.publicKeyString.get(), amount, request.to, 'agent-budget'));
@@ -507,9 +518,10 @@ export class AgentApp {
 	async sellCredits(params: Params<'wallet.sellCredits'>): Result<'wallet.sellCredits'> {
 		this.requireInit();
 		const amount = this.assertAmount(params.amount);
+		const limit = this.assertLimit(params.minReceive, 'minReceive');
 		const { request } = await this.swapFor('sell', amount, params.to);
 		const operator = await this.operatorFromEntropy(params.entropy);
-		const swap = await this.queue.run(operator.publicKeyString.get(), () => this.exchange().swap(operator, request));
+		const swap = await this.queue.run(operator.publicKeyString.get(), () => this.exchange().swap(operator, { ...request, limit }));
 		void this.refreshWallet().catch(() => undefined);
 		return { exchangeId: swap.exchangeId, blockHash: swap.blockHash, credits: swap.sent.toString(), received: swap.received.toString() };
 	}

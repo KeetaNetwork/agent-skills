@@ -232,7 +232,12 @@ test('a buyer buys credits with a stablecoin, escrows each job at ticket time, a
 	const ledger = new FakeLedger();
 	ledger.mint(FX, CREDITS, 1_000n * ONE_CREDIT);
 	const fxConfig = fxConfigFromEnv({ FX_SEED, TEST_CREDIT_TOKEN: CREDITS });
-	const exchange = ledger.exchange(FX, (request) => quoteAmount(fxConfig, request));
+	/* `fxDrift` moves the FX price against the user (basis points), as a provider's price can move between the estimate and the swap. */
+	let fxDrift = 0n;
+	const exchange = ledger.exchange(FX, (request) => {
+		const price = quoteAmount(fxConfig, request);
+		return request.affinity === 'to' ? (price * (10_000n + fxDrift)) / 10_000n : (price * (10_000n - fxDrift)) / 10_000n;
+	});
 	/* KUSD once it is pinned for the test network, USDC until then: both trade one to one with credits. */
 	const stablecoin = availableAssets('test')[0]!;
 
@@ -293,7 +298,15 @@ test('a buyer buys credits with a stablecoin, escrows each job at ticket time, a
 	ledger.mint(buyerOperator, stablecoin.address, 5_000_000n);
 	const priced = await buyer.rpc['wallet.creditQuote']!({ side: 'buy', amount: '2000000', stablecoin: stablecoin.symbol });
 	assert.equal(priced.amount, '2000000', `${stablecoin.symbol} buys credits one to one`);
-	const bought = await buyer.rpc['wallet.buyCredits']!({ entropy: buyerEntropy, amount: '2000000', with: stablecoin.symbol });
+	assert.equal(priced.limit, '2010000', 'the operator confirms paying at most 0.5% over the estimate');
+	const buy = { entropy: buyerEntropy, amount: '2000000', with: stablecoin.symbol };
+	await assert.rejects(buyer.rpc['wallet.buyCredits']!(buy as never), /maxPay/, 'a swap never runs without a confirmed limit');
+	/* The price moves 1% after the operator confirmed: the swap is refused and nothing moves. */
+	fxDrift = 100n;
+	await assert.rejects(buyer.rpc['wallet.buyCredits']!({ ...buy, maxPay: priced.limit }), /you confirmed; nothing was swapped/);
+	assert.equal(ledger.balanceOf(buyerOperator, stablecoin.address), 5_000_000n, 'nothing was swapped');
+	fxDrift = 0n;
+	const bought = await buyer.rpc['wallet.buyCredits']!({ ...buy, maxPay: priced.limit });
 	assert.deepEqual([bought.paid, bought.credits, Boolean(bought.budgetBlockHash)], ['2000000', '2000000', true]);
 	assert.equal(ledger.balanceOf(buyerOperator, stablecoin.address), 3_000_000n);
 	assert.equal(ledger.balanceOf(FX, stablecoin.address), 2_000_000n, 'the FX account took the stablecoin');
@@ -439,7 +452,13 @@ test('a buyer buys credits with a stablecoin, escrows each job at ticket time, a
 	assert.equal(earned, 6n + hungUpBill);
 	await provider.rpc['wallet.refresh']!({});
 	assert.equal((await provider.rpc['provider.status']!({})).earnedTotal, earned.toString());
-	const cashedOut = await provider.rpc['wallet.sellCredits']!({ entropy: providerEntropy, amount: earned.toString(), to: stablecoin.symbol });
+	const sale = await provider.rpc['wallet.creditQuote']!({ side: 'sell', amount: earned.toString(), stablecoin: stablecoin.symbol });
+	assert.equal(sale.limit, ((earned * 9_950n) / 10_000n).toString(), 'the operator confirms receiving at least 0.5% under the estimate');
+	fxDrift = 5_000n;
+	await assert.rejects(provider.rpc['wallet.sellCredits']!({ entropy: providerEntropy, amount: earned.toString(), to: stablecoin.symbol, minReceive: sale.limit }), /you confirmed; nothing was swapped/);
+	assert.equal(ledger.balanceOf(operator, CREDITS), earned, 'a sale below the confirmed limit moves nothing');
+	fxDrift = 0n;
+	const cashedOut = await provider.rpc['wallet.sellCredits']!({ entropy: providerEntropy, amount: earned.toString(), to: stablecoin.symbol, minReceive: sale.limit });
 	assert.equal(cashedOut.received, earned.toString(), `credits cash out to ${stablecoin.symbol} one to one`);
 	assert.equal(ledger.balanceOf(operator, CREDITS), 0n);
 	assert.equal(ledger.balanceOf(operator, stablecoin.address), earned);

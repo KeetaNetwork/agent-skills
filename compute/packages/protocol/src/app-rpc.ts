@@ -190,20 +190,31 @@ export interface AppToAgent {
 	/**
 	 * What a swap would cost or bring, without making it. `side` 'buy': the
 	 * stablecoin needed for `amount` credits; 'sell': the stablecoin `amount`
-	 * credits bring.
+	 * credits bring. `limit` is what the operator confirms along with it: the
+	 * most a buy may cost, or the least a sale may bring (the estimate moved
+	 * by 0.5%). Show both, and pass `limit` to buyCredits or sellCredits.
 	 */
-	'wallet.creditQuote': { params: { side: 'buy' | 'sell'; amount: string; stablecoin: string }; result: { amount: string } };
+	'wallet.creditQuote': { params: { side: 'buy' | 'sell'; amount: string; stablecoin: string }; result: { amount: string; limit: string } };
 	/**
 	 * Buy exactly `amount` credits with a stablecoin from the operator account
-	 * through the keeta.ai FX provider, then (unless `toBudget` is false) move
-	 * them into the agent budget, where requests are paid from.
+	 * through the keeta.ai FX provider, paying at most `maxPay` (the confirmed
+	 * creditQuote `limit`), then (unless `toBudget` is false) move them into
+	 * the agent budget, where requests are paid from. A quote above `maxPay`
+	 * is refused before anything is signed.
 	 */
 	'wallet.buyCredits': {
-		params: { entropy: string; amount: string; with: string; toBudget?: boolean };
+		params: { entropy: string; amount: string; with: string; maxPay: string; toBudget?: boolean };
 		result: { exchangeId: string; blockHash: string; paid: string; credits: string; budgetBlockHash?: string };
 	};
-	/** Cash out: sell exactly `amount` credits from the operator account for a stablecoin. */
-	'wallet.sellCredits': { params: { entropy: string; amount: string; to: string }; result: { exchangeId: string; blockHash: string; credits: string; received: string } };
+	/**
+	 * Cash out: sell exactly `amount` credits from the operator account for a
+	 * stablecoin, receiving at least `minReceive` (the confirmed creditQuote
+	 * `limit`). A quote below it is refused before anything is signed.
+	 */
+	'wallet.sellCredits': {
+		params: { entropy: string; amount: string; to: string; minReceive: string };
+		result: { exchangeId: string; blockHash: string; credits: string; received: string };
+	};
 	'wallet.requestTestFunds': { params: Record<string, never>; result: { requested: boolean; message: string } };
 
 	'hardware.profile': { params: Record<string, never>; result: { hardware: HardwareProfile; tier: HardwareTier; canProvide: boolean; reason?: string } };

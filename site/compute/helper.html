@@ -105,8 +105,8 @@ keeta-compute-agent buy --per-request-max 0.25 --daily-max 5</code></pre>
 <tbody>
 <tr><td><code>status</code></td><td class="wrap">Node key, operator, network, endpoints, balances, policies and models (<code>--json</code> for scripts).</td></tr>
 <tr><td><code>wallet</code></td><td class="wrap">Addresses of the operator wallet and the agent budget, and their credits, stablecoins and KTA, read from the ledger.</td></tr>
-<tr><td><code>wallet buy-credits AMOUNT [--with KUSD] [--keep]</code></td><td class="wrap">Buy credits with a stablecoin through keeta.ai's exchange; they go to the agent budget unless <code>--keep</code>. Needs the passphrase.</td></tr>
-<tr><td><code>wallet sell-credits AMOUNT [--to KUSD]</code></td><td class="wrap">Cash out credits from the operator wallet for a stablecoin. Needs the passphrase.</td></tr>
+<tr><td><code>wallet buy-credits AMOUNT [--with KUSD] [--keep]</code></td><td class="wrap">Buy credits with a stablecoin through keeta.ai's exchange; they go to the agent budget unless <code>--keep</code>. Shows the estimate and the most you'll pay (0.5% over it); a price past that swaps nothing. Needs the passphrase.</td></tr>
+<tr><td><code>wallet sell-credits AMOUNT [--to KUSD]</code></td><td class="wrap">Cash out credits from the operator wallet for a stablecoin, receiving at least 0.5% under the estimate it shows. Needs the passphrase.</td></tr>
 <tr><td><code>wallet send TO AMOUNT</code></td><td class="wrap">Send credits from the operator wallet (<code>--asset KUSD</code> or another stablecoin, <code>--asset kta</code> for KTA, <code>--memo TEXT</code> for a memo). Needs the passphrase.</td></tr>
 <tr><td><code>wallet fund-budget AMOUNT</code> / <code>wallet drain-budget AMOUNT</code></td><td class="wrap">Move credits into or out of the agent budget. Draining needs no passphrase.</td></tr>
 <tr><td><code>wallet test-funds</code></td><td class="wrap">Request test-network KTA for fees.</td></tr>

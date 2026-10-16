@@ -26,8 +26,8 @@ One app does both sides of the market: it sells your Mac's spare capacity, and i
 
 Keeta Compute Credits pay for requests and are what providers earn. A credit is a token on the Keeta ledger worth one US dollar, with 6 decimals.
 
-- **Buy credits.** In Wallet, choose Buy credits, pick a stablecoin (KUSD by default; also KEUR, KJPY, KMXN, KCAD, KAED, KGBP and USDC) and the number of credits. The app shows what they cost, then swaps them through keeta.ai's exchange once you confirm with Touch ID. KUSD and USDC buy credits one to one; the other stablecoins at the exchange's rate. New credits go to the Agent budget unless you turn that off.
-- **Cash out.** Choose Cash out to sell credits from your balance for any of those stablecoins.
+- **Buy credits.** In Wallet, choose Buy credits, pick a stablecoin (KUSD by default; also KEUR, KJPY, KMXN, KCAD, KAED, KGBP and USDC) and the number of credits. The app shows what they cost and the most you'll pay (0.5% over the estimate), then swaps them through keeta.ai's exchange once you confirm with Touch ID. If the exchange's price has moved past that, nothing is swapped and you see the new price. KUSD and USDC buy credits one to one; the other stablecoins at the exchange's rate. New credits go to the Agent budget unless you turn that off.
+- **Cash out.** Choose Cash out to sell credits from your balance for any of those stablecoins. The app shows what you'll receive and the least you'll accept (0.5% under the estimate).
 - **Balances.** The app reads every balance from the Keeta ledger: your credits, the Agent budget's credits, the stablecoins you hold, and a little KTA for network fees.
 - **Send and receive.** You can send credits to, and receive credits or stablecoins from, any Keeta address.
 

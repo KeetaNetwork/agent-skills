@@ -11,7 +11,7 @@
 
 import { findAsset, randomId, toHex, type NetworkName } from '@keeta-compute/protocol';
 import { Account } from '@keeta-compute/protocol/keeta';
-import type { Balances, CreditExchange, Ledger } from '@keeta-compute/wallet';
+import { pickQuote, type Balances, type CreditExchange, type Ledger } from '@keeta-compute/wallet';
 import type { PaymentVerifier, SettlementLedger } from '../../services/control/src/service.ts';
 
 export interface LedgerSend {
@@ -151,7 +151,8 @@ export class FakeLedger implements Ledger {
 		return {
 			estimate: async (request) => quote(request),
 			swap: async (account, request) => {
-				const other = quote(request);
+				/* The same check AnchorCreditExchange makes on the signed quote: nothing moves past the confirmed limit. */
+				const other = pickQuote([{ quote: { convertedAmount: quote(request) } }], request).quote.convertedAmount;
 				const [sent, received] = request.affinity === 'to' ? [other, request.amount] : [request.amount, other];
 				const user = account.publicKeyString.get();
 				const blockHash = this.publish([

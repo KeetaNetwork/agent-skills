@@ -38,7 +38,8 @@ export async function fundAppBuyer(funder: Funder, stack: Stack, buyer: AppBuyer
 	await funder.fundUsdc(buyer.operator, BUYER_CREDITS);
 	/* The operator signs the swap and the move to the budget; the budget signs each escrow. */
 	await funder.fundKta([buyer.operator, buyer.spend]);
-	const bought = await buyer.rpc['wallet.buyCredits']!({ entropy: buyer.entropy, amount: BUYER_CREDITS.toString(), with: USDC.symbol });
+	const priced = await buyer.rpc['wallet.creditQuote']!({ side: 'buy', amount: BUYER_CREDITS.toString(), stablecoin: USDC.symbol });
+	const bought = await buyer.rpc['wallet.buyCredits']!({ entropy: buyer.entropy, amount: BUYER_CREDITS.toString(), with: USDC.symbol, maxPay: priced.limit });
 	assert.equal(bought.credits, BUYER_CREDITS.toString());
 	assert.equal(bought.paid, BUYER_CREDITS.toString(), 'USDC buys credits one to one');
 	assert.ok(bought.budgetBlockHash, 'the credits moved into the agent budget');

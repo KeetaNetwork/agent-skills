@@ -446,7 +446,7 @@ struct CreditSwapSheet: View {
     @State var symbol = ""
     @State var amountText = ""
     @State var toBudget = true
-    @State var quote: String?
+    @State var quote: CreditQuoteResult?
     @State var quoting = false
     @State var working = false
     @State var error: String?
@@ -471,7 +471,7 @@ struct CreditSwapSheet: View {
     private var shortfall: String? {
         switch side {
         case .buy:
-            if let quote, BaseUnits.compare(quote, heldCoin) > 0 { return "That costs more \(coin?.symbol ?? "") than you have." }
+            if let quote, BaseUnits.compare(quote.amount, heldCoin) > 0 { return "That costs more \(coin?.symbol ?? "") than you have." }
         case .sell:
             if let parsed, BaseUnits.compare(parsed, heldCredits) > 0 { return "That's more than your credits (\(model.money.string(heldCredits)))." }
         }
@@ -510,9 +510,9 @@ struct CreditSwapSheet: View {
                 Group {
                     switch side {
                     case .buy:
-                        Text(quote.map { "You pay \(coinMoney.string($0)). You have \(coinMoney.string(heldCoin))." } ?? "You have \(coinMoney.string(heldCoin)).")
+                        Text(quote.map { "You pay about \(coinMoney.string($0.amount)), at most \(coinMoney.string($0.limit)). You have \(coinMoney.string(heldCoin))." } ?? "You have \(coinMoney.string(heldCoin)).")
                     case .sell:
-                        Text(quote.map { "You receive \(coinMoney.string($0)). You have \(model.money.string(heldCredits))." } ?? "You have \(model.money.string(heldCredits)).")
+                        Text(quote.map { "You receive about \(coinMoney.string($0.amount)), at least \(coinMoney.string($0.limit)). You have \(model.money.string(heldCredits))." } ?? "You have \(model.money.string(heldCredits)).")
                     }
                 }
                 .font(.caption)
@@ -561,7 +561,7 @@ struct CreditSwapSheet: View {
     }
 
     private func submit() {
-        guard let amount = parsed, let coin, let coinMoney else { return }
+        guard let amount = parsed, let coin, let coinMoney, let quote else { return }
         working = true
         error = nil
         Task {
@@ -569,10 +569,10 @@ struct CreditSwapSheet: View {
             do {
                 switch side {
                 case .buy:
-                    let result = try await model.buyCredits(amount: amount, with: coin.symbol, toBudget: toBudget)
+                    let result = try await model.buyCredits(amount: amount, with: coin.symbol, maxPay: quote.limit, toBudget: toBudget)
                     model.flash("Bought \(model.money.string(result.credits)) for \(coinMoney.string(result.paid))\(result.budgetBlockHash == nil ? "" : " into the agent budget").")
                 case .sell:
-                    let result = try await model.sellCredits(amount: amount, to: coin.symbol)
+                    let result = try await model.sellCredits(amount: amount, to: coin.symbol, minReceive: quote.limit)
                     model.flash("Cashed out \(model.money.string(result.credits)) for \(coinMoney.string(result.received)).")
                 }
                 dismiss()
