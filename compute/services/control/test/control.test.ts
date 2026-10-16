@@ -364,6 +364,9 @@ test('router quotes fall back to OpenRouter only when no provider is free', asyn
 	assert.equal(ticket.relayMac, await ticketMac('relay-secret', ticket.ticket), 'the MAC covers the ticket');
 	assert.equal((await quote('llama-3.2-3b')).status, 503, 'models without a fallback route still get 503');
 
+	const claim = () => h.call(null, 'POST', `/v1/router/jobs/${job.jobId}/claim`, {}, router);
+	assert.deepEqual((await claim()).body, { fallback: { via: 'openrouter', model: 'qwen/qwen3-8b' } });
+	assert.equal((await claim()).status, 409, 'a quote starts one upstream run');
 	const settled = await h.call(null, 'POST', `/v1/router/jobs/${job.jobId}/settled`, { payer: newSigner().publicKey, transaction: 'tx' }, router);
 	assert.equal((settled.body as { status: string }).status, 'paid', 'a fallback job is complete once paid');
 

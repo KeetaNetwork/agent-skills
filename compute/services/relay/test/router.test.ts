@@ -29,6 +29,7 @@ const receipt = { receipt: { jobId: 'job_abc' }, signature: 'ff' };
 function setup(options: { runJob?: () => Promise<Response>; gateway?: Partial<PaymentGateway>; ticket?: SignedTicket; openRouter?: (body: Record<string, unknown>) => Response; fallback?: { via: 'openrouter'; model: string } } = {}) {
 	const calls: string[] = [];
 	const upstreamBodies: Array<Record<string, unknown>> = [];
+	let claims = 0;
 	const gateway: PaymentGateway = {
 		verify: async () => ({ isValid: true, payer: 'keeta_payer' }),
 		settle: async () => {
@@ -57,8 +58,12 @@ function setup(options: { runJob?: () => Promise<Response>; gateway?: Partial<Pa
 			if (url.endsWith('/v1/router/quote')) {
 				return Response.json({ job: {}, ticket: options.ticket ?? (await makeTicket()) });
 			}
-			if (url.includes('/v1/router/jobs/') && !url.endsWith('/settled')) {
-				return Response.json({ jobId: 'job_abc', ...(options.fallback ? { fallback: options.fallback } : {}) });
+			if (url.endsWith('/claim')) {
+				/* The control plane lets one claim through per fallback job. */
+				if (!options.fallback) {
+					return Response.json({ error: { message: 'not a fallback job' } }, { status: 404 });
+				}
+				return claims++ === 0 ? Response.json({ fallback: options.fallback }) : Response.json({ error: { message: 'used' } }, { status: 409 });
 			}
 			return Response.json({ ok: true });
 		}) as typeof fetch
@@ -169,8 +174,18 @@ test('provider jobs never look up a fallback route', async () => {
 	const { router, calls } = setup({ fallback: route, openRouter: () => new Response('') });
 	const response = await router.chatCompletions(new Request('http://api/v1/chat/completions', { method: 'POST', body: chatBody(), headers: { 'payment-signature': await paymentFor(router) } }));
 	assert.equal(response.status, 200);
-	assert.ok(!calls.some((c) => c.startsWith('GET http://control/v1/router/jobs/')));
+	assert.ok(!calls.some((c) => c.endsWith('/claim')));
 	assert.ok(!calls.some((c) => c.includes('openrouter')));
+});
+
+test('one fallback payment replayed in parallel starts one upstream run', async () => {
+	const text = () => new Response(`data: ${JSON.stringify(chunk('Hi', { usage: { prompt_tokens: 4, completion_tokens: 1 } }))}\n\ndata: [DONE]\n\n`, { headers: { 'content-type': 'text/event-stream' } });
+	const { router, upstreamBodies } = setup({ ticket: await houseTicket(), fallback: route, openRouter: text });
+	const header = await paymentFor(router);
+	const send = () => router.chatCompletions(new Request('http://api/v1/chat/completions', { method: 'POST', body: chatBody(), headers: { 'payment-signature': header } }));
+	const statuses = (await Promise.all([send(), send(), send()])).map((r) => r.status).sort();
+	assert.deepEqual(statuses, [200, 409, 409]);
+	assert.equal(upstreamBodies.length, 1, 'OpenRouter ran once');
 });
 
 test('a fallback that fails before text, or is not configured, is never paid', async () => {

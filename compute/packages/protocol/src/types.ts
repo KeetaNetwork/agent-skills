@@ -85,6 +85,8 @@ export interface JobRecord {
 	/** For router jobs: the account that paid through x402. */
 	routerPayer?: string;
 	fallback?: FallbackRoute;
+	/** For fallback jobs: when the router started the one upstream run this quote allows. */
+	claimedAt?: number;
 	error?: string;
 }
 

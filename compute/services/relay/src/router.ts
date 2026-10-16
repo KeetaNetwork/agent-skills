@@ -125,14 +125,21 @@ export function createRouter(deps: RouterDeps) {
 		});
 	}
 
-	/** The fallback route of a router job, from the control plane; null when it has none or cannot be read. */
-	async function fallbackRoute(jobId: string): Promise<FallbackRoute | null> {
-		const response = await control(`/v1/router/jobs/${encodeURIComponent(jobId)}`, { method: 'GET' }).catch(() => null);
+	/**
+	 * Claim a fallback job before running it upstream. The control plane lets
+	 * exactly one claim through per job, so one x402 payment replayed in
+	 * parallel cannot start more than one paid upstream run.
+	 */
+	async function claimFallback(jobId: string): Promise<FallbackRoute | 'used' | null> {
+		const response = await control(`/v1/router/jobs/${encodeURIComponent(jobId)}/claim`, { method: 'POST', body: {} }).catch(() => null);
+		if (response?.status === 409) {
+			return 'used';
+		}
 		if (!response?.ok) {
 			return null;
 		}
-		const job = (await response.json().catch(() => null)) as { fallback?: FallbackRoute } | null;
-		return job?.fallback ?? null;
+		const { fallback } = (await response.json().catch(() => ({}))) as { fallback?: FallbackRoute };
+		return fallback ?? null;
 	}
 
 	async function models(): Promise<Response> {
@@ -206,10 +213,16 @@ export function createRouter(deps: RouterDeps) {
 
 		let events: AsyncGenerator<RelayEvent>;
 		/* keeta.ai serves the job itself (node = buyer = coordinator) only on a fallback quote; its route stays server-side, off the ticket buyers see. */
-		const route = ticket.nodeKey === ticket.buyer ? await fallbackRoute(ticket.jobId) : null;
-		if (route) {
+		if (ticket.nodeKey === ticket.buyer) {
 			if (!deps.openRouter) {
 				return errorResponse(503, 'no_provider', `no provider is serving ${body.model} right now; you were not charged`, { 'retry-after': '5' });
+			}
+			const route = await claimFallback(ticket.jobId);
+			if (route === 'used') {
+				return errorResponse(409, 'quote_used', 'this quote was already used; request a new one');
+			}
+			if (!route) {
+				return errorResponse(502, 'control_unavailable', 'the job could not be started; you were not charged', { 'retry-after': '2' });
 			}
 			const upstream = await runOnOpenRouter(deps.openRouter, route.model, body, ticket.maxOutputTokens, request.signal, doFetch).catch(() => null);
 			if (!upstream?.ok || !upstream.body) {

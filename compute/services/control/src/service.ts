@@ -551,6 +551,20 @@ export class ControlService {
 		);
 	}
 
+	/** The router claims a fallback job once, before running it upstream; a second claim of the same quote is refused. */
+	async routerClaim(jobId: string) {
+		const job = await this.store.updateJob(jobId, (current) => {
+			if (current.paymentMode !== 'prepaid' || !current.fallback) {
+				throw new NotFoundError('not a fallback job');
+			}
+			if (current.status !== 'scheduled' || current.claimedAt) {
+				throw new ConflictError('this quote was already used');
+			}
+			return { ...current, claimedAt: this.now() };
+		});
+		return { fallback: job.fallback };
+	}
+
 	async routerJob(jobId: string) {
 		const job = await this.store.getJob(jobId);
 		if (!job || job.paymentMode !== 'prepaid') {
