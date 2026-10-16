@@ -53,7 +53,8 @@ export function announceSkip(): void {
 /** LIVE_MODEL_URL (+ LIVE_MODEL_NAME) points the suite at a real OpenAI-compatible server instead of the fake one. */
 export const liveModel = process.env.LIVE_MODEL_URL ? { baseUrl: process.env.LIVE_MODEL_URL.replace(/\/$/, ''), servedName: process.env.LIVE_MODEL_NAME ?? 'model' } : null;
 
-async function fundingSeed(): Promise<string | ArrayBuffer> {
+/** The funding account's seed: KEETA_TESTNET_SEED, KEETA_TESTNET_PASSPHRASE, or the public test-network seed above. */
+export async function fundingSeed(): Promise<string | ArrayBuffer> {
 	const seed = process.env.KEETA_TESTNET_SEED?.trim();
 	if (seed) {
 		if (!/^[0-9a-fA-F]{64}$/.test(seed)) {
