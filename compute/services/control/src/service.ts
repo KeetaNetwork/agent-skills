@@ -67,6 +67,13 @@ export class PaymentRequiredError extends Error {
 	readonly status = 402;
 }
 
+export interface FallbackConfig {
+	/** keeta.ai's own account; fallback payments go here, since no provider serves the job. */
+	payTo: string;
+	/** Network model id → upstream model slug, the price buyers pay, and the context it supports. */
+	models: Record<string, { route: string; price: Price; contextLength: number }>;
+}
+
 export type PaymentVerifier = (args: { network: NetworkName; blockHash: string; from: string; to: string; asset: string; minAmount: bigint; reference: string }) => Promise<'confirmed' | 'pending' | 'rejected'>;
 
 /** Reads an account's on-ledger balance of `asset`, in base units. Throws if the ledger can't be reached. */
@@ -90,6 +97,8 @@ export interface ControlConfig {
 	 */
 	balanceOf?: BalanceReader;
 	now?: () => number;
+	/** Outside API the public router uses when no provider can take a job. Off when unset. */
+	fallback?: FallbackConfig;
 	/** Testnet escape hatch so small Macs can provide during development. */
 	allowSmallProviders?: boolean;
 }
@@ -247,7 +256,8 @@ export class ControlService {
 
 	/* -------------------------------------------------------------- scheduling */
 
-	async networkModels(network: NetworkName): Promise<NetworkModel[]> {
+	/** Models with live providers; with `includeFallback`, also every model the router's fallback serves. */
+	async networkModels(network: NetworkName, includeFallback = false): Promise<NetworkModel[]> {
 		this.assertNetwork(network);
 		const providers = await this.store.listLiveProviders(network, this.now() - PROVIDER_STALE_MS);
 		const byModel = new Map<string, NetworkModel>();
@@ -272,6 +282,18 @@ export class ControlService {
 				entry.contextLength = Math.max(entry.contextLength, offer.contextLength);
 				byModel.set(offer.modelId, entry);
 			}
+		}
+		for (const [modelId, route] of Object.entries(includeFallback ? (this.config.fallback?.models ?? {}) : {})) {
+			const catalog = findCatalogModel(modelId);
+			const entry = byModel.get(modelId) ?? {
+				id: modelId,
+				name: catalog?.name ?? modelId,
+				providers: 0,
+				lowestPrice: route.price,
+				contextLength: route.contextLength,
+				...(catalog ? { license: catalog.license.name } : {})
+			};
+			byModel.set(modelId, { ...entry, fallback: { price: route.price } });
 		}
 		return [...byModel.values()].sort((a, b) => b.providers - a.providers || a.id.localeCompare(b.id));
 	}
@@ -365,28 +387,7 @@ export class ControlService {
 			status: 'scheduled',
 			createdAt: now
 		};
-		const ticket: JobTicket = {
-			v: 1,
-			jobId,
-			network: args.network,
-			nodeKey: job.nodeKey,
-			modelId: job.modelId,
-			buyer: job.buyer,
-			maxInputTokens: job.maxInputTokens,
-			maxOutputTokens: job.maxOutputTokens,
-			price: job.price,
-			asset: NETWORKS[args.network].settlementAsset.address,
-			payTo: job.payTo,
-			paymentMode: job.paymentMode,
-			...(job.prepaidAmount ? { prepaidAmount: job.prepaidAmount } : {}),
-			issuedAt: now,
-			expiresAt: now + TICKET_TTL_MS
-		};
-		const signed: SignedTicket = {
-			ticket,
-			coordinatorSig: await this.config.coordinator.sign(ticketMessage(ticket)),
-			relayMac: await ticketMac(this.config.relaySecret, ticket)
-		};
+		const signed = await this.signTicket(job);
 		if (args.budget !== undefined) {
 			/* Re-check against the buyer's open jobs atomically, so parallel requests cannot all spend the same balance. */
 			const cost = maxJobCost(job.price, job);
@@ -408,6 +409,32 @@ export class ControlService {
 			await this.store.updateProvider(chosen.provider.nodeKey, (record) => ({ ...record, load: { ...record.load, active: record.load.active + 1 } }));
 		}
 		return { job, ticket: signed, provider: chosen.provider };
+	}
+
+	private async signTicket(job: JobRecord): Promise<SignedTicket> {
+		const ticket: JobTicket = {
+			v: 1,
+			jobId: job.jobId,
+			network: job.network,
+			nodeKey: job.nodeKey,
+			modelId: job.modelId,
+			buyer: job.buyer,
+			maxInputTokens: job.maxInputTokens,
+			maxOutputTokens: job.maxOutputTokens,
+			price: job.price,
+			asset: NETWORKS[job.network].settlementAsset.address,
+			payTo: job.payTo,
+			paymentMode: job.paymentMode,
+			...(job.prepaidAmount ? { prepaidAmount: job.prepaidAmount } : {}),
+			...(job.fallback ? { fallback: job.fallback } : {}),
+			issuedAt: job.createdAt,
+			expiresAt: job.createdAt + TICKET_TTL_MS
+		};
+		return {
+			ticket,
+			coordinatorSig: await this.config.coordinator.sign(ticketMessage(ticket)),
+			relayMac: await ticketMac(this.config.relaySecret, ticket)
+		};
 	}
 
 	async createJob(buyer: string, body: Record<string, unknown>) {
@@ -455,17 +482,46 @@ export class ControlService {
 	/** Public router (x402): the buyer prepays the provider directly before the job runs. */
 	async routerQuote(body: Record<string, unknown>) {
 		const network = this.assertNetwork(body.network);
-		const result = await this.schedule({
-			network,
-			buyer: this.config.coordinator.publicKey,
-			modelId: assertModelId(body.model),
-			maxInputTokens: assertTokenCount(body.maxInputTokens, 'maxInputTokens', MAX_INPUT_TOKENS),
-			maxOutputTokens: assertTokenCount(body.maxOutputTokens, 'maxOutputTokens', 32_768),
-			...(Array.isArray(body.excludeProviders) ? { excludeProviders: body.excludeProviders.map((k, i) => assertKeetaAddress(k, `excludeProviders[${i}]`)) } : {}),
-			paymentMode: 'prepaid',
-			publicOnly: true
-		});
-		return { job: redactJob(result.job), ticket: result.ticket, relayUrl: this.config.relayUrl };
+		const modelId = assertModelId(body.model);
+		const maxInputTokens = assertTokenCount(body.maxInputTokens, 'maxInputTokens', MAX_INPUT_TOKENS);
+		const maxOutputTokens = assertTokenCount(body.maxOutputTokens, 'maxOutputTokens', 32_768);
+		try {
+			const result = await this.schedule({
+				network,
+				buyer: this.config.coordinator.publicKey,
+				modelId,
+				maxInputTokens,
+				maxOutputTokens,
+				...(Array.isArray(body.excludeProviders) ? { excludeProviders: body.excludeProviders.map((k, i) => assertKeetaAddress(k, `excludeProviders[${i}]`)) } : {}),
+				paymentMode: 'prepaid',
+				publicOnly: true
+			});
+			return { job: redactJob(result.job), ticket: result.ticket, relayUrl: this.config.relayUrl };
+		} catch (error) {
+			/* No provider can take it: serve through the fallback API when one is configured for this model. */
+			const route = this.config.fallback?.models[modelId];
+			if (!(error instanceof UnavailableError) || !route || maxInputTokens + maxOutputTokens > route.contextLength) {
+				throw error;
+			}
+			const limits = { maxInputTokens, maxOutputTokens };
+			const job: JobRecord = {
+				jobId: randomId('job', 12),
+				network,
+				buyer: this.config.coordinator.publicKey,
+				nodeKey: this.config.coordinator.publicKey,
+				payTo: this.config.fallback!.payTo,
+				modelId,
+				price: route.price,
+				...limits,
+				paymentMode: 'prepaid',
+				prepaidAmount: maxJobCost(route.price, limits).toString(),
+				fallback: { via: 'openrouter', model: route.route },
+				status: 'scheduled',
+				createdAt: this.now()
+			};
+			await this.store.putJob(job);
+			return { job: redactJob(job), ticket: await this.signTicket(job), relayUrl: this.config.relayUrl };
+		}
 	}
 
 	async routerSettled(jobId: string, body: Record<string, unknown>) {
@@ -476,7 +532,12 @@ export class ControlService {
 				if (job.paymentMode !== 'prepaid') {
 					throw new ConflictError('not a router job');
 				}
-				return { ...job, payment: { blockHash: transaction, paidAt: this.now(), verified: true }, routerPayer: payer };
+				const payment = { blockHash: transaction, paidAt: this.now(), verified: true };
+				/* A fallback job has no provider receipt to wait for: payment completes it. */
+				if (job.fallback) {
+					return { ...job, payment, routerPayer: payer, status: 'paid', completedAt: this.now(), amountDue: job.prepaidAmount ?? '0' };
+				}
+				return { ...job, payment, routerPayer: payer };
 			})
 		);
 	}

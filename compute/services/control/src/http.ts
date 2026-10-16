@@ -52,7 +52,7 @@ export function createApi(service: ControlService, deps: { store: Store; verify:
 
 	route('GET', '/v1/config', 'none', async () => service.publicConfig());
 	route('GET', '/v1/catalog', 'none', async () => ({ models: service.catalog() }));
-	route('GET', '/v1/models', 'none', async ({ req }) => ({ models: await service.networkModels(network(req)) }));
+	route('GET', '/v1/models', 'none', async ({ req }) => ({ models: await service.networkModels(network(req), req.query.get('fallback') === '1') }));
 
 	route('POST', '/v1/providers/register', 'signed', async ({ caller, body }) => service.registerProvider(caller, body));
 	route('POST', '/v1/providers/heartbeat', 'signed', async ({ caller, body }) => service.heartbeat(caller, body));

@@ -82,6 +82,7 @@ export interface JobRecord {
 	payment?: { blockHash: string; paidAt: number; verified: boolean };
 	/** For router jobs: the account that paid through x402. */
 	routerPayer?: string;
+	fallback?: FallbackRoute;
 	error?: string;
 }
 
@@ -116,6 +117,17 @@ export interface SignedReceipt {
 }
 
 /** Authorization the control plane issues for one job on one provider. */
+/**
+ * A job the public router sends to an outside API (OpenRouter) because no
+ * network provider could take it. Paid to keeta.ai's own account, not a
+ * provider, and never carries a provider receipt.
+ */
+export interface FallbackRoute {
+	via: 'openrouter';
+	/** The upstream model slug, e.g. meta-llama/llama-3.2-3b-instruct. */
+	model: string;
+}
+
 export interface JobTicket {
 	v: 1;
 	jobId: string;
@@ -130,6 +142,8 @@ export interface JobTicket {
 	payTo: string;
 	paymentMode: PaymentMode;
 	prepaidAmount?: string;
+	/** Set when the router serves this job through an outside API instead of a provider. */
+	fallback?: FallbackRoute;
 	issuedAt: number;
 	expiresAt: number;
 }
@@ -201,4 +215,6 @@ export interface NetworkModel {
 	lowestPrice: Price;
 	contextLength: number;
 	license?: string;
+	/** Present when the public router can also serve this model through its fallback; its price. */
+	fallback?: { price: Price };
 }

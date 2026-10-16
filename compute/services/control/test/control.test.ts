@@ -20,14 +20,15 @@ import {
 } from '@keeta-compute/protocol';
 import { Account, accountSigner, verifyKeetaSignature } from '@keeta-compute/protocol/keeta';
 import { createApi, type ApiRequest } from '../src/http.ts';
-import { ControlService, type BalanceReader, type PaymentVerifier } from '../src/service.ts';
+import { fallbackFromEnv } from '../src/config.ts';
+import { ControlService, type BalanceReader, type FallbackConfig, type PaymentVerifier } from '../src/service.ts';
 import { MemoryStore } from '../src/store.ts';
 
 const GB = 1024 ** 3;
 const newSigner = (): Signer => accountSigner(Account.fromSeed(Account.generateRandomSeed({ asString: true }), 0));
 const hardware = (gb: number, os: 'macos' | 'linux' = 'macos'): HardwareProfile => ({ os, osVersion: '15.4', chip: 'Apple M4 Max', memoryBytes: gb * GB, freeDiskBytes: 500 * GB });
 
-function harness(options: { verifyPayment?: PaymentVerifier; balanceOf?: BalanceReader } = {}) {
+function harness(options: { verifyPayment?: PaymentVerifier; balanceOf?: BalanceReader; fallback?: FallbackConfig } = {}) {
 	let clock = 1_800_000_000_000;
 	const store = new MemoryStore();
 	const coordinator = newSigner();
@@ -41,6 +42,7 @@ function harness(options: { verifyPayment?: PaymentVerifier; balanceOf?: Balance
 		networks: ['test'],
 		verifyPayment: options.verifyPayment ?? (async () => 'confirmed'),
 		...(options.balanceOf ? { balanceOf: options.balanceOf } : {}),
+		...(options.fallback ? { fallback: options.fallback } : {}),
 		now: () => clock
 	});
 	const handle = createApi(service, { store, verify: verifyKeetaSignature, routerSecret: 'router-secret', now: () => clock });
@@ -295,6 +297,41 @@ test('router quotes are prepaid to the provider and settle', async () => {
 		assert.equal(unpaid.status, 200, 'unpaid quotes do not use up the provider');
 	}
 	assert.equal((await h.call(newSigner(), 'POST', '/v1/jobs', { network: 'test', model: 'qwen3-8b', maxInputTokens: 10, maxOutputTokens: 10 })).status, 200);
+});
+
+test('router quotes fall back to OpenRouter only when no provider is free', async () => {
+	const house = newSigner();
+	const fallback = fallbackFromEnv({
+		COORDINATOR_SEED: '', RELAY_SECRET: '', ROUTER_SECRET: '',
+		FALLBACK_PAY_TO: house.publicKey,
+		FALLBACK_MODELS: JSON.stringify({ 'qwen3-8b': { route: 'qwen/qwen3-8b', price: { inputPerMillion: '200000', outputPerMillion: '800000' }, contextLength: 32768 } })
+	})!;
+	assert.throws(() => fallbackFromEnv({ COORDINATOR_SEED: '', RELAY_SECRET: '', ROUTER_SECRET: '', FALLBACK_PAY_TO: house.publicKey, FALLBACK_MODELS: '{"qwen3-8b":{"route":"x y","price":{"inputPerMillion":"1","outputPerMillion":"1"},"contextLength":4096}}' }));
+	const h = harness({ fallback });
+	const router = { 'x-router-secret': 'router-secret' };
+	const quote = (model: string) => h.call(null, 'POST', '/v1/router/quote', { network: 'test', model, maxInputTokens: 1000, maxOutputTokens: 1000 }, router);
+
+	const viaFallback = await quote('qwen3-8b');
+	assert.equal(viaFallback.status, 200, JSON.stringify(viaFallback.body));
+	const { job, ticket } = viaFallback.body as { job: { jobId: string; payTo: string; prepaidAmount: string }; ticket: { ticket: { fallback?: { via: string; model: string } }; relayMac: string } };
+	assert.deepEqual(ticket.ticket.fallback, { via: 'openrouter', model: 'qwen/qwen3-8b' });
+	assert.equal(job.payTo, house.publicKey, 'fallback payments go to the keeta.ai account');
+	assert.equal(job.prepaidAmount, '1000');
+	assert.equal(ticket.relayMac, await ticketMac('relay-secret', ticket.ticket as Parameters<typeof ticketMac>[1]), 'the MAC covers the fallback route');
+	assert.equal((await quote('llama-3.2-3b')).status, 503, 'models without a fallback route still get 503');
+
+	const settled = await h.call(null, 'POST', `/v1/router/jobs/${job.jobId}/settled`, { payer: newSigner().publicKey, transaction: 'tx' }, router);
+	assert.equal((settled.body as { status: string }).status, 'paid', 'a fallback job is complete once paid');
+
+	const models = await h.call(null, 'GET', '/v1/models?network=test&fallback=1');
+	assert.deepEqual((models.body as { models: Array<{ id: string; providers: number; fallback?: unknown }> }).models.map((m) => [m.id, m.providers, !!m.fallback]), [['qwen3-8b', 0, true]]);
+	assert.equal(((await h.call(null, 'GET', '/v1/models?network=test')).body as { models: unknown[] }).models.length, 0, 'app buyers only see network providers');
+
+	const { node, operator } = await registerMac(h);
+	await h.call(node, 'POST', '/v1/providers/heartbeat', { status: 'online', offers: [offer('qwen3-8b')], load: { active: 0, capacity: 2 } });
+	const viaProvider = await quote('qwen3-8b');
+	assert.equal((viaProvider.body as { job: { payTo: string; fallback?: unknown } }).job.payTo, operator.publicKey, 'a free provider is always preferred');
+	assert.equal((viaProvider.body as { job: { fallback?: unknown } }).job.fallback, undefined);
 });
 
 test('Linux helpers pair by code with check string and master approval', async () => {

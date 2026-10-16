@@ -25,8 +25,9 @@ function sse(...parts: Uint8Array[]): Response {
 const chunk = (content: string, extra: Record<string, unknown> = {}) => ({ id: 'c1', created: 1, choices: [{ index: 0, delta: { content }, finish_reason: null }], ...extra });
 const receipt = { receipt: { jobId: 'job_abc' }, signature: 'ff' };
 
-function setup(options: { runJob?: () => Promise<Response>; gateway?: Partial<PaymentGateway>; ticket?: SignedTicket } = {}) {
+function setup(options: { runJob?: () => Promise<Response>; gateway?: Partial<PaymentGateway>; ticket?: SignedTicket; openRouter?: (body: Record<string, unknown>) => Response } = {}) {
 	const calls: string[] = [];
+	const upstreamBodies: Array<Record<string, unknown>> = [];
 	const gateway: PaymentGateway = {
 		verify: async () => ({ isValid: true, payer: 'keeta_payer' }),
 		settle: async () => {
@@ -42,8 +43,15 @@ function setup(options: { runJob?: () => Promise<Response>; gateway?: Partial<Pa
 		relaySecret: SECRET,
 		gateway,
 		runJob: options.runJob ?? (async () => sse(sseData(chunk('Hel')), sseData(chunk('lo', { usage: { prompt_tokens: 5, completion_tokens: 2 } })), sseEvent('keeta.receipt', receipt))),
+		...(options.openRouter ? { openRouter: { apiKey: 'or-key' } } : {}),
 		fetch: (async (url: string, init?: RequestInit) => {
 			calls.push(`${init?.method ?? 'GET'} ${url}`);
+			if (url.startsWith('https://openrouter.ai/')) {
+				assert.equal((init?.headers as Record<string, string>).authorization, 'Bearer or-key');
+				const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+				upstreamBodies.push(body);
+				return options.openRouter!(body);
+			}
 			assert.equal((init?.headers as Record<string, string> | undefined)?.['x-router-secret'] ?? 'router-secret', 'router-secret');
 			if (url.endsWith('/v1/router/quote')) {
 				return Response.json({ job: {}, ticket: options.ticket ?? (await makeTicket()) });
@@ -51,7 +59,7 @@ function setup(options: { runJob?: () => Promise<Response>; gateway?: Partial<Pa
 			return Response.json({ ok: true });
 		}) as typeof fetch
 	});
-	return { router, calls };
+	return { router, calls, upstreamBodies };
 }
 
 const chatBody = (extra: Record<string, unknown> = {}) => JSON.stringify({ model: 'qwen3-8b', messages: [{ role: 'user', content: 'hi' }], max_tokens: 64, ...extra });
@@ -118,6 +126,40 @@ test('a provider is paid only after it streams text, never for empty chunks', as
 	const response = await router.chatCompletions(new Request('http://api/v1/chat/completions', { method: 'POST', body: chatBody(), headers: { 'payment-signature': header } }));
 	assert.equal(response.status, 502, 'a non-streaming answer that ends in an error is not paid');
 	assert.ok(!calls.includes('settle'));
+});
+
+test('with no provider free, a fallback quote is served through OpenRouter and marked', async () => {
+	const fallbackTicket = await makeTicket({ fallback: { via: 'openrouter', model: 'qwen/qwen3-8b' } });
+	const text = (...lines: string[]) => new Response(lines.join('\n'), { headers: { 'content-type': 'text/event-stream' } });
+	const { router, calls, upstreamBodies } = setup({
+		ticket: fallbackTicket,
+		openRouter: () => text(': OPENROUTER PROCESSING', '', `data: ${JSON.stringify({ ...chunk('Hi'), model: 'qwen/qwen3-8b' })}`, '', `data: ${JSON.stringify(chunk(' there', { usage: { prompt_tokens: 4, completion_tokens: 2 } }))}`, '', 'data: [DONE]', '')
+	});
+	const header = await paymentFor(router);
+	const response = await router.chatCompletions(new Request('http://api/v1/chat/completions', { method: 'POST', body: chatBody({ chat_template: '{{ evil }}' }), headers: { 'payment-signature': header } }));
+	assert.equal(response.status, 200);
+	assert.equal(response.headers.get('x-keeta-fallback'), 'openrouter');
+	const body = (await response.json()) as { model: string; choices: Array<{ message: { content: string } }> };
+	assert.equal(body.choices[0]!.message.content, 'Hi there');
+	assert.equal(body.model, 'qwen3-8b', 'the network model id, not the upstream slug');
+	assert.ok(calls.includes('settle'));
+	const sent = upstreamBodies[0]!;
+	assert.equal(sent.model, 'qwen/qwen3-8b');
+	assert.equal(sent.max_tokens, 64);
+	assert.equal(sent.chat_template, undefined, 'only known fields are forwarded');
+	assert.deepEqual(sent.provider, { data_collection: 'deny' });
+});
+
+test('a fallback that fails before text, or is not configured, is never paid', async () => {
+	const fallbackTicket = await makeTicket({ fallback: { via: 'openrouter', model: 'qwen/qwen3-8b' } });
+	const failing = setup({ ticket: fallbackTicket, openRouter: () => new Response(`data: ${JSON.stringify({ error: { code: 502, message: 'upstream down' } })}\n\n`) });
+	let response = await failing.router.chatCompletions(new Request('http://api/v1/chat/completions', { method: 'POST', body: chatBody(), headers: { 'payment-signature': await paymentFor(failing.router) } }));
+	assert.equal(response.status, 502);
+	assert.ok(!failing.calls.includes('settle'));
+	const off = setup({ ticket: fallbackTicket });
+	response = await off.router.chatCompletions(new Request('http://api/v1/chat/completions', { method: 'POST', body: chatBody(), headers: { 'payment-signature': await paymentFor(off.router) } }));
+	assert.equal(response.status, 503);
+	assert.ok(!off.calls.includes('settle'));
 });
 
 test('forged, expired or mismatched quotes are rejected before verification', async () => {

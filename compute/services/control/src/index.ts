@@ -21,6 +21,8 @@ const ROUTER_SECRET = defineSecret('ROUTER_SECRET');
 const RELAY_URL = defineString('RELAY_URL', { default: 'https://relay.keeta.ai' });
 const NETWORKS = defineString('NETWORKS', { default: 'test' });
 const ALLOW_SMALL_PROVIDERS = defineString('ALLOW_SMALL_PROVIDERS', { default: 'false' });
+const FALLBACK_PAY_TO = defineString('FALLBACK_PAY_TO', { default: '' });
+const FALLBACK_MODELS = defineString('FALLBACK_MODELS', { default: '' });
 
 initializeApp();
 const store = new FirestoreStore(getFirestore());
@@ -34,7 +36,9 @@ function instance() {
 			ROUTER_SECRET: ROUTER_SECRET.value(),
 			RELAY_URL: RELAY_URL.value(),
 			NETWORKS: NETWORKS.value(),
-			ALLOW_SMALL_PROVIDERS: ALLOW_SMALL_PROVIDERS.value()
+			ALLOW_SMALL_PROVIDERS: ALLOW_SMALL_PROVIDERS.value(),
+			FALLBACK_PAY_TO: FALLBACK_PAY_TO.value(),
+			FALLBACK_MODELS: FALLBACK_MODELS.value()
 		});
 		cached = { service, handle: createApi(service, { store, verify: verifyKeetaSignature, routerSecret: ROUTER_SECRET.value() }) };
 	}

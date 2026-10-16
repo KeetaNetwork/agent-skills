@@ -1,5 +1,7 @@
 # Keeta Compute relay + public API router (Cloudflare Workers).
 # Secrets: wrangler secret put RELAY_SECRET / ROUTER_SECRET
+# Optional: wrangler secret put OPENROUTER_API_KEY turns on the fallback for
+# router jobs the control plane marks (see FALLBACK_MODELS there).
 name = "keeta-compute-relay"
 main = "src/index.ts"
 compatibility_date = "2026-10-01"

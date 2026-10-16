@@ -8,9 +8,14 @@
  * send → verify with the facilitator → run on the provider → settle once the
  * first token arrives (a provider that fails before streaming is never paid)
  * → stream or aggregate, with the provider's signed receipt attached.
+ *
+ * When no provider is free, the control plane may quote a fallback ticket
+ * instead: paid to keeta.ai's own account and run on OpenRouter, with the
+ * same pay-after-first-text rule and an X-Keeta-Fallback header.
  */
 
 import {
+	MODEL_REQUEST_FIELDS,
 	NETWORKS,
 	assertChatRequest,
 	promptTokenBound,
@@ -59,6 +64,8 @@ export interface RouterDeps {
 	gateway: PaymentGateway;
 	/** Runs an envelope on its provider's channel; returns the relay SSE response. */
 	runJob(envelope: JobEnvelope, signal: AbortSignal): Promise<Response>;
+	/** OpenRouter credentials for fallback jobs (tickets the control plane marks `fallback`). Fallback is off without it. */
+	openRouter?: { apiKey: string; baseUrl?: string };
 	fetch?: typeof fetch;
 	now?: () => number;
 }
@@ -117,18 +124,18 @@ export function createRouter(deps: RouterDeps) {
 	}
 
 	async function models(): Promise<Response> {
-		const response = await doFetch(`${deps.controlUrl}/v1/models?network=${deps.network}`);
+		const response = await doFetch(`${deps.controlUrl}/v1/models?network=${deps.network}${deps.openRouter ? '&fallback=1' : ''}`);
 		if (!response.ok) {
 			return errorResponse(502, 'control_unavailable', 'the model list is unavailable right now');
 		}
-		const { models } = (await response.json()) as { models: Array<{ id: string; name: string; providers: number; lowestPrice: unknown; contextLength: number; license?: string }> };
+		const { models } = (await response.json()) as { models: Array<{ id: string; name: string; providers: number; lowestPrice: unknown; contextLength: number; license?: string; fallback?: unknown }> };
 		return Response.json({
 			object: 'list',
 			data: models.map((m) => ({
 				id: m.id,
 				object: 'model',
 				owned_by: 'keeta-compute',
-				keeta: { name: m.name, providers: m.providers, lowestPrice: m.lowestPrice, contextLength: m.contextLength, license: m.license }
+				keeta: { name: m.name, providers: m.providers, lowestPrice: m.lowestPrice, contextLength: m.contextLength, license: m.license, ...(m.fallback ? { fallback: m.fallback } : {}) }
 			}))
 		});
 	}
@@ -185,12 +192,27 @@ export function createRouter(deps: RouterDeps) {
 			return errorResponse(402, 'payment_invalid', verified.invalidReason ?? 'the payment did not verify');
 		}
 
-		const envelope: JobEnvelope = { ticket: signed, request: { ...body, stream: true, stream_options: { include_usage: true } } };
-		const upstream = await deps.runJob(envelope, request.signal);
-		if (!upstream.ok || !upstream.body) {
-			return errorResponse(502, 'provider_unavailable', 'the provider could not take the job; you were not charged', { 'retry-after': '2' });
+		let events: AsyncGenerator<RelayEvent>;
+		/* Fallback jobs are marked on every successful response so callers know they were not served by a network provider. */
+		const served: Record<string, string> = {};
+		if (ticket.fallback) {
+			if (!deps.openRouter) {
+				return errorResponse(503, 'no_provider', `no provider is serving ${body.model} right now; you were not charged`, { 'retry-after': '5' });
+			}
+			const upstream = await runOnOpenRouter(deps.openRouter, ticket.fallback.model, body, ticket.maxOutputTokens, request.signal, doFetch).catch(() => null);
+			if (!upstream?.ok || !upstream.body) {
+				return errorResponse(502, 'provider_unavailable', 'the fallback provider could not take the job; you were not charged', { 'retry-after': '2' });
+			}
+			events = readOpenRouterEvents(upstream.body, ticket.modelId);
+			served['x-keeta-fallback'] = ticket.fallback.via;
+		} else {
+			const envelope: JobEnvelope = { ticket: signed, request: { ...body, stream: true, stream_options: { include_usage: true } } };
+			const upstream = await deps.runJob(envelope, request.signal);
+			if (!upstream.ok || !upstream.body) {
+				return errorResponse(502, 'provider_unavailable', 'the provider could not take the job; you were not charged', { 'retry-after': '2' });
+			}
+			events = readRelayEvents(upstream.body);
 		}
-		const events = readRelayEvents(upstream.body);
 
 		/* Pay the provider only once it has produced text: hold back events until the first chunk that carries some. */
 		const held: RelayEvent[] = [];
@@ -226,7 +248,7 @@ export function createRouter(deps: RouterDeps) {
 			if (settled instanceof Response) {
 				return settled;
 			}
-			const headers: Record<string, string> = { 'payment-response': settled };
+			const headers: Record<string, string> = { 'payment-response': settled, ...served };
 			if (aggregate.receipt) {
 				headers['x-keeta-receipt'] = base64Json(aggregate.receipt);
 			}
@@ -255,7 +277,7 @@ export function createRouter(deps: RouterDeps) {
 				controller.close();
 			}
 		});
-		return new Response(stream, { headers: { 'content-type': 'text/event-stream', 'cache-control': 'no-store', 'payment-response': settled } });
+		return new Response(stream, { headers: { 'content-type': 'text/event-stream', 'cache-control': 'no-store', 'payment-response': settled, ...served } });
 
 		/** Settle the x402 payment; returns the payment-response header, or an error response. */
 		async function settle(): Promise<string | Response> {
@@ -270,4 +292,77 @@ export function createRouter(deps: RouterDeps) {
 	}
 
 	return { models, chatCompletions };
+}
+
+const OPENROUTER_URL = 'https://openrouter.ai/api/v1';
+
+/** Send a fallback job to OpenRouter: only the fields a provider would forward, capped at the paid output. */
+function runOnOpenRouter(
+	config: { apiKey: string; baseUrl?: string },
+	model: string,
+	body: ChatCompletionRequest,
+	maxOutputTokens: number,
+	signal: AbortSignal,
+	doFetch: typeof fetch
+): Promise<Response> {
+	const forwarded = Object.fromEntries(MODEL_REQUEST_FIELDS.filter((key) => body[key] !== undefined).map((key) => [key, body[key]]));
+	return doFetch(`${config.baseUrl ?? OPENROUTER_URL}/chat/completions`, {
+		method: 'POST',
+		headers: { 'content-type': 'application/json', authorization: `Bearer ${config.apiKey}`, 'http-referer': 'https://keeta.ai/compute', 'x-title': 'Keeta Compute' },
+		body: JSON.stringify({
+			...forwarded,
+			model,
+			stream: true,
+			max_tokens: Math.min(requestedMaxTokens(body), maxOutputTokens),
+			usage: { include: true },
+			/* Keep prompts away from upstream providers that train on or retain them. */
+			provider: { data_collection: 'deny' }
+		}),
+		signal
+	});
+}
+
+/** Read an OpenRouter SSE stream as relay events, renaming the model to the network id. */
+async function* readOpenRouterEvents(body: ReadableStream<Uint8Array>, modelId: string): AsyncGenerator<RelayEvent> {
+	const reader = body.getReader();
+	const decoder = new TextDecoder();
+	let buffer = '';
+	try {
+		for (;;) {
+			const { value, done } = await reader.read();
+			if (value) {
+				buffer += decoder.decode(value, { stream: true });
+			}
+			let newline: number;
+			while ((newline = buffer.indexOf('\n')) >= 0) {
+				const line = buffer.slice(0, newline).trim();
+				buffer = buffer.slice(newline + 1);
+				/* Skip keep-alive comments and the end marker. */
+				if (!line.startsWith('data:')) {
+					continue;
+				}
+				const data = line.slice(5).trim();
+				if (data === '[DONE]') {
+					continue;
+				}
+				let chunk: Record<string, unknown>;
+				try {
+					chunk = JSON.parse(data) as Record<string, unknown>;
+				} catch {
+					continue;
+				}
+				const error = chunk.error as { code?: unknown; message?: unknown } | undefined;
+				if (error) {
+					yield { type: 'error', code: 'upstream_error', message: typeof error.message === 'string' ? error.message : 'the fallback provider failed' };
+					return;
+				}
+				yield { type: 'chunk', data: { ...chunk, model: modelId } };
+			}
+			if (done) {
+				return;
+			}
+		}
+	} finally {
+		reader.releaseLock();
+	}
 }

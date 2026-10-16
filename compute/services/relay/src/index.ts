@@ -5,7 +5,9 @@
  *   GET  /v1/provider/connect?nodeKey&exp&token   provider WebSocket
  *   POST /v1/jobs/:jobId/run                       buyer (app) runs a ticketed job, SSE back
  *   GET  /v1/models                                public model list
- *   POST /v1/chat/completions                      public, paid with x402
+ *   POST /v1/chat/completions                      public, paid with x402; served through
+ *                                                  OpenRouter when no provider is free and a
+ *                                                  fallback is configured
  */
 
 import { HTTPFacilitatorClient, x402ResourceServer } from '@x402/core/server';
@@ -24,6 +26,8 @@ export interface Env {
 	CONTROL_URL: string;
 	NETWORK: string;
 	FACILITATOR_URL: string;
+	/** Optional secret; when set, router jobs the control plane marks as fallback run on OpenRouter. */
+	OPENROUTER_API_KEY?: string;
 }
 
 let gatewayPromise: Promise<PaymentGateway> | undefined;
@@ -55,7 +59,7 @@ function x402Gateway(env: Env, network: NetworkName): Promise<PaymentGateway> {
 const CORS = {
 	'access-control-allow-origin': '*',
 	'access-control-allow-headers': 'authorization, content-type, payment-signature, x-payment',
-	'access-control-expose-headers': 'payment-required, payment-response, x-keeta-receipt, retry-after'
+	'access-control-expose-headers': 'payment-required, payment-response, x-keeta-receipt, x-keeta-fallback, retry-after'
 };
 
 function withCors(response: Response): Response {
@@ -112,7 +116,8 @@ export default {
 				routerSecret: env.ROUTER_SECRET,
 				relaySecret: env.RELAY_SECRET,
 				gateway: await x402Gateway(env, network),
-				runJob: (envelope, signal) => channel(env, envelope.ticket.ticket.nodeKey).fetch('https://channel/run', { method: 'POST', body: JSON.stringify(envelope), signal })
+				runJob: (envelope, signal) => channel(env, envelope.ticket.ticket.nodeKey).fetch('https://channel/run', { method: 'POST', body: JSON.stringify(envelope), signal }),
+				...(env.OPENROUTER_API_KEY ? { openRouter: { apiKey: env.OPENROUTER_API_KEY } } : {})
 			});
 			if (url.pathname === '/v1/models' && request.method === 'GET') {
 				return withCors(await router.models());

@@ -22,7 +22,7 @@
 <pre><code class="language-text">Base URL: https://api.keeta.ai/v1</code></pre>
 <h2 id="endpoints">Endpoints</h2>
 <h3 id="get-v1-models">GET /v1/models</h3>
-<p>Free. Lists models with at least one online provider, in the OpenAI list format. Each entry has an extra <code>keeta</code> object: how many providers serve the model, and the lowest price per million input and output tokens in USDC base units (6 decimals, so <code>50000</code> is 0.05 USDC).</p>
+<p>Free. Lists models with at least one online provider, plus any model the router can serve through its fallback, in the OpenAI list format. Each entry has an extra <code>keeta</code> object: how many providers serve the model, and the lowest price per million input and output tokens in USDC base units (6 decimals, so <code>50000</code> is 0.05 USDC). Models the fallback can serve also carry <code>keeta.fallback.price</code>.</p>
 <pre><code class="language-json">{
   "object": "list",
   "data": [
@@ -86,8 +86,16 @@ payment-required: eyJ4NDAyVmVyc2lvbiI6Mi...</code></pre>
 </table>
 <p>In the example, 20 × 50000 + 256 × 100000 = 26600000, divided by one million and rounded up: 27 base units, or 0.000027 USDC.</p>
 <p>You pay the maximum. Tokens not used are not refunded in this version, so keep <code>max_tokens</code> close to what you need.</p>
+<h2 id="fallback-when-the-network-is-full">Fallback when the network is full</h2>
+<p>When no provider can take a request (none online for the model, or all busy), the router can serve it through OpenRouter instead, so paid requests still get an answer. keeta.ai turns this on per model and sets the fallback price.</p>
+<ul>
+<li>The 402 quote then shows keeta.ai's own address as <code>payTo</code> and the fallback price. Network providers are always tried first.</li>
+<li>You are charged only once the fallback has streamed text, as with providers.</li>
+<li>The router forwards only the standard chat fields, asks OpenRouter to use upstream providers that do not collect prompt data, and reports the network model id in responses.</li>
+<li>Responses carry an <code>X-Keeta-Fallback: openrouter</code> header and no provider receipt, because no network provider ran the job.</li>
+</ul>
 <h2 id="receipts">Receipts</h2>
-<p>Every completion carries the provider's signed receipt: model, weights hash, runtime, token counts, price and amount (<a href="/compute/protocol">fields</a>).</p>
+<p>Every completion served by a network provider carries the provider's signed receipt: model, weights hash, runtime, token counts, price and amount (<a href="/compute/protocol">fields</a>).</p>
 <ul>
 <li>Non-streaming: the <code>X-Keeta-Receipt</code> response header, base64 JSON <code>{"receipt": {...}, "signature": "..."}</code>.</li>
 <li>Streaming: a final server-sent event after the completion chunks:</li>
