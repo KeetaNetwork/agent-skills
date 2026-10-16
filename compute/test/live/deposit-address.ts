@@ -24,8 +24,22 @@ const address = account.publicKeyString.get();
 const user = KeetaAnchor.KeetaNet.UserClient.fromNetwork(NETWORK, account);
 try {
 	const client = new KeetaAnchor.AssetMovement.Client(user, { signer: account, account });
-	const providers = (await client.getProvidersForTransfer({ asset: USDC.address as never, to: KEETA })) ?? [];
-	console.log(`Test USDC on Keeta: ${USDC.address}\nDestination (live funding account): ${address}\nAsset-movement anchors that bring USDC into the test network: ${providers.length}`);
+	/*
+	 * One provider at a time: the resolver's lookup stops at the first listed
+	 * provider whose metadata cannot be read (the test network lists a
+	 * disabled one), so it would never reach the others.
+	 */
+	const root = (await client.resolver.getRootMetadata()) as { services?: (kind: 'object') => Promise<{ assetMovement?: (kind: 'object') => Promise<Record<string, unknown>> }> };
+	const listed = Object.keys((await (await root.services?.('object'))?.assetMovement?.('object')) ?? {});
+	const providers: NonNullable<Awaited<ReturnType<typeof client.getProvidersForTransfer>>> = [];
+	for (const id of listed) {
+		try {
+			providers.push(...((await client.getProvidersForTransfer({}, { providerIDs: [id] })) ?? []));
+		} catch (error) {
+			console.log(`  skipping ${id}: ${(error as Error).message}`);
+		}
+	}
+	console.log(`Test USDC on Keeta: ${USDC.address}\nDestination (live funding account): ${address}\nAsset-movement anchors listed: ${listed.join(', ') || 'none'}; ${providers.length} answered`);
 
 	/* Every route from an EVM chain into Keeta test USDC, best chain first. */
 	const routes: Array<{ provider: (typeof providers)[number]; location: string; evmAsset: string; kyc: string[] }> = [];
