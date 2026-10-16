@@ -171,7 +171,7 @@ The seed is public on purpose, so anyone can top the account up and run the suit
 
 ### In CI
 
-`.github/workflows/compute-live.yml` runs the suite on manual dispatch, and nightly and on pull requests that touch `compute/` once the repository variable `COMPUTE_LIVE` is set to `on` (off until the test account is funded). It spends from the fixed test account above; the optional repository secret `KEETA_TESTNET_SEED` (or `KEETA_TESTNET_PASSPHRASE`) swaps in another on runs that are not pull requests. Pull requests from forks don't run it. A concurrency group keeps two runs from spending the funding account at once. A manual run with `model: llama` starts llama.cpp's server container with Qwen2.5 0.5B (about 400 MB from Hugging Face) and runs the same suite against it.
+`.github/workflows/compute-live.yml` runs the suite on manual dispatch, and nightly and on pull requests that touch `compute/` once the repository variable `COMPUTE_LIVE` is set to `on` (off until the test account is funded). It spends from the fixed test account above and reads no repository secrets, since a branch pushed to the repository can rewrite the workflow. `KEETA_TESTNET_SEED` and `KEETA_TESTNET_PASSPHRASE` are for local runs only. Pull requests from forks don't run it. A concurrency group keeps two runs from spending the funding account at once. A manual run with `model: llama` starts llama.cpp's server container with Qwen2.5 0.5B (about 400 MB from Hugging Face) and runs the same suite against it.
 
 ## Deploy
 

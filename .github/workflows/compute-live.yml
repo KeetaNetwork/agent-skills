@@ -2,8 +2,9 @@
 # relay Worker under wrangler dev, and x402 through the real facilitator.
 # Spends from the suite's fixed test-network account (compute/test/live/support.ts),
 # which must hold test USDC and some KTA (and test KUSD once KUSD is pinned, for
-# the router test); the optional repository secret
-# KEETA_TESTNET_SEED (or KEETA_TESTNET_PASSPHRASE) swaps in another. See compute/README.md.
+# the router test). It reads no secrets: a branch pushed to this repository can
+# rewrite this file, so anything it read would be readable from an unreviewed
+# pull request. See compute/README.md.
 name: Compute live (test network)
 
 on:
@@ -44,10 +45,6 @@ jobs:
       run:
         working-directory: compute
     env:
-      # Optional overrides of the fixed test account. Pull requests run their own
-      # code, so they never get these and always use the fixed public account.
-      KEETA_TESTNET_SEED: ${{ github.event_name != 'pull_request' && secrets.KEETA_TESTNET_SEED || '' }}
-      KEETA_TESTNET_PASSPHRASE: ${{ github.event_name != 'pull_request' && secrets.KEETA_TESTNET_PASSPHRASE || '' }}
       KEETA_LIVE_NETWORK: test
       LLAMA_HF_REPO: Qwen/Qwen2.5-0.5B-Instruct-GGUF
       LLAMA_HF_FILE: qwen2.5-0.5b-instruct-q4_k_m.gguf
