@@ -72,3 +72,20 @@ jobs:
         run: npm test
       - name: End-to-end test
         run: npm run test:e2e
+
+  macos:
+    runs-on: macos-15
+    defaults:
+      run:
+        working-directory: compute/macos
+    steps:
+      - uses: actions/checkout@v4
+      - name: Unit tests (KeetaComputeKit)
+        run: swift test
+      - name: Build the app (unsigned)
+        run: |
+          brew install xcodegen
+          xcodegen generate
+          xcodebuild -project KeetaCompute.xcodeproj -scheme KeetaCompute -configuration Debug \
+            -destination 'platform=macOS,arch=arm64' -derivedDataPath build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO build

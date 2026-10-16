@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Passkeys for the operator wallet: keeta.ai must serve apple-app-site-association listing this app. -->
+	<key>com.apple.developer.associated-domains</key>
+	<array>
+		<string>webcredentials:keeta.ai</string>
+	</array>
+	<!-- The Secure Enclave node key lives in the data protection keychain, which needs an access group. -->
+	<key>keychain-access-groups</key>
+	<array>
+		<string>$(AppIdentifierPrefix)ai.keeta.compute</string>
+	</array>
+</dict>
+</plist>
