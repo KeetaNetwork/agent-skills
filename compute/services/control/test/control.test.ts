@@ -590,6 +590,47 @@ test('a quote needs the buyer to hold the job\'s maximum cost in credits on the 
 	assert.equal(created.quote.maxCost, needed.toString());
 });
 
+test('quotes waiting for escrow must fit in the buyer\'s balance together, so one balance cannot hold several providers', async () => {
+	const balances = new Map<string, bigint>();
+	const h = harness({ creditBalanceOf: async (args) => balances.get(args.account) ?? 0n });
+	const { node } = await registerMac(h);
+	const online = () => h.call(node, 'POST', '/v1/providers/heartbeat', { status: 'online', offers: [offer('qwen3-8b')], load: { active: 0, capacity: 16 } });
+	await online();
+	const needed = maxJobCost(offer('qwen3-8b').price, LIMITS);
+	const ask = (buyer: Buyer) => h.call(buyer.signer, 'POST', '/v1/jobs', { network: 'test', model: 'qwen3-8b', ...LIMITS });
+	const held = async () => (await h.store.getProvider(node.publicKey))!.load.active;
+
+	/* One quote's worth of credits backs one quote, even when the requests race. */
+	const buyer = newBuyer();
+	balances.set(buyer.address, needed);
+	const raced = await Promise.all([1, 2, 3, 4].map(() => ask(buyer)));
+	assert.deepEqual(raced.map((r) => r.status).sort(), [200, 402, 402, 402], JSON.stringify(raced.map((r) => r.body)));
+	assert.match(JSON.stringify(raced.find((r) => r.status === 402)!.body), /waiting for escrow/);
+	assert.equal(await held(), 1, 'the refused quotes hold no slot');
+
+	/* Cancelling the quote frees its share of the balance; an expired one stops counting. */
+	const open = raced.find((r) => r.status === 200)!.body as { quote: EscrowQuote };
+	assert.equal((await h.call(buyer.signer, 'POST', `/v1/jobs/${open.quote.jobId}/cancel`, {})).status, 200);
+	await quote(h, buyer);
+	assert.equal((await ask(buyer)).status, 402);
+	h.advance(QUOTE_TTL_MS + 1);
+	await online();
+	await quote(h, buyer);
+
+	/* Twice the credits back two quotes at once, and an escrowed quote stops counting (its credits left the balance). */
+	const larger = newBuyer();
+	balances.set(larger.address, 2n * needed);
+	const first = await quote(h, larger);
+	await quote(h, larger);
+	assert.equal((await ask(larger)).status, 402);
+	const blockHash = await h.ledger.publish(larger.account, [{ to: first.quote.settlement, amount: needed, token: first.quote.token, external: first.quote.jobId }]);
+	assert.equal((await h.call(larger.signer, 'POST', `/v1/jobs/${first.quote.jobId}/escrow`, { blockHash })).status, 200);
+	balances.set(larger.address, needed);
+	assert.equal((await ask(larger)).status, 402, 'the second quote still waits on the credits that are left');
+	balances.set(larger.address, 2n * needed);
+	await quote(h, larger);
+});
+
 test('app jobs need the credit token and the settlement account; /v1/config publishes both and the stablecoins in lead order', async () => {
 	const off = harness({ credits: false });
 	const { node } = await registerMac(off);

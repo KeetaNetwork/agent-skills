@@ -512,9 +512,10 @@ export class ControlService {
 			publicOnly: false
 		});
 		const limits = { maxInputTokens, maxOutputTokens };
+		const needed = maxJobCost(offer.price, limits);
+		let held: bigint | undefined;
 		if (this.config.creditBalanceOf) {
-			const needed = maxJobCost(offer.price, limits);
-			const held = await this.config.creditBalanceOf({ network, account: buyer, token: credits.token }).catch((error: Error) => {
+			held = await this.config.creditBalanceOf({ network, account: buyer, token: credits.token }).catch((error: Error) => {
 				console.warn('credit balance lookup failed', error.message);
 				throw new UnavailableError('could not read your credit balance from the ledger; try again');
 			});
@@ -538,10 +539,19 @@ export class ControlService {
 			status: 'quoted',
 			createdAt: now
 		};
-		/* Atomic per buyer, so parallel requests cannot hold more providers than the cap. */
+		/*
+		 * Atomic per buyer, so parallel requests cannot hold more providers than
+		 * the cap, and quotes waiting for escrow must fit in the balance together:
+		 * one balance cannot back several holds.
+		 */
 		await this.store.putJobIf(job, (openQuotes) => {
-			if (openQuotes.filter((j) => (j.quoteExpiresAt ?? 0) > now).length >= MAX_OPEN_QUOTES) {
+			const waiting = openQuotes.filter((j) => (j.quoteExpiresAt ?? 0) > now);
+			if (waiting.length >= MAX_OPEN_QUOTES) {
 				throw new TooManyRequestsError(`at most ${MAX_OPEN_QUOTES} quotes may wait for escrow at once; escrow or cancel one first`);
+			}
+			const committed = waiting.reduce((sum, j) => sum + maxJobCost(j.price, j), 0n);
+			if (held !== undefined && committed + needed > held) {
+				throw new PaymentRequiredError(`your quotes waiting for escrow can cost up to ${committed} credit base units, this one up to ${needed} more, and the account holds ${held}; escrow or cancel a quote, or buy credits`);
 			}
 		});
 		/* The quote holds the provider's slot while the buyer escrows, through the run, until the receipt. */
