@@ -145,7 +145,7 @@ export function createApi(service: ControlService, deps: { store: Store; verify:
 			}
 			const headers: Record<string, string> = {};
 			const retry = (error as { retryAfterSeconds?: number }).retryAfterSeconds;
-			if (status === 503 && retry) {
+			if ((status === 503 || status === 429) && retry) {
 				headers['retry-after'] = String(retry);
 			}
 			const code = status !== 500 && typeof (error as { code?: unknown }).code === 'string' ? (error as { code: string }).code : errorCode(status);

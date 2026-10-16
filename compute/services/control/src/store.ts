@@ -10,6 +10,9 @@ export interface StoredProvider extends ProviderRecord {
 	offeredModels: string[];
 }
 
+/** Most recent jobs `putJobIf` reads for a buyer. */
+export const RECENT_JOBS_LIMIT = 200;
+
 export interface Store {
 	getProvider(nodeKey: string): Promise<StoredProvider | null>;
 	putProvider(record: StoredProvider): Promise<void>;
@@ -24,10 +27,11 @@ export interface Store {
 	putJob(job: JobRecord): Promise<void>;
 	/**
 	 * Write a job only if `admit` accepts it, given the buyer's quotes still
-	 * waiting for escrow. Atomic per buyer: concurrent calls for one buyer see
-	 * each other's quotes. `admit` throws to refuse.
+	 * waiting for escrow and its jobs created at or after `since` (newest
+	 * first, up to RECENT_JOBS_LIMIT). Atomic per buyer: concurrent calls for
+	 * one buyer see each other's jobs. `admit` throws to refuse.
 	 */
-	putJobIf(job: JobRecord, admit: (openQuotes: JobRecord[]) => void): Promise<void>;
+	putJobIf(job: JobRecord, since: number, admit: (openQuotes: JobRecord[], recent: JobRecord[]) => void): Promise<void>;
 	/** Atomic read-modify-write. `update` may throw to abort. */
 	updateJob(jobId: string, update: (job: JobRecord) => JobRecord): Promise<JobRecord>;
 	listJobsByBuyer(buyer: string, limit: number): Promise<JobRecord[]>;
@@ -105,9 +109,17 @@ export class MemoryStore implements Store {
 		this.jobs.set(job.jobId, clone(job));
 	}
 
-	async putJobIf(job: JobRecord, admit: (openQuotes: JobRecord[]) => void) {
+	async putJobIf(job: JobRecord, since: number, admit: (openQuotes: JobRecord[], recent: JobRecord[]) => void) {
 		/* No await between the check and the write, so this is atomic in one process. */
-		admit([...this.jobs.values()].filter((j) => j.buyer === job.buyer && j.status === 'quoted').map(clone));
+		const mine = [...this.jobs.values()].filter((j) => j.buyer === job.buyer);
+		admit(
+			mine.filter((j) => j.status === 'quoted').map(clone),
+			mine
+				.filter((j) => j.createdAt >= since)
+				.sort((a, b) => b.createdAt - a.createdAt)
+				.slice(0, RECENT_JOBS_LIMIT)
+				.map(clone)
+		);
 		this.jobs.set(job.jobId, clone(job));
 	}
 

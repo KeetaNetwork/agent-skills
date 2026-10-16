@@ -382,17 +382,17 @@ test('a buyer buys credits with a stablecoin, escrows each job at ticket time, a
 	const replay = await fetch(`${relay.url}/v1/jobs/${first.jobId}/run`, { method: 'POST', body: JSON.stringify(relay.lastEnvelope) });
 	assert.match(await replay.text(), /ticket_used/);
 
-	/* A request over the per-request limit is refused before anything is escrowed, and its quote handed back. */
+	/* A request over the per-request limit is refused without a quote: the buyer sends its limit, so no provider is held for it. */
 	await buyer.rpc['buyer.setPolicy']!({ perRequestMax: '1' });
+	const jobsBefore = (await control.store.listJobsByBuyer(spendKey, 100)).length;
 	const tooDear = await fetch(`${buyerStatus.endpoint}/chat/completions`, {
 		method: 'POST',
 		headers: { authorization: `Bearer ${buyerStatus.token}`, 'content-type': 'application/json' },
 		body: JSON.stringify({ model: MODEL, messages: [{ role: 'user', content: 'Say hello' }], max_tokens: 4000 })
 	});
 	assert.equal(tooDear.status, 402);
-	const [cancelled] = await control.store.listJobsByBuyer(spendKey, 1);
-	assert.equal(cancelled!.status, 'expired', 'the quote is handed back');
-	assert.equal(ledger.sendsFor(cancelled!.jobId, spendKey).length, 0, 'nothing was escrowed');
+	assert.match(await tooDear.text(), /per-request limit/);
+	assert.equal((await control.store.listJobsByBuyer(spendKey, 100)).length, jobsBefore, 'no quote was made, so nothing was escrowed');
 	assert.equal((await control.store.getProvider(macKey))!.load.active, 0, 'the refused job does not hold the provider');
 	await buyer.rpc['buyer.setPolicy']!({ perRequestMax: '250000' });
 

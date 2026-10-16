@@ -543,12 +543,65 @@ test('quotes: an escrow after expiry is refunded, quotes nobody escrows expire, 
 
 	/* Four open quotes per buyer, even when the requests race. */
 	await online();
-	const raced = await Promise.all([1, 2, 3, 4, 5, 6].map(() => h.call(buyer.signer, 'POST', '/v1/jobs', { network: 'test', model: 'qwen3-8b', ...LIMITS })));
+	const racer = newBuyer();
+	const raced = await Promise.all([1, 2, 3, 4, 5, 6].map(() => h.call(racer.signer, 'POST', '/v1/jobs', { network: 'test', model: 'qwen3-8b', ...LIMITS })));
 	assert.deepEqual(raced.map((r) => r.status).sort(), [200, 200, 200, 200, 429, 429]);
 	const open = raced.find((r) => r.status === 200)!.body as { quote: EscrowQuote };
-	assert.equal((await h.call(buyer.signer, 'POST', `/v1/jobs/${open.quote.jobId}/cancel`, {})).status, 200);
-	await quote(h, buyer);
+	assert.equal((await h.call(racer.signer, 'POST', `/v1/jobs/${open.quote.jobId}/cancel`, {})).status, 200);
+	await quote(h, racer);
 	assert.equal((await quote(h, newBuyer())).job.status, 'quoted', 'the cap is per buyer');
+});
+
+test('a buyer that keeps leaving providers held unused stops getting quotes, holds at most eight, and can cap what a quote may cost', async () => {
+	const h = harness();
+	const { node } = await registerMac(h);
+	const heartbeat = (capacity: number) => h.call(node, 'POST', '/v1/providers/heartbeat', { status: 'online', offers: [offer('qwen3-8b')], load: { active: 0, capacity } });
+	await heartbeat(1);
+	const ask = (buyer: Buyer, extra: Record<string, unknown> = {}) => h.call(buyer.signer, 'POST', '/v1/jobs', { network: 'test', model: 'qwen3-8b', ...LIMITS, ...extra });
+	const cancel = (buyer: Buyer, jobId: string) => h.call(buyer.signer, 'POST', `/v1/jobs/${jobId}/cancel`, {});
+
+	/* Quote, cancel, quote again: each round holds the provider's only slot for free, so only three go unused. */
+	const squatter = newBuyer();
+	for (let i = 0; i < 2; i++) {
+		assert.equal((await cancel(squatter, (await quote(h, squatter)).job.jobId)).status, 200, 'cancelling a quote frees the slot');
+		h.advance(1000);
+	}
+	await quote(h, squatter);
+	h.advance(QUOTE_TTL_MS + 1);
+	await h.service.sweep();
+	const refused = await ask(squatter);
+	assert.equal(refused.status, 429, JSON.stringify(refused.body));
+	assert.match(JSON.stringify(refused.body), /3 recent quotes or tickets went unused/);
+	assert.ok(Number(refused.headers?.['retry-after']) > 0, 'it says when quotes resume');
+	assert.equal((await quote(h, newBuyer())).job.status, 'quoted', 'the provider is free for everyone else');
+	h.advance(10 * 60_000 - QUOTE_TTL_MS);
+	await h.service.sweep();
+	await heartbeat(1);
+	assert.equal((await quote(h, squatter)).job.status, 'quoted', 'quotes resume once the unused ones age out');
+
+	/* Jobs that ran do not count against a buyer, and no buyer holds more than eight providers' slots at once. */
+	await heartbeat(16);
+	const busy = newBuyer();
+	for (let i = 0; i < 5; i++) {
+		await escrowedJob(h, busy);
+	}
+	for (let i = 0; i < 3; i++) {
+		await quote(h, busy);
+	}
+	const ninth = await ask(busy);
+	assert.equal(ninth.status, 429);
+	assert.match(JSON.stringify(ninth.body), /at most 8 jobs may hold providers at once/);
+
+	/* A cost ceiling skips providers above it instead of quoting a job the buyer would refuse. */
+	const careful = newBuyer();
+	const needed = maxJobCost(offer('qwen3-8b').price, LIMITS);
+	const tooDear = await ask(careful, { maxCost: (needed - 1n).toString() });
+	assert.equal(tooDear.status, 402);
+	assert.match(JSON.stringify(tooDear.body), /would charge more than/);
+	assert.deepEqual(await h.store.listJobsByBuyer(careful.address, 10), [], 'no quote was made');
+	assert.equal((await ask(careful, { maxCost: 'lots' })).status, 400);
+	assert.equal((await quote(h, careful, LIMITS)).job.status, 'quoted');
+	assert.equal(((await ask(newBuyer(), { maxCost: needed.toString() })).body as { job: JobRecord }).job.status, 'quoted', 'a ceiling at the cost is enough');
 });
 
 test('a quote needs the buyer to hold the job\'s maximum cost in credits on the ledger, so empty keys cannot hold providers', async () => {

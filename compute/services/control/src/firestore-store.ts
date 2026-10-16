@@ -8,7 +8,7 @@
 import type { Firestore } from 'firebase-admin/firestore';
 import type { JobRecord, JobStatus, NetworkName, PairingRecord } from '@keeta-compute/protocol';
 import { sha256Hex } from '@keeta-compute/protocol';
-import { NotFoundError, type Store, type StoredProvider } from './store.ts';
+import { NotFoundError, RECENT_JOBS_LIMIT, type Store, type StoredProvider } from './store.ts';
 
 export class FirestoreStore implements Store {
 	constructor(private readonly db: Firestore) {}
@@ -76,13 +76,17 @@ export class FirestoreStore implements Store {
 		await this.jobs().doc(job.jobId).set(stripUndefined(job));
 	}
 
-	async putJobIf(job: JobRecord, admit: (openQuotes: JobRecord[]) => void) {
+	async putJobIf(job: JobRecord, since: number, admit: (openQuotes: JobRecord[], recent: JobRecord[]) => void) {
 		/* Every admission for a buyer reads and writes its lock document, so Firestore serializes them. */
 		const lock = this.db.collection('buyerLocks').doc(job.buyer);
 		await this.db.runTransaction(async (tx) => {
 			await tx.get(lock);
 			const open = await tx.get(this.jobs().where('buyer', '==', job.buyer).where('status', '==', 'quoted'));
-			admit(open.docs.map((doc) => doc.data() as JobRecord));
+			const recent = await tx.get(this.jobs().where('buyer', '==', job.buyer).where('createdAt', '>=', since).orderBy('createdAt', 'desc').limit(RECENT_JOBS_LIMIT));
+			admit(
+				open.docs.map((doc) => doc.data() as JobRecord),
+				recent.docs.map((doc) => doc.data() as JobRecord)
+			);
 			tx.set(this.jobs().doc(job.jobId), stripUndefined(job));
 			tx.set(lock, { lastJobAt: job.createdAt });
 		});

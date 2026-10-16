@@ -11,6 +11,7 @@
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import {
+	CREDIT_DECIMALS,
 	CREDIT_SYMBOL,
 	ValidationError,
 	aggregateCompletion,
@@ -233,15 +234,36 @@ export class Buyer {
 		}
 		const maxOutputTokens = requestedMaxTokens(body);
 		const maxInputTokens = await this.inputLimit(body);
+		/* The most this request may cost under the spend limits, so the control plane never quotes, and holds a provider for, a job this Mac would refuse. */
+		const perRequest = BigInt(policy.perRequestMax);
+		const dailyLeft = BigInt(policy.dailyMax) - BigInt(store.state.spentByDay[utcDay()] ?? '0');
+		if (dailyLeft <= 0n) {
+			throw new HttpError(402, 'spend_limit', 'the daily spend limit set in the app has been reached');
+		}
+		const maxCost = perRequest < dailyLeft ? perRequest : dailyLeft;
 
-		const { job, quote } = await control.post<{ job: JobRecord; quote: EscrowQuote; relayUrl: string }>(spend, '/v1/jobs', {
-			network,
-			model: body.model,
-			maxInputTokens,
-			maxOutputTokens,
-			maxPrice: policy.maxPrice,
-			...(policy.allowedProviders.length ? { allowedProviders: policy.allowedProviders } : {})
-		});
+		const { job, quote } = await control
+			.post<{ job: JobRecord; quote: EscrowQuote; relayUrl: string }>(spend, '/v1/jobs', {
+				network,
+				model: body.model,
+				maxInputTokens,
+				maxOutputTokens,
+				maxPrice: policy.maxPrice,
+				maxCost: maxCost.toString(),
+				...(policy.allowedProviders.length ? { allowedProviders: policy.allowedProviders } : {})
+			})
+			.catch((error: unknown) => {
+				if (error instanceof ControlError && error.code === 'over_max_cost') {
+					throw new HttpError(
+						402,
+						'spend_limit',
+						maxCost === perRequest
+							? `this request could cost more than the per-request limit of ${formatAmount(perRequest, CREDIT_DECIMALS)} ${CREDIT_SYMBOL}; lower max_tokens or raise the limit in the app`
+							: 'the daily spend limit set in the app would be exceeded'
+					);
+				}
+				throw error;
+			});
 		let ticket: SignedTicket;
 		try {
 			this.checkQuote(job, quote, { maxInputTokens, maxOutputTokens });

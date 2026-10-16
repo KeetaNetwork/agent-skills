@@ -90,8 +90,19 @@ export class PaymentRequiredError extends Error {
 	readonly status = 402;
 }
 
+/** Every provider that could take the job would cost more than the buyer's ceiling (`maxCost`). */
+export class CostCeilingError extends PaymentRequiredError {
+	readonly code = 'over_max_cost';
+}
+
 export class TooManyRequestsError extends Error {
 	readonly status = 429;
+	constructor(
+		message: string,
+		readonly retryAfterSeconds?: number
+	) {
+		super(message);
+	}
 }
 
 /** The escrow for a quote arrived after the quote expired; it is refunded. */
@@ -171,6 +182,17 @@ const RELAY_TOKEN_TTL_MS = 10 * 60_000;
 const MAX_INPUT_TOKENS = 262_144;
 /** Quotes one buyer may have waiting for escrow at once; each holds a provider slot until it expires. */
 const MAX_OPEN_QUOTES = 4;
+/** Provider slots one buyer may hold at once: its quotes waiting for escrow and its tickets not yet run. */
+const MAX_HELD_SLOTS = 8;
+/**
+ * Holds a buyer may leave unused (a quote cancelled or left to expire, a
+ * ticket handed back or left to lapse with nothing delivered) within
+ * UNUSED_HOLD_WINDOW_MS; past that it gets no quotes until the oldest ages
+ * out. A hold costs nothing, so without this one small balance could quote a
+ * provider, cancel, and quote it again, keeping it busy for everyone else.
+ */
+const UNUSED_HOLD_LIMIT = 3;
+const UNUSED_HOLD_WINDOW_MS = 10 * 60_000;
 /** A payout attempt that has not recorded its block this long after it started may be retried (after checking the ledger). */
 const PAYOUT_RETRY_MS = 5 * 60_000;
 
@@ -310,9 +332,7 @@ export class ControlService {
 		const capacity = Number.isInteger(load?.capacity) ? Math.min(64, Math.max(1, Number(load?.capacity))) : 1;
 		const now = this.now();
 		/* Count quotes and tickets for this node that have not started yet, so a heartbeat never frees their slots. */
-		const ticketed = (await this.store.listJobsByNode(nodeKey, 100)).filter(
-			(j) => holdsSlot(j) && (j.status === 'quoted' ? (j.quoteExpiresAt ?? 0) > now : (j.ticketIssuedAt ?? j.createdAt) > now - TICKET_TTL_MS)
-		).length;
+		const ticketed = (await this.store.listJobsByNode(nodeKey, 100)).filter((j) => holdsSlotAt(j, now)).length;
 		const active = Math.max(reported, ticketed);
 
 		const record = await this.store.updateProvider(nodeKey, (current) => {
@@ -410,6 +430,8 @@ export class ControlService {
 		maxInputTokens: number;
 		maxOutputTokens: number;
 		maxPrice?: Price;
+		/** The most the buyer will pay for the job, in credit base units: offers whose maximum cost is higher are skipped. */
+		maxCost?: bigint;
 		allowedProviders?: string[];
 		excludeProviders?: string[];
 		publicOnly: boolean;
@@ -450,10 +472,14 @@ export class ControlService {
 				}
 				return [{ provider, offer }];
 			});
-		if (candidates.length === 0) {
+		const affordable = args.maxCost === undefined ? candidates : candidates.filter(({ offer }) => maxJobCost(offer.price, args) <= args.maxCost!);
+		if (affordable.length === 0) {
+			if (candidates.length > 0) {
+				throw new CostCeilingError(`every provider for ${args.modelId} would charge more than ${args.maxCost} credit base units for this job; lower max_tokens or raise the limit`);
+			}
 			throw new UnavailableError(`no provider is available for ${args.modelId} right now`);
 		}
-		return pickCandidate(candidates);
+		return pickCandidate(affordable);
 	}
 
 	private async signTicket(job: JobRecord): Promise<SignedTicket> {
@@ -507,6 +533,7 @@ export class ControlService {
 			maxInputTokens,
 			maxOutputTokens,
 			...(body.maxPrice ? { maxPrice: assertPrice(body.maxPrice, 'maxPrice') } : {}),
+			...(body.maxCost !== undefined ? { maxCost: assertBaseUnits(body.maxCost, 'maxCost') } : {}),
 			...(Array.isArray(body.allowedProviders) ? { allowedProviders: body.allowedProviders.map((k, i) => assertKeetaAddress(k, `allowedProviders[${i}]`)) } : {}),
 			...(Array.isArray(body.excludeProviders) ? { excludeProviders: body.excludeProviders.map((k, i) => assertKeetaAddress(k, `excludeProviders[${i}]`)) } : {}),
 			publicOnly: false
@@ -541,13 +568,26 @@ export class ControlService {
 		};
 		/*
 		 * Atomic per buyer, so parallel requests cannot hold more providers than
-		 * the cap, and quotes waiting for escrow must fit in the balance together:
-		 * one balance cannot back several holds.
+		 * the caps, a buyer that keeps leaving holds unused stops getting them,
+		 * and quotes waiting for escrow must fit in the balance together: one
+		 * balance cannot back several holds.
 		 */
-		await this.store.putJobIf(job, (openQuotes) => {
+		await this.store.putJobIf(job, now - UNUSED_HOLD_WINDOW_MS, (openQuotes, recent) => {
 			const waiting = openQuotes.filter((j) => (j.quoteExpiresAt ?? 0) > now);
 			if (waiting.length >= MAX_OPEN_QUOTES) {
 				throw new TooManyRequestsError(`at most ${MAX_OPEN_QUOTES} quotes may wait for escrow at once; escrow or cancel one first`);
+			}
+			const ticketed = recent.filter((j) => j.status === 'scheduled' && holdsSlotAt(j, now));
+			if (waiting.length + ticketed.length >= MAX_HELD_SLOTS) {
+				throw new TooManyRequestsError(`at most ${MAX_HELD_SLOTS} jobs may hold providers at once; wait for one to finish`);
+			}
+			const unused = recent.filter((j) => unusedHold(j, now));
+			if (unused.length >= UNUSED_HOLD_LIMIT) {
+				const retryAt = Math.min(...unused.map((j) => j.createdAt)) + UNUSED_HOLD_WINDOW_MS;
+				throw new TooManyRequestsError(
+					`${unused.length} recent quotes or tickets went unused; new quotes resume in ${Math.ceil((retryAt - now) / 1000)} seconds`,
+					Math.max(1, Math.ceil((retryAt - now) / 1000))
+				);
 			}
 			const committed = waiting.reduce((sum, j) => sum + maxJobCost(j.price, j), 0n);
 			if (held !== undefined && committed + needed > held) {
@@ -1233,6 +1273,13 @@ function priceTotal(price: Price): bigint {
 	return BigInt(price.inputPerMillion) + BigInt(price.outputPerMillion);
 }
 
+function assertBaseUnits(value: unknown, field: string): bigint {
+	if (typeof value !== 'string' || !/^\d{1,30}$/.test(value)) {
+		throw new ValidationError(`${field} must be a whole number of base units, as a string`);
+	}
+	return BigInt(value);
+}
+
 function assertTokenCount(value: unknown, field: string, max: number): number {
 	if (!Number.isInteger(value) || (value as number) < 1 || (value as number) > max) {
 		throw new ValidationError(`${field} must be an integer between 1 and ${max}`);
@@ -1309,6 +1356,26 @@ function deliveryMatches(job: JobRecord): boolean {
 /** Whether an app job holds a slot in its provider's load: from its quote until its receipt, failure, handback or expiry. */
 function holdsSlot(job: JobRecord): boolean {
 	return job.paymentMode === 'escrow' && (job.status === 'quoted' || job.status === 'scheduled') && !job.handedBackAt;
+}
+
+/** Whether a job holds its slot at `now`: a quote until it expires, a ticket until it can no longer start. */
+function holdsSlotAt(job: JobRecord, now: number): boolean {
+	return holdsSlot(job) && (job.status === 'quoted' ? (job.quoteExpiresAt ?? 0) > now : (job.ticketIssuedAt ?? job.createdAt) > now - TICKET_TTL_MS);
+}
+
+/**
+ * Whether an app job held a provider's slot and gave it up without running:
+ * a quote cancelled or expired, or a ticket handed back or lapsed, with no
+ * receipt and nothing delivered. A provider failure is not the buyer's.
+ */
+function unusedHold(job: JobRecord, now: number): boolean {
+	if (job.paymentMode !== 'escrow' || job.receipt || job.delivery) {
+		return false;
+	}
+	if (job.status === 'expired') {
+		return true;
+	}
+	return (job.status === 'quoted' || (job.status === 'scheduled' && Boolean(job.handedBackAt))) && !holdsSlotAt(job, now);
 }
 
 /**
