@@ -73,5 +73,5 @@ Nothing is deployed by CI. Each step below is run by hand by someone with access
    - `cd services/relay && wrangler secret put RELAY_SECRET && wrangler secret put ROUTER_SECRET`.
    - Set `CONTROL_URL`, `NETWORK` and `FACILITATOR_URL` in `wrangler.toml`, then `wrangler deploy`.
    - `RELAY_SECRET` must match the control plane's; it signs provider connect tokens and ticket MACs.
-3. **Linux helper**: build the three binaries, attach them to a GitHub release with a `.sha256` file each (`keeta-compute-agent-linux-x64`, `...-linux-arm64`). `site/compute/install-helper.sh` downloads from the latest release.
+3. **Linux helper**: build the binaries and attach them to a GitHub release (`keeta-compute-agent-linux-x64`, `...-linux-arm64`). Then set `VERSION`, `SHA256_X64` and `SHA256_ARM64` in `site/compute/install-helper.sh` to that tag and the binaries' SHA-256 through a reviewed PR; the installer refuses anything else, so a replaced release asset is never installed.
 4. **macOS app**: see `macos/README.md` for signing, notarization and the associated domain needed by passkeys.

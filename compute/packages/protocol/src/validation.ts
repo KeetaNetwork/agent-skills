@@ -82,7 +82,17 @@ export function assertChatRequest(value: unknown): ChatCompletionRequest {
 	assert(Array.isArray(request.messages) && request.messages.length > 0, 'messages must be a non-empty list');
 	for (const message of request.messages) {
 		assert(message && typeof message === 'object' && typeof message.role === 'string', 'each message needs a role');
+		const content = message.content;
+		assert(content === null || content === undefined || typeof content === 'string' || Array.isArray(content), 'message content must be text');
+		if (Array.isArray(content)) {
+			/* Images and audio are not counted in quotes, so a server that accepted them would prefill unpaid input. */
+			for (const part of content) {
+				assert(part && part.type === 'text' && typeof part.text === 'string', 'only text content parts are supported');
+			}
+		}
 	}
+	assert(request.tools === undefined || Array.isArray(request.tools), 'tools must be a list');
+	assert(request.n === undefined || request.n === 1, 'n must be 1');
 	const maxTokens = request.max_completion_tokens ?? request.max_tokens;
 	assert(maxTokens === undefined || (Number.isInteger(maxTokens) && maxTokens > 0 && maxTokens <= MAX_OUTPUT_TOKENS), `max_tokens must be between 1 and ${MAX_OUTPUT_TOKENS}`);
 	return request;
@@ -90,6 +100,37 @@ export function assertChatRequest(value: unknown): ChatCompletionRequest {
 
 export function requestedMaxTokens(request: ChatCompletionRequest): number {
 	return request.max_completion_tokens ?? request.max_tokens ?? DEFAULT_MAX_OUTPUT_TOKENS;
+}
+
+/** Request fields a provider forwards to its model server; everything else is dropped. */
+export const MODEL_REQUEST_FIELDS = [
+	'messages',
+	'max_tokens',
+	'temperature',
+	'top_p',
+	'stop',
+	'seed',
+	'frequency_penalty',
+	'presence_penalty',
+	'tools',
+	'tool_choice',
+	'response_format'
+] as const;
+
+const utf8Encoder = new TextEncoder();
+
+/**
+ * Most prompt tokens a request can make a model server prefill. Every token
+ * covers at least one byte of the rendered prompt, so the UTF-8 size of
+ * everything forwarded (messages, and tools at twice their size for
+ * template indentation) bounds it whatever the language; the slack covers
+ * chat-template markup. Quotes, tickets and providers all size prompts
+ * with this, so no request can prefill more than it was priced for.
+ */
+export function promptTokenBound(request: ChatCompletionRequest): number {
+	const bytes = (value: unknown) => utf8Encoder.encode(JSON.stringify(value ?? null)).length;
+	const tools = Array.isArray(request.tools) && request.tools.length > 0;
+	return bytes(request.messages) + (tools ? 2 * bytes(request.tools) + bytes(request.tool_choice) + 512 : 0) + 16 * request.messages.length + 128;
 }
 
 /** Text the model will read, for token estimates. */

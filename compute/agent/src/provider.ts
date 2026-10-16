@@ -11,10 +11,12 @@ import {
 	chunkText,
 	estimateTokens,
 	findCatalogModel,
+	assertChatRequest,
 	jobAuthMessage,
 	jobCost,
 	maxOutputTokensFor,
 	promptText,
+	promptTokenBound,
 	receiptMessage,
 	sha256Hex,
 	ticketMessage,
@@ -372,7 +374,12 @@ export class Provider {
 			return { code: 'invalid_request', error: 'request model does not match the ticket' };
 		}
 		/* The ticket prices at most maxInputTokens; refuse a larger prompt rather than prefill it unpaid. */
-		if (estimateTokens(promptText(envelope.request)) > ticket.maxInputTokens) {
+		try {
+			assertChatRequest(envelope.request);
+		} catch (error) {
+			return { code: 'invalid_request', error: (error as Error).message };
+		}
+		if (promptTokenBound(envelope.request) > ticket.maxInputTokens) {
 			return { code: 'invalid_request', error: 'the prompt is larger than the ticket allows' };
 		}
 		if (this.state !== 'online' || this.active.size >= state.provider.maxConcurrentJobs) {

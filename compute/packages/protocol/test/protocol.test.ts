@@ -21,6 +21,7 @@ import {
 	requestMessage,
 	signRequest,
 	assertChatRequest,
+	promptTokenBound,
 	assertOffer,
 	type HardwareProfile,
 	type Receipt
@@ -145,6 +146,17 @@ test('validation rejects malformed offers and requests', () => {
 	assert.throws(() => assertChatRequest({ model: 'x', messages: [{ role: 'user', content: 'hi' }], max_tokens: 0 }));
 	assert.ok(assertChatRequest({ model: 'qwen3-8b', messages: [{ role: 'user', content: 'hi' }] }));
 	assert.throws(() => assertOffer({ modelId: 'x', weightsHash: 'nope' }, 0));
+	assert.throws(() => assertChatRequest({ model: 'qwen3-8b', messages: [{ role: 'user', content: [{ type: 'image_url', image_url: { url: 'data:' } }] }] }), /text content/);
+	assert.throws(() => assertChatRequest({ model: 'qwen3-8b', messages: [{ role: 'user', content: 'hi' }], n: 4 }), /n must be 1/);
+});
+
+test('the prompt bound covers dense scripts and tool definitions', () => {
+	const base = { model: 'qwen3-8b', messages: [{ role: 'user' as const, content: 'hi' }] };
+	const cjk = '漢'.repeat(1000);
+	/* Roughly one token per character for CJK; the old chars/3 estimate priced a third of that. */
+	assert.ok(promptTokenBound({ ...base, messages: [{ role: 'user', content: cjk }] }) >= 1000);
+	const tools = [{ type: 'function', function: { name: 'f', description: 'x'.repeat(5000), parameters: {} } }];
+	assert.ok(promptTokenBound({ ...base, tools }) > promptTokenBound(base) + 10_000, 'tools count toward the prompt');
 });
 
 test('catalog.json is in sync with catalog.ts (run npm run catalog:export)', async () => {

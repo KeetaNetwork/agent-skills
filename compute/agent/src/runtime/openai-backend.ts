@@ -4,7 +4,7 @@
  * returns what a receipt needs: usage, output text, finish reason.
  */
 
-import { chunkText, estimateTokens, promptText, type ChatCompletionRequest } from '@keeta-compute/protocol';
+import { MODEL_REQUEST_FIELDS, chunkText, estimateTokens, promptText, type ChatCompletionRequest } from '@keeta-compute/protocol';
 
 export interface Backend {
 	/** e.g. http://127.0.0.1:8081/v1 */
@@ -27,14 +27,14 @@ export async function streamChat(
 	request: ChatCompletionRequest,
 	options: { networkModelId: string; maxOutputTokens: number; signal: AbortSignal; onChunk: (chunk: Record<string, unknown>) => void }
 ): Promise<StreamResult> {
-	const { stream_options: _ignored, ...rest } = request;
+	/* Forward only known fields: anything else (a custom chat template, extra documents) could change what gets prefilled. */
+	const rest = Object.fromEntries(MODEL_REQUEST_FIELDS.filter((key) => request[key] !== undefined).map((key) => [key, request[key]]));
 	const body = {
 		...rest,
 		model: backend.servedName,
 		stream: true,
 		stream_options: { include_usage: true },
-		max_tokens: options.maxOutputTokens,
-		max_completion_tokens: undefined
+		max_tokens: options.maxOutputTokens
 	};
 	const response = await fetch(`${backend.baseUrl}/chat/completions`, {
 		method: 'POST',

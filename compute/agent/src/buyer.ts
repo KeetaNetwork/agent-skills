@@ -13,12 +13,11 @@ import {
 	aggregateCompletion,
 	assertChatRequest,
 	chunkText,
-	estimateTokens,
 	jobAuthMessage,
 	jobCost,
 	maxJobCost,
 	maxOutputTokensFor,
-	promptText,
+	promptTokenBound,
 	readRelayEvents,
 	receiptMessage,
 	requestedMaxTokens,
@@ -191,7 +190,7 @@ export class Buyer {
 			throw new HttpError(403, 'model_not_allowed', `${body.model} is not in this Mac's allowed models`);
 		}
 		const maxOutputTokens = requestedMaxTokens(body);
-		const maxInputTokens = estimateTokens(promptText(body));
+		const maxInputTokens = promptTokenBound(body);
 
 		const { ticket } = await control.post<{ ticket: SignedTicket; relayUrl: string }>(spend, '/v1/jobs', {
 			network,

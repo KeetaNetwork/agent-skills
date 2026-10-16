@@ -11,7 +11,7 @@ const payTo = 'keeta_aabpjkb2hmzj5wjiksxyxjpnbkvnelocqermwxd2ee2diikzy72cjtwd24g
 async function makeTicket(overrides: Partial<JobTicket> = {}): Promise<SignedTicket> {
 	const ticket: JobTicket = {
 		v: 1, jobId: 'job_abc', network: 'test', nodeKey: payTo, modelId: 'qwen3-8b', buyer: payTo,
-		maxInputTokens: 100, maxOutputTokens: 64, price: { inputPerMillion: '100000', outputPerMillion: '400000' },
+		maxInputTokens: 1000, maxOutputTokens: 64, price: { inputPerMillion: '100000', outputPerMillion: '400000' },
 		asset: NETWORKS.test.settlementAsset.address, payTo, paymentMode: 'prepaid', prepaidAmount: '36',
 		issuedAt: Date.now(), expiresAt: Date.now() + 60_000, ...overrides
 	};

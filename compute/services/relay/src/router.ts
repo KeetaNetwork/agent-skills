@@ -13,8 +13,7 @@
 import {
 	NETWORKS,
 	assertChatRequest,
-	estimateTokens,
-	promptText,
+	promptTokenBound,
 	requestedMaxTokens,
 	ticketMac,
 	timingSafeEqual,
@@ -142,7 +141,7 @@ export function createRouter(deps: RouterDeps) {
 			return errorResponse(400, 'invalid_request', error instanceof ValidationError ? error.message : 'body must be a JSON chat completion request');
 		}
 		const maxOutputTokens = requestedMaxTokens(body);
-		const maxInputTokens = estimateTokens(promptText(body));
+		const maxInputTokens = promptTokenBound(body);
 		const paymentHeader = request.headers.get('payment-signature') ?? request.headers.get('x-payment');
 		const resource = { url: request.url, description: `Chat completion with ${body.model} on Keeta Compute`, mimeType: body.stream ? 'text/event-stream' : 'application/json' };
 

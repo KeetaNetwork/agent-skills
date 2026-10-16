@@ -4,16 +4,24 @@
 #   curl -fsSL https://keeta.ai/compute/install-helper.sh | sh
 #
 # Downloads the release binary for this machine from GitHub, checks it
-# against the published SHA-256, and installs it. It needs no root unless
-# KEETA_COMPUTE_PREFIX points somewhere only root can write.
+# against the SHA-256 pinned in this script, and installs it. The digest
+# lives here, in reviewed source, so replacing a release asset is not enough
+# to change what gets installed. It needs no root unless KEETA_COMPUTE_PREFIX
+# points somewhere only root can write.
 #
-#   KEETA_COMPUTE_VERSION   release tag to install (default: latest)
+#   KEETA_COMPUTE_VERSION   another release tag to install; then
+#   KEETA_COMPUTE_SHA256    must give that binary's SHA-256
 #   KEETA_COMPUTE_PREFIX    install directory (default: /usr/local/bin if
 #                           writable, otherwise ~/.local/bin)
 set -eu
 
 REPO="KeetaNetwork/agent-skills"
 NAME="keeta-compute-agent"
+
+# Set together when a release is published (see compute/README.md, Deploy).
+VERSION=""
+SHA256_X64=""
+SHA256_ARM64=""
 
 fail() {
 	echo "install-helper: $*" >&2
@@ -37,12 +45,16 @@ else
 	fail "sha256sum or shasum is required"
 fi
 
-version="${KEETA_COMPUTE_VERSION:-latest}"
-if [ "$version" = "latest" ]; then
-	base="https://github.com/$REPO/releases/latest/download"
+if [ -n "${KEETA_COMPUTE_VERSION:-}" ]; then
+	version="$KEETA_COMPUTE_VERSION"
+	expected="${KEETA_COMPUTE_SHA256:-}"
+	[ -n "$expected" ] || fail "KEETA_COMPUTE_SHA256 is required with KEETA_COMPUTE_VERSION"
 else
-	base="https://github.com/$REPO/releases/download/$version"
+	version="$VERSION"
+	if [ "$arch" = "x64" ]; then expected="$SHA256_X64"; else expected="$SHA256_ARM64"; fi
+	[ -n "$version" ] && [ -n "$expected" ] || fail "no helper release has been published yet"
 fi
+base="https://github.com/$REPO/releases/download/$version"
 asset="$NAME-linux-$arch"
 
 if [ -n "${KEETA_COMPUTE_PREFIX:-}" ]; then
@@ -58,9 +70,7 @@ trap 'rm -rf "$tmp"' EXIT INT TERM
 
 echo "Downloading $asset ($version)..."
 curl -fsSL -o "$tmp/$asset" "$base/$asset" || fail "download failed: $base/$asset"
-curl -fsSL -o "$tmp/$asset.sha256" "$base/$asset.sha256" || fail "checksum download failed"
 
-expected="$(cut -d' ' -f1 "$tmp/$asset.sha256")"
 actual="$(sha "$tmp/$asset")"
 [ "$expected" = "$actual" ] || fail "checksum mismatch (expected $expected, got $actual)"
 
