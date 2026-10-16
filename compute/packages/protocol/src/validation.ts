@@ -92,10 +92,77 @@ export function assertChatRequest(value: unknown): ChatCompletionRequest {
 		}
 	}
 	assert(request.tools === undefined || Array.isArray(request.tools), 'tools must be a list');
+	assertStop(request.stop);
+	assertResponseFormat(request.response_format);
+	/* A forced tool call makes the model server compile the tool's parameters into a grammar, like a JSON schema. */
+	const forcesTool = request.tool_choice === 'required' || (typeof request.tool_choice === 'object' && request.tool_choice !== null);
+	if (forcesTool && Array.isArray(request.tools)) {
+		for (const tool of request.tools as Array<{ function?: { parameters?: unknown } }>) {
+			assertBoundedSchema(tool?.function?.parameters, 'forced tool parameters');
+		}
+	}
 	assert(request.n === undefined || request.n === 1, 'n must be 1');
 	const maxTokens = request.max_completion_tokens ?? request.max_tokens;
 	assert(maxTokens === undefined || (Number.isInteger(maxTokens) && maxTokens > 0 && maxTokens <= MAX_OUTPUT_TOKENS), `max_tokens must be between 1 and ${MAX_OUTPUT_TOKENS}`);
 	return request;
+}
+
+const utf8Encoder = new TextEncoder();
+const MAX_STOP_SEQUENCES = 4;
+const MAX_STOP_BYTES = 256;
+const MAX_SCHEMA_BYTES = 8_192;
+const MAX_SCHEMA_DEPTH = 8;
+/* Keywords whose grammar compile is not bounded by the schema's size (alternation, references, regexes, conditionals). */
+const UNBOUNDED_SCHEMA_KEYS = new Set(['anyOf', 'oneOf', 'allOf', 'not', '$ref', '$defs', 'definitions', 'pattern', 'patternProperties', 'if', 'then', 'else', 'dependentSchemas', 'dependentRequired', 'unevaluatedProperties']);
+
+function assertStop(stop: unknown): void {
+	if (stop === undefined || stop === null) {
+		return;
+	}
+	const list = typeof stop === 'string' ? [stop] : stop;
+	assert(Array.isArray(list) && list.length <= MAX_STOP_SEQUENCES, `stop must be a string or a list of at most ${MAX_STOP_SEQUENCES}`);
+	for (const item of list) {
+		assert(typeof item === 'string' && utf8Encoder.encode(item).length <= MAX_STOP_BYTES, `each stop sequence must be text of at most ${MAX_STOP_BYTES} bytes`);
+	}
+}
+
+/**
+ * Structured output is compiled into a grammar before the first token, which
+ * the buyer has not paid for yet. Only small, plain schemas are accepted: no
+ * alternation, references, regexes or conditionals, bounded size and depth.
+ */
+function assertResponseFormat(format: unknown): void {
+	if (format === undefined || format === null) {
+		return;
+	}
+	const f = format as { type?: unknown; json_schema?: { schema?: unknown } };
+	assert(typeof f === 'object' && (f.type === 'text' || f.type === 'json_object' || f.type === 'json_schema'), 'response_format.type must be text, json_object or json_schema');
+	if (f.type === 'json_schema') {
+		assert(f.json_schema && typeof f.json_schema === 'object', 'response_format.json_schema is required');
+		assertBoundedSchema(f.json_schema.schema, 'response_format schema');
+	}
+}
+
+function assertBoundedSchema(schema: unknown, field: string): void {
+	if (schema === undefined) {
+		return;
+	}
+	assert(utf8Encoder.encode(JSON.stringify(schema)).length <= MAX_SCHEMA_BYTES, `${field} must be at most ${MAX_SCHEMA_BYTES} bytes`);
+	const walk = (node: unknown, depth: number): void => {
+		if (Array.isArray(node)) {
+			node.forEach((item) => walk(item, depth));
+			return;
+		}
+		if (!node || typeof node !== 'object') {
+			return;
+		}
+		assert(depth <= MAX_SCHEMA_DEPTH, `${field} nests deeper than ${MAX_SCHEMA_DEPTH} levels`);
+		for (const [key, value] of Object.entries(node)) {
+			assert(!UNBOUNDED_SCHEMA_KEYS.has(key), `${field} may not use ${key}`);
+			walk(value, depth + 1);
+		}
+	};
+	walk(schema, 0);
 }
 
 export function requestedMaxTokens(request: ChatCompletionRequest): number {
@@ -117,20 +184,21 @@ export const MODEL_REQUEST_FIELDS = [
 	'response_format'
 ] as const;
 
-const utf8Encoder = new TextEncoder();
 
 /**
  * Most prompt tokens a request can make a model server prefill. Every token
  * covers at least one byte of the rendered prompt, so the UTF-8 size of
- * everything forwarded (messages, and tools at twice their size for
- * template indentation) bounds it whatever the language; the slack covers
+ * everything forwarded (messages, tools at twice their size for template
+ * indentation, and any response format, which some servers put in the
+ * prompt) bounds it whatever the language; the slack covers
  * chat-template markup. Quotes, tickets and providers all size prompts
  * with this, so no request can prefill more than it was priced for.
  */
 export function promptTokenBound(request: ChatCompletionRequest): number {
 	const bytes = (value: unknown) => utf8Encoder.encode(JSON.stringify(value ?? null)).length;
 	const tools = Array.isArray(request.tools) && request.tools.length > 0;
-	return bytes(request.messages) + (tools ? 2 * bytes(request.tools) + bytes(request.tool_choice) + 512 : 0) + 16 * request.messages.length + 128;
+	const schema = request.response_format ? bytes(request.response_format) : 0;
+	return bytes(request.messages) + (tools ? 2 * bytes(request.tools) + bytes(request.tool_choice) + 512 : 0) + schema + 16 * request.messages.length + 128;
 }
 
 /** Text the model will read, for token estimates. */

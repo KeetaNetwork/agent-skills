@@ -48,6 +48,10 @@ import {
 } from '@keeta-compute/protocol';
 import { ConflictError, NotFoundError, type Store, type StoredProvider } from './store.ts';
 
+/** A buyer with this many disputed receipts in the window is not scheduled. */
+const DISPUTE_WINDOW_MS = 24 * 60 * 60_000;
+const MAX_DISPUTES = 5;
+
 export class AuthError extends Error {
 	readonly status = 401;
 }
@@ -445,6 +449,11 @@ export class ControlService {
 		if (unpaid.length > 0) {
 			throw new PaymentRequiredError(`${unpaid.length} completed job(s) are unpaid; settle them before starting new ones`);
 		}
+		/* Disputes free a buyer from bad receipts; a buyer that disputes everything stops being scheduled. */
+		const disputed = (await this.store.listJobsByBuyer(buyer, 100)).filter((j) => j.status === 'disputed' && (j.completedAt ?? j.createdAt) > this.now() - DISPUTE_WINDOW_MS);
+		if (disputed.length >= MAX_DISPUTES) {
+			throw new PaymentRequiredError(`${disputed.length} receipts were disputed in the last day; new jobs are paused for this buyer`);
+		}
 		const budget = await this.buyerBudget(network, buyer);
 		const result = await this.schedule({
 			network,
@@ -637,6 +646,37 @@ export class ControlService {
 			return { ...current, status: 'failed', completedAt: this.now(), error: 'cancelled by the buyer' };
 		});
 		await this.store.updateProvider(job.nodeKey, (record) => ({ ...record, load: { ...record.load, active: Math.max(0, record.load.active - 1) } }));
+		return { job: redactJob(updated) };
+	}
+
+	/**
+	 * Buyer refuses a job it will not pay: an unused ticket is handed back, and
+	 * a receipt that does not match the text it received is disputed, so a
+	 * provider cannot turn a made-up receipt into a debt that blocks the buyer.
+	 */
+	async refuseJob(buyer: string, jobId: string, body: Record<string, unknown>) {
+		const reason = typeof body.reason === 'string' && body.reason ? body.reason.slice(0, 300) : 'refused by the buyer';
+		const job = await this.store.getJob(jobId);
+		if (!job) {
+			throw new NotFoundError('job not found');
+		}
+		if (job.buyer !== buyer || job.paymentMode !== 'postpay') {
+			throw new ForbiddenError('job belongs to another buyer');
+		}
+		const updated = await this.store.updateJob(jobId, (current) => {
+			if (current.status === 'scheduled') {
+				return { ...current, status: 'failed', completedAt: this.now(), error: `refused by the buyer: ${reason}` };
+			}
+			if (current.status === 'completed' && !current.payment) {
+				return { ...current, status: 'disputed', error: reason };
+			}
+			throw new ConflictError(`job is already ${current.status}`);
+		});
+		await this.store.updateProvider(job.nodeKey, (record) =>
+			updated.status === 'failed'
+				? { ...record, load: { ...record.load, active: Math.max(0, record.load.active - 1) } }
+				: { ...record, stats: { ...record.stats, disputed: (record.stats.disputed ?? 0) + 1 } }
+		);
 		return { job: redactJob(updated) };
 	}
 

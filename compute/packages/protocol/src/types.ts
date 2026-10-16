@@ -54,12 +54,13 @@ export interface ProviderRecord {
 	load: { active: number; capacity: number };
 	lastHeartbeat: number;
 	registeredAt: number;
-	stats: { completed: number; failed: number; tokensOut: number; earned: string };
+	stats: { completed: number; failed: number; tokensOut: number; earned: string; disputed?: number };
 }
 
 export type PaymentMode = 'postpay' | 'prepaid';
 
-export type JobStatus = 'scheduled' | 'completed' | 'failed' | 'paid' | 'expired';
+/** `disputed`: the buyer refused a receipt that did not match what it received; it is not owed. */
+export type JobStatus = 'scheduled' | 'completed' | 'failed' | 'paid' | 'expired' | 'disputed';
 
 export interface JobRecord {
 	jobId: string;

@@ -181,6 +181,49 @@ test('unpaid receipts block a buyer after the grace period', async () => {
 	assert.equal(blocked.status, 402);
 });
 
+test('a buyer can dispute a receipt it will not pay, and serial disputers stop being scheduled', async () => {
+	const h = harness();
+	const { node, operator } = await registerMac(h);
+	const online = () => h.call(node, 'POST', '/v1/providers/heartbeat', { status: 'online', offers: [offer('qwen3-8b')], load: { active: 0, capacity: 8 } });
+	await online();
+	const buyer = newSigner();
+	const fakeReceipt = async () => {
+		const created = await h.call(buyer, 'POST', '/v1/jobs', { network: 'test', model: 'qwen3-8b', maxInputTokens: 10, maxOutputTokens: 10 });
+		assert.equal(created.status, 200, JSON.stringify(created.body));
+		const { ticket } = created.body as { ticket: { ticket: { jobId: string; price: Offer['price'] } } };
+		const receipt: Receipt = {
+			v: 1, jobId: ticket.ticket.jobId, network: 'test', nodeKey: node.publicKey, payTo: operator.publicKey, buyer: buyer.publicKey, modelId: 'qwen3-8b',
+			weightsHash: 'c'.repeat(64), runtime: { kind: 'mlx', build: 'x' }, inputTokens: 5, outputTokens: 5, price: ticket.ticket.price,
+			amount: jobCost(ticket.ticket.price, { inputTokens: 5, outputTokens: 5 }).toString(), asset: NETWORKS.test.settlementAsset.address,
+			startedAt: 0, finishedAt: 0, outputHash: 'e'.repeat(64), finishReason: 'stop'
+		};
+		await h.call(node, 'POST', `/v1/jobs/${receipt.jobId}/receipt`, { receipt: { receipt, signature: await node.sign(receiptMessage(receipt)) } });
+		return receipt.jobId;
+	};
+
+	/* A receipt for text the buyer never received is disputed, so it is not a debt that blocks the buyer. */
+	const jobId = await fakeReceipt();
+	assert.equal((await h.call(newSigner(), 'POST', `/v1/jobs/${jobId}/refuse`, {})).status, 403, 'only the job\'s buyer can refuse it');
+	const refused = await h.call(buyer, 'POST', `/v1/jobs/${jobId}/refuse`, { reason: 'receipt output does not match the text received' });
+	assert.equal((refused.body as { job: { status: string } }).job.status, 'disputed');
+	assert.equal((await h.call(buyer, 'POST', `/v1/jobs/${jobId}/refuse`, {})).status, 409);
+	h.advance(UNPAID_GRACE_MS + 1000);
+	await online();
+	assert.equal((await h.call(buyer, 'POST', '/v1/jobs', { network: 'test', model: 'qwen3-8b', maxInputTokens: 10, maxOutputTokens: 10 })).status, 200);
+	assert.equal((await h.store.getProvider(node.publicKey))!.stats.disputed, 1, 'disputes show on the provider record');
+
+	/* An unused ticket is handed back and frees the slot. */
+	const [open] = (await h.store.listJobsByBuyer(buyer.publicKey, 1));
+	const handedBack = await h.call(buyer, 'POST', `/v1/jobs/${open!.jobId}/refuse`, { reason: 'spend limit' });
+	assert.equal((handedBack.body as { job: { status: string } }).job.status, 'failed');
+
+	for (let i = 0; i < 4; i++) {
+		await h.call(buyer, 'POST', `/v1/jobs/${await fakeReceipt()}/refuse`, {});
+	}
+	const paused = await h.call(buyer, 'POST', '/v1/jobs', { network: 'test', model: 'qwen3-8b', maxInputTokens: 10, maxOutputTokens: 10 });
+	assert.equal(paused.status, 402, 'five disputes in a day pause the buyer');
+});
+
 test('pay-later buyers need ledger funds for every job they still owe for', async () => {
 	const balances = new Map<string, bigint>();
 	let ledgerUp = true;

@@ -150,6 +150,29 @@ test('validation rejects malformed offers and requests', () => {
 	assert.throws(() => assertChatRequest({ model: 'qwen3-8b', messages: [{ role: 'user', content: 'hi' }], n: 4 }), /n must be 1/);
 });
 
+test('structured output and stop lists are bounded before anything is paid', () => {
+	const ask = (extra: Record<string, unknown>) => () => assertChatRequest({ model: 'qwen3-8b', messages: [{ role: 'user', content: 'hi' }], ...extra });
+	const schema = (s: unknown) => ({ response_format: { type: 'json_schema', json_schema: { name: 'x', schema: s } } });
+	assert.doesNotThrow(ask(schema({ type: 'object', properties: { name: { type: 'string' }, tags: { type: 'array', items: { type: 'string' } } }, required: ['name'] })));
+	assert.doesNotThrow(ask({ response_format: { type: 'json_object' }, stop: ['\n\n', 'END'] }));
+	assert.throws(ask(schema({ anyOf: [{ type: 'string' }, { type: 'number' }] })), /anyOf/);
+	assert.throws(ask(schema({ type: 'string', pattern: '(a+)+$' })), /pattern/);
+	let deep: Record<string, unknown> = { type: 'string' };
+	for (let i = 0; i < 12; i++) {
+		deep = { type: 'object', properties: { a: deep } };
+	}
+	assert.throws(ask(schema(deep)), /nests deeper/);
+	assert.throws(ask(schema({ type: 'object', description: 'x'.repeat(9000) })), /bytes/);
+	assert.throws(ask({ response_format: { type: 'grammar' } }), /response_format/);
+	assert.throws(ask({ stop: ['a', 'b', 'c', 'd', 'e'] }), /stop/);
+	assert.throws(ask({ stop: 'x'.repeat(300) }), /stop/);
+	const forced = { tools: [{ type: 'function', function: { name: 'f', parameters: { oneOf: [{ type: 'string' }] } } }] };
+	assert.doesNotThrow(ask({ ...forced, tool_choice: 'auto' }), 'free tool choice compiles no grammar');
+	assert.throws(ask({ ...forced, tool_choice: 'required' }), /oneOf/);
+	const base = { model: 'qwen3-8b', messages: [{ role: 'user' as const, content: 'hi' }] };
+	assert.ok(promptTokenBound({ ...base, response_format: { type: 'json_object', pad: 'x'.repeat(500) } }) >= promptTokenBound(base) + 500, 'the response format is priced');
+});
+
 test('the prompt bound covers dense scripts and tool definitions', () => {
 	const base = { model: 'qwen3-8b', messages: [{ role: 'user' as const, content: 'hi' }] };
 	const cjk = '漢'.repeat(1000);

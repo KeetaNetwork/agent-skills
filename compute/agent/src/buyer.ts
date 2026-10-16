@@ -204,10 +204,8 @@ export class Buyer {
 		try {
 			return await this.run(body, res, signal, ticket, maxInputTokens, maxOutputTokens);
 		} catch (error) {
-			/* Hand back a ticket that never reached the provider, so its slot is not held until expiry. */
-			if (!res.headersSent) {
-				await control.post(spend, `/v1/jobs/${t.jobId}/cancel`, {}).catch(() => undefined);
-			}
+			/* Hand back the ticket (or dispute a receipt) for a job this buyer will not pay, so it is neither held nor owed. */
+			await this.refuse(t.jobId, (error as Error).message);
 			throw error;
 		}
 	}
@@ -272,6 +270,7 @@ export class Buyer {
 				const result = await aggregateCompletion(events, body.model);
 				if (result.error && !receipt) {
 					this.deps.onJob({ ...summary, status: 'failed', error: result.error, at: Date.now() });
+					void this.refuse(t.jobId, result.error);
 					return json(res, 502, { error: { code: 'provider_failed', message: `${result.error}; nothing was charged` } });
 				}
 				json(res, 200, result.completion, { 'x-keeta-job': t.jobId });
@@ -292,6 +291,7 @@ export class Buyer {
 
 		if (!receipt) {
 			this.deps.onJob({ ...summary, status: 'failed', error: 'no receipt', at: Date.now() });
+			void this.refuse(t.jobId, 'the provider sent no receipt');
 			return;
 		}
 		this.accept(ticket, receipt, maxCost, await deliveryOf(delivered), summary);
@@ -304,6 +304,7 @@ export class Buyer {
 		if (problem) {
 			this.deps.log('warn', `not paying job ${t.jobId}: ${problem}`);
 			this.deps.onJob({ ...summary, status: 'failed', error: problem, at: Date.now() });
+			void this.refuse(t.jobId, problem);
 			return;
 		}
 		const unpaid: UnpaidReceipt = { jobId: t.jobId, network: t.network, payTo: t.payTo, amount: receipt.receipt.amount, asset: t.asset, receipt, attempts: 0 };
@@ -343,9 +344,15 @@ export class Buyer {
 					this.accept(late.ticket, job.receipt, BigInt(late.maxCost), late.delivery, summary);
 				} else if (settled || stale) {
 					this.deps.onJob({ ...summary, error: 'the provider sent no receipt' });
+					void this.refuse(late.jobId, 'the provider sent no receipt');
 				}
 			}
 		}
+	}
+
+	/** Tell the control plane this buyer will not pay a job: frees an unused ticket, or disputes its receipt. */
+	private async refuse(jobId: string, reason: string): Promise<void> {
+		await this.deps.control.post(this.deps.spend, `/v1/jobs/${jobId}/refuse`, { reason: reason.slice(0, 300) }).catch(() => undefined);
 	}
 
 	checkReceipt(ticket: SignedTicket, signed: SignedReceipt, maxCost: bigint, delivery: Delivery): string | null {
