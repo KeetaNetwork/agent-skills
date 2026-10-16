@@ -25,6 +25,7 @@
     "catalog:pin": "npm run catalog:pin -w @keeta-compute/provider --"
   },
   "devDependencies": {
+    "@keetanetwork/anchor": "0.0.102",
     "@keetanetwork/keetanet-client": "0.18.7",
     "@noble/curves": "^1.9.7",
     "@types/node": "^22.13.4",

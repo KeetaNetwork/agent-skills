@@ -17,7 +17,7 @@
   },
   "dependencies": {
     "@keeta-compute/protocol": "0.1.0",
-    "@keetanetwork/anchor": "0.0.77",
+    "@keetanetwork/anchor": "0.0.102",
     "@keetanetwork/keetanet-client": "0.18.7"
   }
 }
