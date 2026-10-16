@@ -39,7 +39,7 @@ export async function checkEnvelope(secret: string, jobId: string, envelope: Job
 		return 'ticket was not issued by the control plane';
 	}
 	/* Prepaid tickets appear in public 402 quotes; only the router runs them, after the x402 payment verifies. */
-	if (signed.ticket.paymentMode !== 'postpay') {
+	if (signed.ticket.paymentMode !== 'escrow') {
 		return 'prepaid jobs run only through the paid API';
 	}
 	if (typeof envelope.buyerSig !== 'string') {

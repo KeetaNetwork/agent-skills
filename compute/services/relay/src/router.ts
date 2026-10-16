@@ -1,6 +1,8 @@
 /**
  * The public API router (plan §6.1, §6.3): OpenAI-compatible endpoints for
- * buyers without the app, paid per request with x402 on Keeta. Payment goes
+ * buyers without the app, paid per request with x402 on Keeta in a
+ * stablecoin: KUSD once it is pinned, otherwise USDC. Offer prices are in
+ * credits, and one credit is one US dollar of the stablecoin. Payment goes
  * straight to the serving provider's account.
  *
  * Flow: quote (control plane schedules a provider and signs a prepaid
@@ -19,6 +21,7 @@ import {
 	MODEL_REQUEST_FIELDS,
 	NETWORKS,
 	assertChatRequest,
+	findAsset,
 	promptTokenBound,
 	requestedMaxTokens,
 	ticketMac,
@@ -104,6 +107,8 @@ export function requirementsFromTicket(signed: SignedTicket, network: NetworkNam
 		maxTimeoutSeconds: 60,
 		extra: {
 			jobId: ticket.jobId,
+			/* Which stablecoin `asset` is (KUSD or USDC); the price is in credits, one to the dollar. */
+			assetSymbol: findAsset(network, ticket.asset)?.symbol ?? null,
 			model: ticket.modelId,
 			maxInputTokens: ticket.maxInputTokens,
 			maxOutputTokens: ticket.maxOutputTokens,
@@ -154,7 +159,7 @@ export function createRouter(deps: RouterDeps) {
 				id: m.id,
 				object: 'model',
 				owned_by: 'keeta-compute',
-				keeta: { name: m.name, providers: m.providers, lowestPrice: m.lowestPrice, contextLength: m.contextLength, license: m.license }
+				keeta: { name: m.name, providers: m.providers, lowestPrice: m.lowestPrice, priceUnit: 'credit base units per million tokens (1 credit = 1 USD, 6 decimals)', contextLength: m.contextLength, license: m.license }
 			}))
 		});
 	}

@@ -41,6 +41,29 @@ final class RPCCodecTests: XCTestCase {
         XCTAssertEqual(string(override), #"{"id":5,"jsonrpc":"2.0","method":"models.setOffer","params":{"access":{"allow":["keeta_abc"],"mode":"allowlist"},"modelId":"m","offered":true}}"# + "\n")
     }
 
+    func testEncodesCreditSwaps() throws {
+        let buy = try RPCCodec.encodeRequest(id: .number(10), method: AgentRPC.WalletBuyCredits.name, params: BuyCreditsParams(entropy: "ab", amount: "5000000", with: "KUSD"))
+        XCTAssertEqual(string(buy), #"{"id":10,"jsonrpc":"2.0","method":"wallet.buyCredits","params":{"amount":"5000000","entropy":"ab","with":"KUSD"}}"# + "\n")
+        let sell = try RPCCodec.encodeRequest(id: .number(11), method: AgentRPC.WalletSellCredits.name, params: SellCreditsParams(entropy: "ab", amount: "1000000", to: "KEUR"))
+        XCTAssertEqual(string(sell), #"{"id":11,"jsonrpc":"2.0","method":"wallet.sellCredits","params":{"amount":"1000000","entropy":"ab","to":"KEUR"}}"# + "\n")
+        let quote = try RPCCodec.encodeRequest(id: .number(12), method: AgentRPC.WalletCreditQuote.name, params: CreditQuoteParams(side: .buy, amount: "1000000", stablecoin: "KJPY"))
+        XCTAssertEqual(string(quote), #"{"id":12,"jsonrpc":"2.0","method":"wallet.creditQuote","params":{"amount":"1000000","side":"buy","stablecoin":"KJPY"}}"# + "\n")
+        let fund = try RPCCodec.encodeRequest(id: .number(13), method: AgentRPC.WalletFundBudget.name, params: FundBudgetParams(entropy: "ab", amount: "1", asset: .credits))
+        XCTAssertEqual(string(fund), #"{"id":13,"jsonrpc":"2.0","method":"wallet.fundBudget","params":{"amount":"1","asset":"credits","entropy":"ab"}}"# + "\n")
+
+        let bought = line(#"{"jsonrpc":"2.0","id":10,"result":{"exchangeId":"x1","blockHash":"AB","paid":"5000000","credits":"5000000","budgetBlockHash":"CD"}}"#)
+        guard case let .success(_, body) = try RPCCodec.parse(bought) else { return XCTFail("expected success") }
+        let result = try RPCCodec.decodeResult(AgentRPC.WalletBuyCredits.Result.self, from: body)
+        XCTAssertEqual(result.credits, "5000000")
+        XCTAssertEqual(result.budgetBlockHash, "CD")
+
+        let settled = line(#"{"jsonrpc":"2.0","id":14,"result":{"reported":1,"settled":2}}"#)
+        guard case let .success(_, settleBody) = try RPCCodec.parse(settled) else { return XCTFail("expected success") }
+        let settle = try RPCCodec.decodeResult(AgentRPC.BuyerSettle.Result.self, from: settleBody)
+        XCTAssertEqual(settle.reported, 1)
+        XCTAssertEqual(settle.settled, 2)
+    }
+
     func testEncodesSignDigestResultAndError() throws {
         let result = try RPCCodec.encodeResult(id: .string("a1"), result: SignDigestResult(signature: "00ff"))
         XCTAssertEqual(string(result), #"{"id":"a1","jsonrpc":"2.0","result":{"signature":"00ff"}}"# + "\n")
@@ -92,8 +115,13 @@ final class RPCCodecTests: XCTestCase {
         XCTAssertEqual(state.tier, .b)
         XCTAssertEqual(state.hardware?.memoryBytes, 68_719_476_736)
         XCTAssertEqual(state.wallet?.operatorAddress, "keeta_operator")
-        XCTAssertEqual(state.wallet?.balances?.operatorBalance?.usdc, "12500000")
+        XCTAssertEqual(state.wallet?.balances?.operatorBalance?.credits, "12500000")
+        XCTAssertEqual(state.wallet?.balances?.operatorBalance?.stablecoins["KUSD"], "3000000")
+        XCTAssertEqual(state.wallet?.balances?.spend.credits, "2000000")
+        XCTAssertEqual(state.wallet?.asset.symbol, "credits")
         XCTAssertEqual(state.wallet?.asset.decimals, 6)
+        XCTAssertEqual(state.wallet?.creditsAvailable, true)
+        XCTAssertEqual(state.wallet?.stablecoins.map(\.symbol), ["KUSD", "USDC"])
         XCTAssertEqual(state.provider?.state, .outsideSchedule)
         XCTAssertEqual(state.provider?.policy.schedule.mode, .hours)
         XCTAssertEqual(state.provider?.policy.schedule.startHour, 22)
@@ -193,14 +221,16 @@ final class RPCCodecTests: XCTestCase {
       "hardware":{"os":"macos","osVersion":"15.1","chip":"Apple M4 Max","memoryBytes":68719476736,"freeDiskBytes":812345678901,"gpuCores":40,"machineModel":"Mac16,9","rdmaCapable":true},
       "tier":"B",
       "wallet":{"operator":"keeta_operator","spend":"keeta_spend",
-        "balances":{"operator":{"usdc":"12500000","kta":"1000000000000000000"},"spend":{"usdc":"2000000","kta":"0"}},
-        "asset":{"address":"keeta_apna75yhhvnv4ei7ape55hndk4yepno7a7i2mhtiwahiygixjcnmvswxhnmnk","symbol":"USDC","decimals":6},
+        "balances":{"operator":{"credits":"12500000","kta":"1000000000000000000","stablecoins":{"KUSD":"3000000","USDC":"0"}},"spend":{"credits":"2000000","kta":"0","stablecoins":{"KUSD":"0","USDC":"0"}}},
+        "asset":{"address":"keeta_credits","symbol":"credits","decimals":6},
+        "creditsAvailable":true,
+        "stablecoins":[{"symbol":"KUSD","name":"Keeta US Dollar","currency":"USD","address":"keeta_kusd","decimals":6},{"symbol":"USDC","name":"USD Coin","currency":"USD","address":"keeta_apna75yhhvnv4ei7ape55hndk4yepno7a7i2mhtiwahiygixjcnmvswxhnmnk","decimals":6}],
         "explorer":"https://explorer.test.keeta.com"},
       "provider":{"policy":{"enabled":true,"schedule":{"mode":"hours","startHour":22,"endHour":7},"pauseOnBattery":true,"maxConcurrentJobs":2,"access":{"mode":"allowlist","allow":["keeta_buyer"]}},
         "state":"outside-schedule","activeJobs":0,"earnedToday":"345000","earnedTotal":"9876543","tokensServedToday":120345,
         "recentJobs":[{"jobId":"j9","role":"provider","modelId":"qwen3-14b","counterparty":"keeta_buyer","inputTokens":900,"outputTokens":1500,"amount":"372","status":"paid","at":1760600000000.5,"helper":"keeta_helper"}]},
       "buyer":{"endpoint":"http://127.0.0.1:11435/v1","token":"kc_test_token","policy":{"perRequestMax":"100000","dailyMax":"5000000","allowedModels":[],"allowedProviders":[],"maxPrice":{"inputPerMillion":"500000","outputPerMillion":"1000000"}},
-        "spentToday":"1200","unpaid":1,"recentJobs":[]}
+        "spentToday":"1200","recentJobs":[]}
     }}
     """#.replacingOccurrences(of: "\n", with: "")
 

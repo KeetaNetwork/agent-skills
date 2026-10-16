@@ -9,14 +9,14 @@ import { createServer, type Server } from 'node:http';
 import { verifyKeetaSignature } from '@keeta-compute/protocol/keeta';
 import { serviceFromEnv, type EnvConfig } from './config.ts';
 import { createApi } from './http.ts';
-import type { BalanceReader, ControlService, PaymentVerifier } from './service.ts';
+import type { ControlService, PaymentVerifier, SettlementLedger } from './service.ts';
 import { MemoryStore } from './store.ts';
 
-export function startServer(options: { port: number; env: EnvConfig; verifyPayment?: PaymentVerifier; balanceOf?: BalanceReader }): Promise<{ server: Server; service: ControlService; store: MemoryStore; url: string }> {
+export function startServer(options: { port: number; env: EnvConfig; verifyPayment?: PaymentVerifier; settlement?: SettlementLedger }): Promise<{ server: Server; service: ControlService; store: MemoryStore; url: string }> {
 	const store = new MemoryStore();
 	const service = serviceFromEnv(store, options.env, {
 		...(options.verifyPayment ? { verifyPayment: options.verifyPayment } : {}),
-		...(options.balanceOf ? { balanceOf: options.balanceOf } : {})
+		...(options.settlement ? { settlement: options.settlement } : {})
 	});
 	const handle = createApi(service, { store, verify: verifyKeetaSignature, routerSecret: options.env.ROUTER_SECRET });
 	const server = createServer(async (req, res) => {

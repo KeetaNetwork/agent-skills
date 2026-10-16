@@ -76,20 +76,16 @@ export class FirestoreStore implements Store {
 		await this.jobs().doc(job.jobId).set(stripUndefined(job));
 	}
 
-	async putJobIf(job: JobRecord, admit: (openPostpay: JobRecord[]) => void) {
+	async putJobIf(job: JobRecord, admit: (openQuotes: JobRecord[]) => void) {
 		/* Every admission for a buyer reads and writes its lock document, so Firestore serializes them. */
 		const lock = this.db.collection('buyerLocks').doc(job.buyer);
 		await this.db.runTransaction(async (tx) => {
 			await tx.get(lock);
-			const open = await tx.get(this.openPostpayQuery(job.buyer));
-			admit(open.docs.map((doc) => doc.data() as JobRecord).filter((j) => j.paymentMode === 'postpay'));
+			const open = await tx.get(this.jobs().where('buyer', '==', job.buyer).where('status', '==', 'quoted'));
+			admit(open.docs.map((doc) => doc.data() as JobRecord));
 			tx.set(this.jobs().doc(job.jobId), stripUndefined(job));
 			tx.set(lock, { lastJobAt: job.createdAt });
 		});
-	}
-
-	private openPostpayQuery(buyer: string) {
-		return this.jobs().where('buyer', '==', buyer).where('status', 'in', ['scheduled', 'completed']);
 	}
 
 	async updateJob(jobId: string, update: (job: JobRecord) => JobRecord) {
@@ -115,18 +111,14 @@ export class FirestoreStore implements Store {
 		return snap.docs.map((doc) => doc.data() as JobRecord);
 	}
 
-	async listUnpaid(buyer: string, before: number) {
-		const snap = await this.jobs().where('buyer', '==', buyer).where('status', '==', 'completed').where('completedAt', '<', before).limit(50).get();
-		return snap.docs.map((doc) => doc.data() as JobRecord).filter((job) => job.paymentMode === 'postpay');
-	}
-
-	async listOpenPostpay(buyer: string) {
-		const snap = await this.openPostpayQuery(buyer).get();
-		return snap.docs.map((doc) => doc.data() as JobRecord).filter((job) => job.paymentMode === 'postpay');
-	}
-
 	async listJobsByStatus(status: JobStatus, createdBefore: number, limit: number) {
 		const snap = await this.jobs().where('status', '==', status).where('createdAt', '<', createdBefore).orderBy('createdAt', 'asc').limit(limit).get();
+		return snap.docs.map((doc) => doc.data() as JobRecord);
+	}
+
+	async listPayoutsDue(limit: number) {
+		/* payoutDue is written only while true and removed once the payout is recorded. */
+		const snap = await this.jobs().where('payoutDue', '==', true).limit(limit).get();
 		return snap.docs.map((doc) => doc.data() as JobRecord);
 	}
 

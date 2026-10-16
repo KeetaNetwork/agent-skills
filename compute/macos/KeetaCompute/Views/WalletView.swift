@@ -8,12 +8,12 @@ struct WalletView: View {
     @State var settingUp = false
 
     enum WalletSheet: String, Identifiable {
-        case send, receive, addBudget, moveBack
+        case buyCredits, cashOut, send, receive, addBudget, moveBack
         var id: String { rawValue }
     }
 
     var body: some View {
-        Screen("Wallet", subtitle: "Your earnings and spending money, in USDC.") {
+        Screen("Wallet", subtitle: "Keeta Compute Credits pay for requests and are what you earn. Buy them with Keeta stablecoins, KUSD first, and cash out any time.") {
             if model.hasOperator {
                 balanceCard
                 budgetCard
@@ -37,6 +37,8 @@ struct WalletView: View {
         .sheet(item: $sheet) { sheet in
             Group {
                 switch sheet {
+                case .buyCredits: CreditSwapSheet(side: .buy)
+                case .cashOut: CreditSwapSheet(side: .sell)
                 case .send: SendSheet()
                 case .receive: ReceiveSheet()
                 case .addBudget: BudgetSheet(direction: .add)
@@ -49,6 +51,10 @@ struct WalletView: View {
 
     private var operatorBalance: AssetBalance? { model.wallet?.balances?.operatorBalance }
     private var spendBalance: AssetBalance? { model.wallet?.balances?.spend }
+    /// Stablecoins the operator account holds, in lead order (KUSD first).
+    private var heldStablecoins: [StablecoinInfo] {
+        model.stablecoins.filter { !BaseUnits.isZero(operatorBalance?.stablecoins[$0.symbol] ?? "0") }
+    }
 
     // MARK: Cards
 
@@ -74,26 +80,56 @@ struct WalletView: View {
         Card {
             HStack(alignment: .top) {
                 Stat(
-                    title: "Balance",
-                    value: operatorBalance.map { model.money.string($0.usdc) } ?? "—",
-                    detail: model.wallet?.error
+                    title: "Credits",
+                    value: operatorBalance.map { model.money.string($0.credits) } ?? "—",
+                    detail: model.wallet?.error ?? (model.wallet?.creditsAvailable == false ? "Credits aren't available on this network yet." : nil)
                 )
                 Spacer()
                 VStack(alignment: .trailing, spacing: 8) {
+                    HStack {
+                        Button {
+                            sheet = .buyCredits
+                        } label: {
+                            Label("Buy credits", systemImage: "plus.circle")
+                        }
+                        .buttonStyle(.borderedProminent)
+                        Button {
+                            sheet = .cashOut
+                        } label: {
+                            Label("Cash out", systemImage: "arrow.uturn.backward.circle")
+                        }
+                        .disabled(operatorBalance.map { BaseUnits.isZero($0.credits) } ?? true)
+                    }
+                    .controlSize(.large)
+                    .disabled(model.wallet?.creditsAvailable != true || model.stablecoins.isEmpty)
                     HStack {
                         Button {
                             sheet = .send
                         } label: {
                             Label("Send", systemImage: "arrow.up.right")
                         }
-                        .buttonStyle(.borderedProminent)
                         Button {
                             sheet = .receive
                         } label: {
                             Label("Receive", systemImage: "arrow.down.left")
                         }
                     }
-                    .controlSize(.large)
+                }
+            }
+            if !heldStablecoins.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Stablecoins")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    ForEach(heldStablecoins) { coin in
+                        HStack {
+                            Text(coin.name)
+                            Spacer()
+                            Text(model.formatter(for: coin).string(operatorBalance?.stablecoins[coin.symbol] ?? "0"))
+                                .monospacedDigit()
+                        }
+                        .font(.callout)
+                    }
                 }
             }
             if let address = model.wallet?.operatorAddress {
@@ -114,16 +150,16 @@ struct WalletView: View {
 
     private var budgetCard: some View {
         Card("Agent budget", systemImage: "gauge.with.dots.needle.33percent") {
-            Text("Your tools and agents pay for requests from this budget, so they never touch your main balance. Move money in and out any time.")
+            Text("Your tools and agents pay for requests from these credits, so they never touch your main balance. Each request sets aside its most possible cost and gets back what it didn't use. Move credits in and out any time.")
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             HStack(alignment: .center) {
-                Stat(title: "Available to agents", value: spendBalance.map { model.money.string($0.usdc) } ?? "—")
+                Stat(title: "Available to agents", value: spendBalance.map { model.money.string($0.credits) } ?? "—")
                 Spacer()
                 Button("Add…") { sheet = .addBudget }
                     .buttonStyle(.borderedProminent)
                 Button("Move back…") { sheet = .moveBack }
-                    .disabled(spendBalance.map { BaseUnits.isZero($0.usdc) } ?? true)
+                    .disabled(spendBalance.map { BaseUnits.isZero($0.credits) } ?? true)
             }
             if let spent = model.buyer?.spentToday {
                 Text("Spent today: \(model.money.string(spent))")
@@ -135,7 +171,7 @@ struct WalletView: View {
 
     private var testFundsCard: some View {
         Card("Test funds", systemImage: "drop") {
-            Text("You're on the test network. Get free test USDC to try buying and selling. Test funds have no value.")
+            Text("You're on the test network. Get free test KTA for network fees here; test stablecoins come from their issuers (test USDC from Circle's faucet, bridged to Keeta). Test funds have no value.")
                 .foregroundStyle(.secondary)
             HStack {
                 Button("Get test funds") {
@@ -158,7 +194,7 @@ struct WalletView: View {
             Text("Moving money between Keeta Compute and a bank account requires identity verification (KYC), as the law requires. This is coming in a later version.")
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            Text("Until then you can earn, hold, send and receive USDC, and spend it on models, without verification.")
+            Text("Until then you can buy credits with Keeta stablecoins, earn and spend them, and cash them out to stablecoins, without verification.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
         }
@@ -188,7 +224,7 @@ struct SendSheet: View {
     @State var sending = false
     @State var error: String?
 
-    private var available: String { model.wallet?.balances?.operatorBalance?.usdc ?? "0" }
+    private var available: String { model.wallet?.balances?.operatorBalance?.credits ?? "0" }
 
     private var parsedAmount: String? {
         guard let amount = try? model.money.parse(amountText), !BaseUnits.isZero(amount) else { return nil }
@@ -218,7 +254,7 @@ struct SendSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Send USDC")
+            Text("Send credits")
                 .font(.title2.weight(.semibold))
             Form {
                 TextField("To address", text: $address, prompt: Text("keeta_…"))
@@ -264,7 +300,7 @@ struct SendSheet: View {
         Task {
             defer { sending = false }
             do {
-                _ = try await model.send(to: to, amount: amount, asset: .usdc, memo: note.isEmpty ? nil : note)
+                _ = try await model.send(to: to, amount: amount, asset: .credits, memo: note.isEmpty ? nil : note)
                 model.flash("Sent \(model.money.string(amount)).")
                 dismiss()
             } catch {
@@ -283,7 +319,7 @@ struct ReceiveSheet: View {
 
     var body: some View {
         VStack(spacing: 16) {
-            Text("Receive USDC")
+            Text("Receive")
                 .font(.title2.weight(.semibold))
             if let address = model.wallet?.operatorAddress {
                 if let image = QRCode.image(for: address) {
@@ -294,7 +330,7 @@ struct ReceiveSheet: View {
                         .padding(12)
                         .background(Color.white, in: RoundedRectangle(cornerRadius: 12))
                 }
-                Text("Share this address to receive USDC from other Keeta Compute users. Only send USDC from Keeta Compute or a compatible wallet.")
+                Text("Share this address to receive credits, or Keeta stablecoins (KUSD, KEUR, KJPY, KMXN, KCAD, KAED, KGBP, USDC) to buy credits with. Send only from a Keeta wallet.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -329,8 +365,8 @@ struct BudgetSheet: View {
     private var source: String {
         let balances = model.wallet?.balances
         switch direction {
-        case .add: return balances?.operatorBalance?.usdc ?? "0"
-        case .moveBack: return balances?.spend.usdc ?? "0"
+        case .add: return balances?.operatorBalance?.credits ?? "0"
+        case .moveBack: return balances?.spend.credits ?? "0"
         }
     }
 
@@ -344,8 +380,8 @@ struct BudgetSheet: View {
             Text(direction == .add ? "Add to agent budget" : "Move back to balance")
                 .font(.title2.weight(.semibold))
             Text(direction == .add
-                 ? "Moves USDC from your balance into the budget your tools spend from. You'll confirm with Touch ID."
-                 : "Moves USDC from the agent budget back to your balance.")
+                 ? "Moves credits from your balance into the budget your tools spend from. You'll confirm with Touch ID."
+                 : "Moves credits from the agent budget back to your balance.")
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             HStack {
@@ -388,6 +424,157 @@ struct BudgetSheet: View {
                 case .moveBack: try await model.drainBudget(amount: amount)
                 }
                 model.flash(direction == .add ? "Added \(model.money.string(amount)) to the agent budget." : "Moved \(model.money.string(amount)) back.")
+                dismiss()
+            } catch {
+                if let walletError = error as? PasskeyWallet.WalletError, case .canceled = walletError { return }
+                self.error = AppModel.friendlyMessage(for: error)
+            }
+        }
+    }
+}
+
+// MARK: - Buy credits and cash out
+
+/// Swaps credits with a Keeta stablecoin through keeta.ai's FX service. Buying
+/// pays from the operator account and (by default) puts the credits in the
+/// agent budget; cashing out sells credits from the operator account. KUSD is
+/// the default stablecoin when it is available.
+struct CreditSwapSheet: View {
+    @EnvironmentObject var model: AppModel
+    @Environment(\.dismiss) var dismiss
+    let side: CreditSide
+    @State var symbol = ""
+    @State var amountText = ""
+    @State var toBudget = true
+    @State var quote: String?
+    @State var quoting = false
+    @State var working = false
+    @State var error: String?
+
+    init(side: CreditSide) {
+        self.side = side
+    }
+
+    private var coin: StablecoinInfo? { model.stablecoins.first { $0.symbol == symbol } ?? model.stablecoins.first }
+    private var coinMoney: AssetFormatter? { coin.map { model.formatter(for: $0) } }
+    private var operatorBalance: AssetBalance? { model.wallet?.balances?.operatorBalance }
+    /// The stablecoin held, when buying.
+    private var heldCoin: String { coin.flatMap { operatorBalance?.stablecoins[$0.symbol] } ?? "0" }
+    /// The credits held, when cashing out.
+    private var heldCredits: String { operatorBalance?.credits ?? "0" }
+
+    private var parsed: String? {
+        guard let amount = try? model.money.parse(amountText), !BaseUnits.isZero(amount) else { return nil }
+        return amount
+    }
+
+    private var shortfall: String? {
+        switch side {
+        case .buy:
+            if let quote, BaseUnits.compare(quote, heldCoin) > 0 { return "That costs more \(coin?.symbol ?? "") than you have." }
+        case .sell:
+            if let parsed, BaseUnits.compare(parsed, heldCredits) > 0 { return "That's more than your credits (\(model.money.string(heldCredits)))." }
+        }
+        return nil
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text(side == .buy ? "Buy credits" : "Cash out")
+                .font(.title2.weight(.semibold))
+            Text(side == .buy
+                 ? "One credit is one US dollar. Pay with a Keeta stablecoin from your balance at the rate keeta.ai's exchange quotes. You'll confirm with Touch ID."
+                 : "Sell credits from your balance for a Keeta stablecoin at the rate keeta.ai's exchange quotes. You'll confirm with Touch ID.")
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Form {
+                Picker(side == .buy ? "Pay with" : "Receive", selection: $symbol) {
+                    ForEach(model.stablecoins) { coin in
+                        Text("\(coin.symbol) · \(coin.name)").tag(coin.symbol)
+                    }
+                }
+                HStack {
+                    TextField("Credits", text: $amountText, prompt: Text("0.00"))
+                    Text(model.money.symbol).foregroundStyle(.secondary)
+                    if side == .sell {
+                        Button("Max") { amountText = model.money.editable(heldCredits) }
+                            .buttonStyle(.link)
+                    }
+                }
+                if side == .buy {
+                    Toggle("Put them in the agent budget", isOn: $toBudget)
+                }
+            }
+            .formStyle(.grouped)
+            if let coinMoney {
+                Group {
+                    switch side {
+                    case .buy:
+                        Text(quote.map { "You pay \(coinMoney.string($0)). You have \(coinMoney.string(heldCoin))." } ?? "You have \(coinMoney.string(heldCoin)).")
+                    case .sell:
+                        Text(quote.map { "You receive \(coinMoney.string($0)). You have \(model.money.string(heldCredits))." } ?? "You have \(model.money.string(heldCredits)).")
+                    }
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+            if let message = error ?? shortfall {
+                Text(message)
+                    .font(.callout)
+                    .foregroundStyle(.red)
+            }
+            HStack {
+                Button("Cancel", role: .cancel) { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                Spacer()
+                if quoting || working { ProgressView().controlSize(.small) }
+                Button(side == .buy ? "Buy" : "Cash out") { submit() }
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(parsed == nil || quote == nil || shortfall != nil || working)
+            }
+        }
+        .padding(24)
+        .frame(width: 480)
+        .onAppear {
+            if symbol.isEmpty { symbol = model.stablecoins.first?.symbol ?? "" }
+        }
+        .task(id: "\(symbol)|\(amountText)") { await requote() }
+    }
+
+    private func requote() async {
+        quote = nil
+        guard let amount = parsed, let coin else { return }
+        // Wait for typing to settle before asking for a rate.
+        try? await Task.sleep(for: .milliseconds(300))
+        if Task.isCancelled { return }
+        quoting = true
+        defer { quoting = false }
+        do {
+            let amountOut = try await model.creditQuote(side: side, amount: amount, stablecoin: coin.symbol)
+            if Task.isCancelled { return }
+            quote = amountOut
+            error = nil
+        } catch {
+            if !Task.isCancelled { self.error = AppModel.friendlyMessage(for: error) }
+        }
+    }
+
+    private func submit() {
+        guard let amount = parsed, let coin, let coinMoney else { return }
+        working = true
+        error = nil
+        Task {
+            defer { working = false }
+            do {
+                switch side {
+                case .buy:
+                    let result = try await model.buyCredits(amount: amount, with: coin.symbol, toBudget: toBudget)
+                    model.flash("Bought \(model.money.string(result.credits)) for \(coinMoney.string(result.paid))\(result.budgetBlockHash == nil ? "" : " into the agent budget").")
+                case .sell:
+                    let result = try await model.sellCredits(amount: amount, to: coin.symbol)
+                    model.flash("Cashed out \(model.money.string(result.credits)) for \(coinMoney.string(result.received)).")
+                }
                 dismiss()
             } catch {
                 if let walletError = error as? PasskeyWallet.WalletError, case .canceled = walletError { return }

@@ -17,7 +17,11 @@
     "test": "npm test --workspaces --if-present",
     "test:e2e": "node --import tsx --test test/e2e.test.ts",
     "test:worker": "node --import tsx --test --test-timeout=300000 test/worker.test.ts",
-    "test:live": "node --import tsx --test --test-concurrency=1 --test-timeout=900000 test/live/*.test.ts"
+    "test:live": "node --import tsx --test --test-concurrency=1 --test-timeout=900000 test/live/*.test.ts",
+    "assets:pin": "npm run pin-assets -w @keeta-compute/fx --",
+    "credits:create": "npm run create-credits -w @keeta-compute/fx",
+    "fx:start": "npm start -w @keeta-compute/fx",
+    "fx:publish": "npm run publish-metadata -w @keeta-compute/fx"
   },
   "devDependencies": {
     "@keetanetwork/keetanet-client": "0.18.7",

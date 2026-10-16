@@ -15,9 +15,15 @@ public struct EmptyParams: Codable, Sendable, Equatable {
     public init() {}
 }
 
-public enum WalletAsset: String, Codable, Sendable, CaseIterable {
-    case usdc
-    case kta
+/// `WalletAssetName` in types.ts: credits, KTA, or a stablecoin by symbol (KUSD, …, USDC).
+/// Encodes as the plain string.
+public struct WalletAsset: RawRepresentable, Codable, Sendable, Hashable {
+    public var rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+
+    public static let credits = WalletAsset(rawValue: "credits")
+    public static let kta = WalletAsset(rawValue: "kta")
+    public static func stablecoin(_ symbol: String) -> WalletAsset { WalletAsset(rawValue: symbol) }
 }
 
 // MARK: - Params
@@ -87,6 +93,58 @@ public struct DrainBudgetParams: Codable, Sendable, Equatable {
     public init(amount: String, asset: WalletAsset) {
         self.amount = amount
         self.asset = asset
+    }
+}
+
+public enum CreditSide: String, Codable, Sendable {
+    case buy, sell
+}
+
+/// `wallet.creditQuote`: 'buy' asks what `amount` credits cost in the stablecoin, 'sell' what they bring.
+public struct CreditQuoteParams: Codable, Sendable, Equatable {
+    public var side: CreditSide
+    /// Credit base units.
+    public var amount: String
+    /// Stablecoin symbol, e.g. "KUSD".
+    public var stablecoin: String
+
+    public init(side: CreditSide, amount: String, stablecoin: String) {
+        self.side = side
+        self.amount = amount
+        self.stablecoin = stablecoin
+    }
+}
+
+/// `wallet.buyCredits`: buy exactly `amount` credits with a stablecoin from the operator account.
+public struct BuyCreditsParams: Codable, Sendable, Equatable {
+    public var entropy: String
+    /// Credit base units.
+    public var amount: String
+    /// Stablecoin symbol to pay with, e.g. "KUSD".
+    public var with: String
+    /// Move the credits into the agent budget (the agent's default) or keep them in the operator account.
+    public var toBudget: Bool?
+
+    public init(entropy: String, amount: String, with: String, toBudget: Bool? = nil) {
+        self.entropy = entropy
+        self.amount = amount
+        self.with = with
+        self.toBudget = toBudget
+    }
+}
+
+/// `wallet.sellCredits`: cash out exactly `amount` credits from the operator account for a stablecoin.
+public struct SellCreditsParams: Codable, Sendable, Equatable {
+    public var entropy: String
+    /// Credit base units.
+    public var amount: String
+    /// Stablecoin symbol to receive, e.g. "KUSD".
+    public var to: String
+
+    public init(entropy: String, amount: String, to: String) {
+        self.entropy = entropy
+        self.amount = amount
+        self.to = to
     }
 }
 
@@ -172,6 +230,31 @@ public struct BlockHashResult: Codable, Sendable, Equatable {
     public var blockHash: String
 }
 
+public struct CreditQuoteResult: Codable, Sendable, Equatable {
+    /// Stablecoin base units.
+    public var amount: String
+}
+
+public struct BuyCreditsResult: Codable, Sendable, Equatable {
+    public var exchangeId: String
+    public var blockHash: String
+    /// Stablecoin base units paid.
+    public var paid: String
+    /// Credit base units bought.
+    public var credits: String
+    /// The move into the agent budget, when there was one.
+    public var budgetBlockHash: String?
+}
+
+public struct SellCreditsResult: Codable, Sendable, Equatable {
+    public var exchangeId: String
+    public var blockHash: String
+    /// Credit base units sold.
+    public var credits: String
+    /// Stablecoin base units received.
+    public var received: String
+}
+
 public struct TestFundsResult: Codable, Sendable, Equatable {
     public var requested: Bool
     public var message: String
@@ -201,9 +284,10 @@ public struct RemovedResult: Codable, Sendable, Equatable {
     public var removed: Bool
 }
 
+/// `buyer.settle`: escrows reported to the control plane, and recent jobs whose settlement was read.
 public struct SettleResult: Codable, Sendable, Equatable {
-    public var paid: Int
-    public var failed: Int
+    public var reported: Int
+    public var settled: Int
 }
 
 public struct PairingCreated: Codable, Sendable, Equatable {
@@ -298,6 +382,24 @@ public enum AgentRPC {
         public typealias Params = DrainBudgetParams
         public typealias Result = BlockHashResult
         public static let name = "wallet.drainBudget"
+    }
+
+    public enum WalletCreditQuote: RPCMethod {
+        public typealias Params = CreditQuoteParams
+        public typealias Result = CreditQuoteResult
+        public static let name = "wallet.creditQuote"
+    }
+
+    public enum WalletBuyCredits: RPCMethod {
+        public typealias Params = BuyCreditsParams
+        public typealias Result = BuyCreditsResult
+        public static let name = "wallet.buyCredits"
+    }
+
+    public enum WalletSellCredits: RPCMethod {
+        public typealias Params = SellCreditsParams
+        public typealias Result = SellCreditsResult
+        public static let name = "wallet.sellCredits"
     }
 
     public enum WalletRequestTestFunds: RPCMethod {

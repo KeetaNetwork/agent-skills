@@ -5,48 +5,21 @@
 
 export type NetworkName = 'test' | 'main';
 
-export interface NetworkAsset {
-	/** Token address on Keeta. */
-	address: string;
-	symbol: string;
-	/** Decimal places, as published by the token. */
-	decimals: number;
-}
-
 export interface NetworkInfo {
 	name: NetworkName;
 	/** CAIP-2 identifier used by x402. */
 	caip2: string;
-	/** The stablecoin prices and payouts are denominated in (USDC at launch). */
-	settlementAsset: NetworkAsset;
 	explorer: string;
 }
 
 /*
- * USDC addresses match the defaults shipped in @x402/keeta 2.28.0
- * (DEFAULT_ASSETS). KTA is read from the client at run time.
+ * What each network settles in lives in assets.ts (the stablecoins) and
+ * credits.ts (the credit token app jobs are prepaid in). KTA is read from the
+ * client at run time.
  */
 export const NETWORKS: Record<NetworkName, NetworkInfo> = {
-	test: {
-		name: 'test',
-		caip2: 'keeta:1413829460',
-		settlementAsset: {
-			address: 'keeta_apna75yhhvnv4ei7ape55hndk4yepno7a7i2mhtiwahiygixjcnmvswxhnmnk',
-			symbol: 'USDC',
-			decimals: 6
-		},
-		explorer: 'https://explorer.test.keeta.com'
-	},
-	main: {
-		name: 'main',
-		caip2: 'keeta:21378',
-		settlementAsset: {
-			address: 'keeta_amnkge74xitii5dsobstldatv3irmyimujfjotftx7plaaaseam4bntb7wnna',
-			symbol: 'USDC',
-			decimals: 6
-		},
-		explorer: 'https://explorer.keeta.com'
-	}
+	test: { name: 'test', caip2: 'keeta:1413829460', explorer: 'https://explorer.test.keeta.com' },
+	main: { name: 'main', caip2: 'keeta:21378', explorer: 'https://explorer.keeta.com' }
 };
 
 export const DEFAULT_NETWORK: NetworkName = 'test';
@@ -63,11 +36,18 @@ export const HEARTBEAT_INTERVAL_MS = 30_000;
 /** How long a scheduled job's ticket is valid for the buyer to start it. */
 export const TICKET_TTL_MS = 60_000;
 
+/** How long an app job's quote holds its provider while the buyer escrows credits for it. */
+export const QUOTE_TTL_MS = 60_000;
+
+/**
+ * An escrowed app job still missing its receipt or the relay's delivery
+ * record this long after its ticket was issued is settled without them: the
+ * buyer is refunded in full.
+ */
+export const SETTLE_LAPSE_MS = 15 * 60_000;
+
 /** Signed requests outside this window are rejected (replay protection). */
 export const REQUEST_SKEW_MS = 120_000;
-
-/** A buyer with a receipt left unpaid longer than this is not scheduled. */
-export const UNPAID_GRACE_MS = 10 * 60_000;
 
 /** Pairing codes for Linux helpers expire after this long. */
 export const PAIRING_TTL_MS = 10 * 60_000;

@@ -29,7 +29,7 @@ struct SettingsView: View {
             Button("Cancel", role: .cancel) {}
             Button("Use real money", role: .destructive) { switchNetwork(.main) }
         } message: {
-            Text("On the main network, balances, payments and earnings are real USDC. Anything you send can't be reversed. Your test balance doesn't carry over.")
+            Text("On the main network, credits and stablecoins are real money. Anything you send can't be reversed. Your test balance doesn't carry over.")
         }
     }
 
@@ -48,7 +48,7 @@ struct SettingsView: View {
                 }
             )) {
                 Text("Test (no real money)").tag(NetworkName.test)
-                Text("Main (real USDC)").tag(NetworkName.main)
+                Text("Main (real money)").tag(NetworkName.main)
             }
             .pickerStyle(.radioGroup)
             .disabled(switching || !model.connection.isRunning)
@@ -57,7 +57,7 @@ struct SettingsView: View {
             }
             Text(model.network == .test
                  ? "You're on the test network. Use it to try everything with free test funds."
-                 : "You're on the main network. Payments use real USDC.")
+                 : "You're on the main network. Credits and stablecoins are real money.")
                 .font(.callout)
                 .foregroundStyle(model.network == .test ? Color.secondary : Color.orange)
         }

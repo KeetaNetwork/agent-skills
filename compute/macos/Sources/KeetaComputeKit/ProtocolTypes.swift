@@ -36,8 +36,8 @@ public enum ProtocolConstants {
     public static let defaultLocalEndpoint = "http://127.0.0.1:11435/v1"
     /// Prices are quoted per this many tokens (constants.ts PRICE_UNIT_TOKENS).
     public static let priceUnitTokens = 1_000_000
-    /// Settlement asset used before the agent reports one (both networks use 6-decimal USDC).
-    public static let fallbackSettlementAsset = NetworkAsset(address: "", symbol: "USDC", decimals: 6)
+    /// Keeta Compute Credits before the agent reports the token (credits.ts: one credit is one US dollar, 6 decimals).
+    public static let fallbackCreditAsset = NetworkAsset(address: "", symbol: "credits", decimals: 6)
     /// Decimal places of KTA, the network fee token.
     /// NOTE: the RPC contract does not report KTA decimals; Keeta's KTA uses 18.
     public static let ktaDecimals = 18

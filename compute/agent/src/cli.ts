@@ -14,10 +14,12 @@
 import { hostname } from 'node:os';
 import { join } from 'node:path';
 import {
+	CREDIT_DECIMALS,
+	CREDIT_SYMBOL,
 	LOCAL_API_PORT,
-	NETWORKS,
 	assertAccess,
 	assertKeetaAddress,
+	availableAssets,
 	formatAmount,
 	parseAmount,
 	type AccessPolicy,
@@ -25,14 +27,14 @@ import {
 	type Price
 } from '@keeta-compute/protocol';
 import { AgentApp, type AppOptions } from './app.ts';
+import { KTA_DECIMALS } from './assets.ts';
 import { fileAccount } from './keys.ts';
 import type { AppToAgent, AssetBalance, InstalledModel } from './rpc/types.ts';
 import type { Log } from './runtime/mlx.ts';
 import { StateStore } from './state.ts';
 import { createWallet, entropyFromPhrase, readWallet, walletPath, withOperatorEntropy } from './wallet-file.ts';
 
-/** KTA, the network fee token, has 18 decimals (the RPC contract does not report it). */
-export const KTA_DECIMALS = 18;
+export { KTA_DECIMALS };
 
 export interface CliIO {
 	out: (line: string) => void;
@@ -44,11 +46,12 @@ export interface CliIO {
 	/** A yes/no question; absent when there is no terminal to ask on. */
 	confirm?: (question: string) => Promise<boolean>;
 	/** Testing and embedding: passed through to AgentApp. */
-	app?: Partial<Pick<AppOptions, 'ledgerFor' | 'fetchImpl' | 'WebSocketImpl' | 'buyerPort' | 'hardware' | 'localConditions'>>;
+	app?: Partial<Pick<AppOptions, 'ledgerFor' | 'exchangeFor' | 'fetchImpl' | 'WebSocketImpl' | 'buyerPort' | 'hardware' | 'localConditions'>>;
 	sleep?: (ms: number) => Promise<void>;
 }
 
-type Asset = 'usdc' | 'kta';
+/** credits, kta, or a stablecoin symbol (KUSD, ..., USDC), as typed. */
+type Asset = string;
 
 const defaultSleep = (ms: number) => new Promise<void>((done) => setTimeout(done, ms));
 
@@ -81,52 +84,65 @@ async function withApp<T>(dataDir: string, io: CliIO, online: boolean, use: (app
 	}
 }
 
-function settlement(store: StateStore) {
-	return NETWORKS[store.state.network].settlementAsset;
-}
+/** Prices, limits, costs and earnings are in credits: one credit is one US dollar, 6 decimals. */
+const credits = (amount: bigint | string) => `${formatAmount(BigInt(amount), CREDIT_DECIMALS)} ${CREDIT_SYMBOL}`;
 
-function decimalsOf(store: StateStore, asset: Asset): number {
-	return asset === 'kta' ? KTA_DECIMALS : settlement(store).decimals;
-}
-
-function assertAsset(value: string | undefined): Asset {
-	const asset = (value ?? 'usdc').toLowerCase();
-	if (asset !== 'usdc' && asset !== 'kta') {
-		throw new Error('--asset must be usdc or kta');
+/** The asset's name as the RPC takes it, and its decimals; stablecoins must be available on the network. */
+function assertAsset(store: StateStore, value: string | undefined): { name: string; decimals: number; label: string } {
+	const name = (value ?? CREDIT_SYMBOL).trim();
+	if (name.toLowerCase() === CREDIT_SYMBOL) {
+		return { name: CREDIT_SYMBOL, decimals: CREDIT_DECIMALS, label: CREDIT_SYMBOL };
 	}
-	return asset;
+	if (name.toLowerCase() === 'kta') {
+		return { name: 'kta', decimals: KTA_DECIMALS, label: 'KTA' };
+	}
+	const stablecoin = assertStablecoin(store, name, '--asset');
+	return { name: stablecoin.symbol, decimals: stablecoin.decimals, label: stablecoin.symbol };
 }
 
-/** A positive decimal amount in the asset's base units. */
-function baseUnits(store: StateStore, text: string | undefined, asset: Asset): string {
+function assertStablecoin(store: StateStore, value: string | undefined, flag: string) {
+	const available = availableAssets(store.state.network);
+	const stablecoin = value ? available.find((a) => a.symbol === value.trim().toUpperCase()) : available[0];
+	if (!stablecoin) {
+		throw new Error(
+			available.length
+				? `${flag} must be ${value ? 'one of ' : ''}${available.map((a) => a.symbol).join(', ')}${value ? '' : ' (none given)'}`
+				: `no stablecoin is pinned for the ${store.state.network} network yet; run \`npm run assets:pin\``
+		);
+	}
+	return stablecoin;
+}
+
+/** A positive decimal amount in base units of `decimals`. */
+function baseUnits(text: string | undefined, decimals: number): string {
 	if (!text) {
 		throw new Error('an amount is required, e.g. 1.5');
 	}
-	const amount = parseAmount(text, decimalsOf(store, asset));
+	const amount = parseAmount(text, decimals);
 	if (amount <= 0n) {
 		throw new Error('the amount must be more than zero');
 	}
 	return amount.toString();
 }
 
-function formatPrice(store: StateStore, price: Price): string {
-	const { decimals, symbol } = settlement(store);
-	return `${formatAmount(BigInt(price.inputPerMillion), decimals)} in / ${formatAmount(BigInt(price.outputPerMillion), decimals)} out ${symbol} per million tokens`;
+function formatPrice(price: Price): string {
+	return `${formatAmount(BigInt(price.inputPerMillion), CREDIT_DECIMALS)} in / ${formatAmount(BigInt(price.outputPerMillion), CREDIT_DECIMALS)} out ${CREDIT_SYMBOL} per million tokens`;
 }
 
 function formatBalance(store: StateStore, balance: AssetBalance | null | undefined): string {
 	if (!balance) {
 		return 'unknown';
 	}
-	const { decimals, symbol } = settlement(store);
-	return `${formatAmount(BigInt(balance.usdc), decimals)} ${symbol}, ${formatAmount(BigInt(balance.kta), KTA_DECIMALS)} KTA`;
+	const held = availableAssets(store.state.network)
+		.filter((a) => BigInt(balance.stablecoins[a.symbol] ?? '0') > 0n)
+		.map((a) => `${formatAmount(BigInt(balance.stablecoins[a.symbol]!), a.decimals)} ${a.symbol}`);
+	return [credits(balance.credits), ...held, `${formatAmount(BigInt(balance.kta), KTA_DECIMALS)} KTA`].join(', ');
 }
 
-function parsePrice(store: StateStore, input: string | undefined, output: string | undefined, fallback: Price): Price {
-	const { decimals } = settlement(store);
+function parsePrice(input: string | undefined, output: string | undefined, fallback: Price): Price {
 	return {
-		inputPerMillion: input === undefined ? fallback.inputPerMillion : parseAmount(input, decimals).toString(),
-		outputPerMillion: output === undefined ? fallback.outputPerMillion : parseAmount(output, decimals).toString()
+		inputPerMillion: input === undefined ? fallback.inputPerMillion : parseAmount(input, CREDIT_DECIMALS).toString(),
+		outputPerMillion: output === undefined ? fallback.outputPerMillion : parseAmount(output, CREDIT_DECIMALS).toString()
 	};
 }
 
@@ -294,8 +310,9 @@ export async function status(args: { dataDir: string; json?: boolean }, io: CliI
 			...(wallet?.error ? { balanceError: wallet.error } : {}),
 			hardware: state.hardware,
 			tier: state.tier,
-			provider: { enabled: s.provider.enabled, maxConcurrentJobs: s.provider.maxConcurrentJobs, access: s.provider.access, earnedTotal: s.earnedTotal },
-			buyer: { endpoint, policy: buyer.policy, spentToday: buyer.spentToday, unpaid: buyer.unpaid },
+			creditsAvailable: wallet?.creditsAvailable ?? false,
+			provider: { enabled: s.provider.enabled, maxConcurrentJobs: s.provider.maxConcurrentJobs, access: s.provider.access, earnedTotal: state.provider?.earnedTotal ?? '0' },
+			buyer: { endpoint, policy: buyer.policy, spentToday: buyer.spentToday, pendingEscrows: s.escrows.filter((e) => e.network === s.network).length },
 			models: s.models.map((m) => ({ modelId: m.modelId, offered: m.offer.offered, price: m.offer.price })),
 			helper: s.helper ?? null
 		};
@@ -303,7 +320,6 @@ export async function status(args: { dataDir: string; json?: boolean }, io: CliI
 			io.out(JSON.stringify(report, null, 2));
 			return report;
 		}
-		const { decimals, symbol } = settlement(app.store);
 		io.out(`node      ${report.nodeKey} (${report.name}, ${state.hardware?.chip ?? 'unknown'}, tier ${state.tier ?? '?'})`);
 		io.out(`network   ${report.network}`);
 		io.out(`control   ${report.controlUrl} (${reachable ? 'reachable' : 'unreachable'})`);
@@ -315,8 +331,11 @@ export async function status(args: { dataDir: string; json?: boolean }, io: CliI
 		} else {
 			io.out(`balances  ${wallet?.error ?? 'the ledger did not answer in time'}`);
 		}
-		io.out(`provide   ${s.provider.enabled ? 'on' : 'off'}, up to ${s.provider.maxConcurrentJobs} job(s), access ${s.provider.access.mode}; earned ${formatAmount(BigInt(s.earnedTotal), decimals)} ${symbol}`);
-		io.out(`buy       ${endpoint} while running (token: keeta-compute-agent token); spent today ${formatAmount(BigInt(buyer.spentToday), decimals)} ${symbol}, ${buyer.unpaid} unpaid`);
+		if (!report.creditsAvailable) {
+			io.out(`credits   not available on the ${s.network} network yet (or the control plane is unreachable); buying inference needs them`);
+		}
+		io.out(`provide   ${s.provider.enabled ? 'on' : 'off'}, up to ${s.provider.maxConcurrentJobs} job(s), access ${s.provider.access.mode}; earned ${credits(report.provider.earnedTotal)} (paid out on the ledger)`);
+		io.out(`buy       ${endpoint} while running (token: keeta-compute-agent token); spent today ${credits(buyer.spentToday)}${report.buyer.pendingEscrows ? `, ${report.buyer.pendingEscrows} escrow(s) still to report` : ''}`);
 		io.out(`models    ${s.models.length ? s.models.map((m) => `${m.modelId}${m.offer.offered ? '' : ' (not offered)'}`).join(', ') : 'none'}`);
 		if (s.helper) {
 			io.out(`helper    paired with ${s.helper.masterNodeKey}; \`helper run\` pays ${s.helper.payTo}`);
@@ -342,35 +361,70 @@ export async function walletShow(args: { dataDir: string }, io: CliIO): Promise<
 
 export async function walletSend(args: { dataDir: string; to: string; amount: string; asset?: string; memo?: string }, io: CliIO): Promise<string> {
 	return withApp(args.dataDir, io, false, async (app) => {
-		const asset = assertAsset(args.asset);
+		const asset = assertAsset(app.store, args.asset);
 		const to = assertKeetaAddress(args.to, 'to');
-		const amount = baseUnits(app.store, args.amount, asset);
+		const amount = baseUnits(args.amount, asset.decimals);
 		const passphrase = await io.passphrase(false);
 		const { blockHash } = await withOperatorEntropy(args.dataDir, passphrase, (entropy) =>
-			call(app, 'wallet.send', { entropy, to, amount, asset, ...(args.memo ? { memo: args.memo } : {}) })
+			call(app, 'wallet.send', { entropy, to, amount, asset: asset.name, ...(args.memo ? { memo: args.memo } : {}) })
 		);
-		io.out(`Sent ${args.amount} ${asset.toUpperCase()} to ${to}: ${blockHash}`);
+		io.out(`Sent ${args.amount} ${asset.label} to ${to}: ${blockHash}`);
 		return blockHash;
 	});
 }
 
 export async function walletFundBudget(args: { dataDir: string; amount: string; asset?: string }, io: CliIO): Promise<string> {
 	return withApp(args.dataDir, io, false, async (app) => {
-		const asset = assertAsset(args.asset);
-		const amount = baseUnits(app.store, args.amount, asset);
+		const asset = assertAsset(app.store, args.asset);
+		const amount = baseUnits(args.amount, asset.decimals);
 		const passphrase = await io.passphrase(false);
-		const { blockHash } = await withOperatorEntropy(args.dataDir, passphrase, (entropy) => call(app, 'wallet.fundBudget', { entropy, amount, asset }));
-		io.out(`Moved ${args.amount} ${asset.toUpperCase()} into the agent budget: ${blockHash}`);
+		const { blockHash } = await withOperatorEntropy(args.dataDir, passphrase, (entropy) => call(app, 'wallet.fundBudget', { entropy, amount, asset: asset.name }));
+		io.out(`Moved ${args.amount} ${asset.label} into the agent budget: ${blockHash}`);
 		return blockHash;
 	});
 }
 
 export async function walletDrainBudget(args: { dataDir: string; amount: string; asset?: string }, io: CliIO): Promise<string> {
 	return withApp(args.dataDir, io, false, async (app) => {
-		const asset = assertAsset(args.asset);
-		const { blockHash } = await call(app, 'wallet.drainBudget', { amount: baseUnits(app.store, args.amount, asset), asset });
-		io.out(`Moved ${args.amount} ${asset.toUpperCase()} from the agent budget back to the operator: ${blockHash}`);
+		const asset = assertAsset(app.store, args.asset);
+		const { blockHash } = await call(app, 'wallet.drainBudget', { amount: baseUnits(args.amount, asset.decimals), asset: asset.name });
+		io.out(`Moved ${args.amount} ${asset.label} from the agent budget back to the operator: ${blockHash}`);
 		return blockHash;
+	});
+}
+
+/**
+ * Buy credits with a Keeta stablecoin (KUSD by default) from the operator
+ * account through the keeta.ai FX provider, then move them into the agent
+ * budget unless `keep` is set.
+ */
+export async function walletBuyCredits(args: { dataDir: string; amount: string; with?: string; keep?: boolean }, io: CliIO): Promise<{ blockHash: string; budgetBlockHash?: string }> {
+	return withApp(args.dataDir, io, false, async (app) => {
+		const stablecoin = assertStablecoin(app.store, args.with, '--with');
+		const amount = baseUnits(args.amount, CREDIT_DECIMALS);
+		const quote = await call(app, 'wallet.creditQuote', { side: 'buy', amount, stablecoin: stablecoin.symbol });
+		io.out(`${credits(amount)} costs about ${formatAmount(BigInt(quote.amount), stablecoin.decimals)} ${stablecoin.symbol}.`);
+		const passphrase = await io.passphrase(false);
+		const result = await withOperatorEntropy(args.dataDir, passphrase, (entropy) => call(app, 'wallet.buyCredits', { entropy, amount, with: stablecoin.symbol, toBudget: !args.keep }));
+		io.out(`Bought ${credits(result.credits)} for ${formatAmount(BigInt(result.paid), stablecoin.decimals)} ${stablecoin.symbol}: ${result.blockHash}`);
+		if (result.budgetBlockHash) {
+			io.out(`Moved them into the agent budget: ${result.budgetBlockHash}`);
+		}
+		return { blockHash: result.blockHash, ...(result.budgetBlockHash ? { budgetBlockHash: result.budgetBlockHash } : {}) };
+	});
+}
+
+/** Cash out: sell credits from the operator account for a Keeta stablecoin (KUSD by default). */
+export async function walletSellCredits(args: { dataDir: string; amount: string; to?: string }, io: CliIO): Promise<string> {
+	return withApp(args.dataDir, io, false, async (app) => {
+		const stablecoin = assertStablecoin(app.store, args.to, '--to');
+		const amount = baseUnits(args.amount, CREDIT_DECIMALS);
+		const quote = await call(app, 'wallet.creditQuote', { side: 'sell', amount, stablecoin: stablecoin.symbol });
+		io.out(`${credits(amount)} brings about ${formatAmount(BigInt(quote.amount), stablecoin.decimals)} ${stablecoin.symbol}.`);
+		const passphrase = await io.passphrase(false);
+		const result = await withOperatorEntropy(args.dataDir, passphrase, (entropy) => call(app, 'wallet.sellCredits', { entropy, amount, to: stablecoin.symbol }));
+		io.out(`Sold ${credits(result.credits)} for ${formatAmount(BigInt(result.received), stablecoin.decimals)} ${stablecoin.symbol}: ${result.blockHash}`);
+		return result.blockHash;
 	});
 }
 
@@ -385,7 +439,7 @@ export async function walletTestFunds(args: { dataDir: string }, io: CliIO): Pro
 
 function describeModel(store: StateStore, model: InstalledModel & { backend?: { baseUrl: string; servedName: string } }): string {
 	const access = model.offer.access ? `${model.offer.access.mode}${model.offer.access.allow.length ? ` (${model.offer.access.allow.length} keys)` : ''}` : 'default';
-	return `${model.modelId}  ${model.offer.offered ? 'offered' : 'not offered'}  ${formatPrice(store, model.offer.price)}  access ${access}${model.backend ? `  ${model.backend.baseUrl} (${model.backend.servedName})` : ''}`;
+	return `${model.modelId}  ${model.offer.offered ? 'offered' : 'not offered'}  ${formatPrice(model.offer.price)}  access ${access}${model.backend ? `  ${model.backend.baseUrl} (${model.backend.servedName})` : ''}`;
 }
 
 export function modelsList(args: { dataDir: string }, io: CliIO): void {
@@ -411,7 +465,7 @@ export async function modelsOffer(
 		const model = await call(app, 'models.setOffer', {
 			modelId: args.modelId,
 			offered: args.offered ?? current.offer.offered,
-			price: parsePrice(app.store, args.priceIn, args.priceOut, current.offer.price),
+			price: parsePrice(args.priceIn, args.priceOut, current.offer.price),
 			...(access !== undefined ? { access } : {})
 		});
 		io.out(describeModel(app.store, model));
@@ -446,14 +500,13 @@ export async function provide(args: { dataDir: string; enabled?: boolean; maxJob
 
 export async function buy(args: { dataDir: string; perRequestMax?: string; dailyMax?: string }, io: CliIO): Promise<void> {
 	await withApp(args.dataDir, io, false, async (app) => {
-		const { decimals, symbol } = settlement(app.store);
 		const status = await call(app, 'buyer.setPolicy', {
-			...(args.perRequestMax !== undefined ? { perRequestMax: parseAmount(args.perRequestMax, decimals).toString() } : {}),
-			...(args.dailyMax !== undefined ? { dailyMax: parseAmount(args.dailyMax, decimals).toString() } : {})
+			...(args.perRequestMax !== undefined ? { perRequestMax: parseAmount(args.perRequestMax, CREDIT_DECIMALS).toString() } : {}),
+			...(args.dailyMax !== undefined ? { dailyMax: parseAmount(args.dailyMax, CREDIT_DECIMALS).toString() } : {})
 		});
 		const policy = status.policy;
-		io.out(`Agents on this machine may spend up to ${formatAmount(BigInt(policy.perRequestMax), decimals)} ${symbol} per request and ${formatAmount(BigInt(policy.dailyMax), decimals)} ${symbol} per day.`);
-		io.out(`Spent today: ${formatAmount(BigInt(status.spentToday), decimals)} ${symbol}.`);
+		io.out(`Agents on this machine may spend up to ${credits(policy.perRequestMax)} per request and ${credits(policy.dailyMax)} per day.`);
+		io.out(`Spent today: ${credits(status.spentToday)}.`);
 	});
 }
 
@@ -504,7 +557,6 @@ export async function pair(args: { dataDir: string; pollMs?: number }, io: CliIO
 
 export async function fleet(args: { dataDir: string; action: string; target?: string }, io: CliIO): Promise<void> {
 	await withApp(args.dataDir, io, false, async (app) => {
-		const { decimals, symbol } = settlement(app.store);
 		switch (args.action) {
 			case 'list': {
 				const helpers = await call(app, 'fleet.list', {});
@@ -512,7 +564,7 @@ export async function fleet(args: { dataDir: string; action: string; target?: st
 					io.out('No helpers. Pair one with `keeta-compute-agent pair`.');
 				}
 				for (const helper of helpers) {
-					io.out(`${helper.nodeKey}  ${helper.name}  ${helper.status}  ${helper.offers.join(',') || 'no offers'}  earned ${formatAmount(BigInt(helper.earnedTotal), decimals)} ${symbol}`);
+					io.out(`${helper.nodeKey}  ${helper.name}  ${helper.status}  ${helper.offers.join(',') || 'no offers'}  ${helper.completed} job(s) completed`);
 				}
 				return;
 			}

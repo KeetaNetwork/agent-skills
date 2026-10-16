@@ -1,12 +1,14 @@
 /**
  * Persistent agent state: one JSON file in the data directory, written
  * atomically. Holds policies, installed models, the operator link proof,
- * job history and unpaid receipts. Never holds the passkey PRF output.
+ * job history, today's spend for the local limits, and escrows still to be
+ * reported. Balances and earnings are read from the ledger, never kept
+ * here. Never holds the passkey PRF output.
  */
 
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { NetworkName, SignedReceipt, SignedTicket } from '@keeta-compute/protocol';
+import type { NetworkName } from '@keeta-compute/protocol';
 import type { BuyerPolicy, InstalledModel, JobSummary, ProviderPolicy } from './rpc/types.ts';
 
 export interface OperatorLink {
@@ -16,33 +18,17 @@ export interface OperatorLink {
 	signature: string;
 }
 
-export interface UnpaidReceipt {
+/**
+ * An escrow sent to the settlement account whose block the control plane
+ * has not confirmed yet (the report failed, or the app quit in between).
+ * Reported again until it is: the control plane then issues the ticket or,
+ * past the quote, refunds the escrow.
+ */
+export interface PendingEscrow {
 	jobId: string;
 	network: NetworkName;
-	payTo: string;
-	amount: string;
-	asset: string;
-	receipt: SignedReceipt;
-	attempts: number;
-	lastError?: string;
-	/** Set once a payment block was published; reported to the control plane. */
-	blockHash?: string;
-}
-
-/** A job the buyer hung up on after receiving text; its receipt is fetched from the control plane. */
-export interface AwaitingReceipt {
-	jobId: string;
-	network: NetworkName;
-	ticket: SignedTicket;
-	maxCost: string;
-	delivery: Delivery;
-	since: number;
-}
-
-/** What the buyer actually received, which a receipt must match. */
-export interface Delivery {
-	outputHash: string;
-	maxOutputTokens: number;
+	blockHash: string;
+	at: number;
 }
 
 export interface HelperConfig {
@@ -62,12 +48,10 @@ export interface AgentStateFile {
 	buyer: BuyerPolicy & { token: string };
 	models: InstalledModel[];
 	jobs: JobSummary[];
-	unpaid: UnpaidReceipt[];
-	awaitingReceipts: AwaitingReceipt[];
+	escrows: PendingEscrow[];
+	/** Credits providers billed this Mac per UTC day, for the local daily limit only. */
 	spentByDay: Record<string, string>;
-	earnedByDay: Record<string, string>;
 	tokensByDay: Record<string, number>;
-	earnedTotal: string;
 	helper?: HelperConfig;
 }
 
@@ -94,20 +78,17 @@ export function defaultState(): AgentStateFile {
 		},
 		buyer: {
 			token: randomToken(),
-			perRequestMax: '250000', // 0.25 USDC
-			dailyMax: '5000000', // 5 USDC
+			perRequestMax: '250000', // 0.25 credits
+			dailyMax: '5000000', // 5 credits
 			allowedModels: [],
 			allowedProviders: [],
 			maxPrice: { inputPerMillion: '2000000', outputPerMillion: '6000000' }
 		},
 		models: [],
 		jobs: [],
-		unpaid: [],
-		awaitingReceipts: [],
+		escrows: [],
 		spentByDay: {},
-		earnedByDay: {},
-		tokensByDay: {},
-		earnedTotal: '0'
+		tokensByDay: {}
 	};
 }
 
@@ -123,6 +104,10 @@ export class StateStore {
 		mkdirSync(dataDir, { recursive: true, mode: 0o700 });
 		this.file = join(dataDir, 'state.json');
 		this.state = existsSync(this.file) ? { ...defaultState(), ...(JSON.parse(readFileSync(this.file, 'utf8')) as Partial<AgentStateFile>) } : defaultState();
+		/* Older files carried pay-later receipts and a stored earnings tally; credits are escrowed and earnings read from the ledger now. */
+		for (const key of ['unpaid', 'awaitingReceipts', 'earnedByDay', 'earnedTotal']) {
+			delete (this.state as unknown as Record<string, unknown>)[key];
+		}
 	}
 
 	save(): void {
@@ -153,7 +138,7 @@ export class StateStore {
 		});
 	}
 
-	addToDay(field: 'spentByDay' | 'earnedByDay', amount: bigint, now = Date.now()): void {
+	addToDay(field: 'spentByDay', amount: bigint, now = Date.now()): void {
 		this.update((s) => {
 			const day = today(now);
 			s[field][day] = (BigInt(s[field][day] ?? '0') + amount).toString();

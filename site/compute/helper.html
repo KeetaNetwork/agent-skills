@@ -91,21 +91,24 @@ keeta-compute-agent run</code></pre>
 <li><code>--served-name</code> is the <code>model</code> value your local server expects.</li>
 <li><code>--weights</code> is hashed, and the hash appears on every receipt the node signs.</li>
 <li>Keep the server bound to <code>127.0.0.1</code>. The agent refuses servers on other hosts.</li>
-<li><code>models offer ID --price-in 0.10 --price-out 0.40</code> sets prices in USDC per million tokens; <code>--off</code> stops offering a model; <code>--access allowlist --allow KEY,...</code> limits it to listed buyers.</li>
+<li><code>models offer ID --price-in 0.10 --price-out 0.40</code> sets prices in credits (one credit is one US dollar) per million tokens; <code>--off</code> stops offering a model; <code>--access allowlist --allow KEY,...</code> limits it to listed buyers.</li>
 <li><code>provide --access allowlist --allow KEY,...</code> sets the default for every model; <code>--max-jobs N</code> sets concurrency.</li>
 </ul>
 <h3 id="buy-inference">Buy inference</h3>
-<p>While <code>run</code> is running, agents on the machine can call <code>http://127.0.0.1:11435/v1</code> with the token from <code>keeta-compute-agent token</code>. Requests are paid from the agent budget, a separate local key.</p>
-<pre><code class="language-bash">keeta-compute-agent wallet fund-budget 5
+<p>While <code>run</code> is running, agents on the machine can call <code>http://127.0.0.1:11435/v1</code> with the token from <code>keeta-compute-agent token</code>. Requests are paid in Keeta Compute Credits from the agent budget, a separate local key: each request escrows its most possible cost on the Keeta ledger, and what the provider does not bill comes back.</p>
+<p>Buy credits with a Keeta stablecoin held in the operator wallet (KUSD by default; also KEUR, KJPY, KMXN, KCAD, KAED, KGBP and USDC). They go straight to the agent budget:</p>
+<pre><code class="language-bash">keeta-compute-agent wallet buy-credits 5 --with KUSD
 keeta-compute-agent buy --per-request-max 0.25 --daily-max 5</code></pre>
 <h3 id="other-commands">Other commands</h3>
 <table>
 <thead><tr><th>Command</th><th>What it does</th></tr></thead>
 <tbody>
 <tr><td><code>status</code></td><td class="wrap">Node key, operator, network, endpoints, balances, policies and models (<code>--json</code> for scripts).</td></tr>
-<tr><td><code>wallet</code></td><td class="wrap">Addresses and balances of the operator wallet and the agent budget.</td></tr>
-<tr><td><code>wallet send TO AMOUNT</code></td><td class="wrap">Send USDC from the operator wallet (<code>--asset kta</code> for KTA, <code>--memo TEXT</code> for a memo). Needs the passphrase.</td></tr>
-<tr><td><code>wallet fund-budget AMOUNT</code> / <code>wallet drain-budget AMOUNT</code></td><td class="wrap">Move funds into or out of the agent budget. Draining needs no passphrase.</td></tr>
+<tr><td><code>wallet</code></td><td class="wrap">Addresses of the operator wallet and the agent budget, and their credits, stablecoins and KTA, read from the ledger.</td></tr>
+<tr><td><code>wallet buy-credits AMOUNT [--with KUSD] [--keep]</code></td><td class="wrap">Buy credits with a stablecoin through keeta.ai's exchange; they go to the agent budget unless <code>--keep</code>. Needs the passphrase.</td></tr>
+<tr><td><code>wallet sell-credits AMOUNT [--to KUSD]</code></td><td class="wrap">Cash out credits from the operator wallet for a stablecoin. Needs the passphrase.</td></tr>
+<tr><td><code>wallet send TO AMOUNT</code></td><td class="wrap">Send credits from the operator wallet (<code>--asset KUSD</code> or another stablecoin, <code>--asset kta</code> for KTA, <code>--memo TEXT</code> for a memo). Needs the passphrase.</td></tr>
+<tr><td><code>wallet fund-budget AMOUNT</code> / <code>wallet drain-budget AMOUNT</code></td><td class="wrap">Move credits into or out of the agent budget. Draining needs no passphrase.</td></tr>
 <tr><td><code>wallet test-funds</code></td><td class="wrap">Request test-network KTA for fees.</td></tr>
 <tr><td><code>models list</code> / <code>models remove ID</code></td><td class="wrap">List or forget registered models.</td></tr>
 <tr><td><code>token [--rotate]</code></td><td class="wrap">Print or replace the local endpoint token.</td></tr>

@@ -64,7 +64,7 @@
 <ul>
 <li><strong>Memory</strong> is the unified memory the model needs once loaded, including working headroom. A Mac can give a model about two thirds of its memory under 64 GB and about three quarters above that.</li>
 <li><strong>Disk</strong> is the approximate download size.</li>
-<li><strong>Price</strong> is the suggested price in USDC per million input and output tokens. On the wire, prices are integer base units: USDC has 6 decimals, so 0.05 USDC is <code>50000</code>. <a href="/compute/protocol">Pricing math</a>.</li>
+<li><strong>Price</strong> is the suggested price in Keeta Compute Credits (one credit is one US dollar) per million input and output tokens. On the wire, prices are integer base units: credits have 6 decimals, so 0.05 credits is <code>50000</code>. <a href="/compute/protocol">Pricing math</a>.</li>
 <li><strong>Cluster only</strong> marks a model no single machine can hold. Clusters are not scheduled in this version.</li>
 <li>Live prices and provider counts come from <code>GET /v1/models</code> on the <a href="/compute/router">router</a> or the app's local endpoint.</li>
 </ul>

@@ -10,7 +10,8 @@
 import { hostname } from 'node:os';
 import { resolve } from 'node:path';
 import {
-	NETWORKS,
+	CREDIT_DECIMALS,
+	CREDIT_SYMBOL,
 	assertModelId,
 	formatAmount,
 	normalizePairingCode,
@@ -92,7 +93,7 @@ export async function addHelperModel(
 	if (!/^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d+)?(\/|$)/.test(baseUrl)) {
 		throw new Error('the model server must listen on this machine (127.0.0.1 or localhost)');
 	}
-	const decimals = NETWORKS[store.state.network].settlementAsset.decimals;
+	const decimals = CREDIT_DECIMALS;
 	const price: Price = {
 		inputPerMillion: parseAmount(args.priceIn ?? '0.10', decimals).toString(),
 		outputPerMillion: parseAmount(args.priceOut ?? '0.40', decimals).toString()
@@ -110,7 +111,7 @@ export async function addHelperModel(
 		contextLength: args.context ?? 8192,
 		price
 	});
-	io.out(`Added ${modelId} (${weightsHash.slice(0, 12)}), offered at ${formatAmount(BigInt(price.inputPerMillion), decimals)} in / ${formatAmount(BigInt(price.outputPerMillion), decimals)} out per million tokens.`);
+	io.out(`Added ${modelId} (${weightsHash.slice(0, 12)}), offered at ${formatAmount(BigInt(price.inputPerMillion), decimals)} in / ${formatAmount(BigInt(price.outputPerMillion), decimals)} out ${CREDIT_SYMBOL} per million tokens.`);
 }
 
 export function helperStatus(dataDir: string): Record<string, unknown> {
@@ -123,7 +124,8 @@ export function helperStatus(dataDir: string): Record<string, unknown> {
 		controlUrl: s.controlUrl,
 		paired: s.helper ?? null,
 		models: s.models.map((m) => ({ modelId: m.modelId, offered: m.offer.offered, price: m.offer.price })),
-		earnedTotal: s.earnedTotal
+		/* What these jobs earned is paid to the master's operator account; its wallet shows it. */
+		jobsCompleted: s.jobs.filter((j) => j.role === 'provider' && (j.status === 'completed' || j.status === 'paid')).length
 	};
 }
 

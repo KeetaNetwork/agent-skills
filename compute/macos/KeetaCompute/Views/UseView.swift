@@ -19,7 +19,6 @@ struct UseView: View {
     @State var snippet: Snippet = .curl
     @State var confirmingRotate = false
     @State var draft: BuyerPolicy?
-    @State var settling = false
 
     private var buyer: BuyerStatus? { model.buyer }
     private var hasChanges: Bool { draft != nil && draft != buyer?.policy }
@@ -254,26 +253,11 @@ struct UseView: View {
 
     private var recentCard: some View {
         Card("Recent requests", systemImage: "clock.arrow.circlepath") {
-            if let buyer, buyer.unpaid > 0 {
-                HStack {
-                    Label("\(buyer.unpaid) request\(buyer.unpaid == 1 ? "" : "s") not paid yet", systemImage: "exclamationmark.circle")
-                        .foregroundStyle(.orange)
-                    Spacer()
-                    if settling { ProgressView().controlSize(.small) }
-                    Button("Settle now") {
-                        settling = true
-                        Task {
-                            await model.settle()
-                            settling = false
-                        }
-                    }
-                    .disabled(settling)
-                }
-                Text("Providers stop serving you if requests stay unpaid for more than 10 minutes. Make sure your agent budget has enough USDC.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Divider()
-            }
+            Text("Each request sets aside its most possible cost in credits from the agent budget before it runs. When it finishes, the provider is paid what it billed and the rest comes straight back.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Divider()
             let jobs = buyer?.recentJobs ?? []
             if jobs.isEmpty {
                 EmptyNote(title: "No requests yet", systemImage: "tray", message: "Requests your tools send through the local endpoint, and what each one cost, show up here.")

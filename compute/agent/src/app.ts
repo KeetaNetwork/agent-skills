@@ -10,28 +10,32 @@ import {
 	LOCAL_API_PORT,
 	MIN_PROVIDER_MEMORY_BYTES,
 	NETWORKS,
+	availableAssets,
 	generatePairingCode,
 	hardwareTier,
 	operatorLinkMessage,
 	pairingApprovalMessage,
 	pairingCodeHash,
 	type HardwareProfile,
+	type NetworkCredits,
 	type NetworkName,
 	type PairingRecord,
 	type ProviderKind,
 	type ProviderRecord,
 	type Signer
 } from '@keeta-compute/protocol';
-import { accountSigner, verifyKeetaSignature } from '@keeta-compute/protocol/keeta';
+import { Account, accountSigner, verifyKeetaSignature } from '@keeta-compute/protocol/keeta';
+import { creditAsset, resolveStablecoin, resolveWalletAsset, type WalletAsset } from './assets.ts';
 import { Buyer } from './buyer.ts';
 import { ControlClient } from './control-client.ts';
 import { detectHardware } from './hardware.ts';
+import { AnchorCreditExchange, type CreditExchange } from './fx.ts';
 import { enclaveNodeAccount, operatorAccount, spendAccount, type KeetaAccount } from './keys.ts';
-import { KeetaLedger, SerialQueue, type Ledger } from './ledger.ts';
+import { KeetaLedger, SerialQueue, type Balances, type Ledger } from './ledger.ts';
 import { ModelManager } from './models/manager.ts';
 import { Provider } from './provider.ts';
 import { RpcError } from './rpc/peer.ts';
-import { RPC_ERRORS, type AgentNotifications, type AgentState, type AppToAgent, type FleetHelper, type JobSummary, type WalletState } from './rpc/types.ts';
+import { RPC_ERRORS, type AgentNotifications, type AgentState, type AppToAgent, type AssetBalance, type FleetHelper, type JobSummary, type WalletState } from './rpc/types.ts';
 import { MlxRuntime, type Log } from './runtime/mlx.ts';
 import { StateStore } from './state.ts';
 
@@ -49,6 +53,8 @@ export interface AppOptions {
 	/** Where log lines go; defaults to stderr. Lines also reach `notify` as event.log. */
 	log?: Log;
 	ledgerFor?: (network: NetworkName) => Ledger;
+	/** Buys and sells credits; defaults to the keeta.ai FX provider through the anchor SDK. */
+	exchangeFor?: (network: NetworkName) => CreditExchange;
 	fetchImpl?: typeof fetch;
 	WebSocketImpl?: typeof WebSocket;
 	buyerPort?: number;
@@ -60,6 +66,20 @@ export interface AppOptions {
 
 type Params<K extends keyof AppToAgent> = AppToAgent[K]['params'];
 type Result<K extends keyof AppToAgent> = Promise<AppToAgent[K]['result']>;
+
+/** Today's (UTC) and all-time totals of payouts read from the ledger. */
+function earnings(payouts: Array<{ amount: bigint; at: number }>): { today: string; total: string } {
+	const day = new Date().toISOString().slice(0, 10);
+	let today = 0n;
+	let total = 0n;
+	for (const payout of payouts) {
+		total += payout.amount;
+		if (new Date(payout.at).toISOString().slice(0, 10) === day) {
+			today += payout.amount;
+		}
+	}
+	return { today: today.toString(), total: total.toString() };
+}
 
 export class AgentApp {
 	readonly store: StateStore;
@@ -76,6 +96,10 @@ export class AgentApp {
 	private buyer: Buyer | null = null;
 	private spend: KeetaAccount | null = null;
 	private wallet: WalletState | null = null;
+	/** Credits on this network, from the control plane's /v1/config; null until read, or where they do not exist. */
+	private credits: NetworkCredits | null = null;
+	/** The operator's earnings, read from the ledger with the balances. */
+	private earned = { today: '0', total: '0' };
 	private controlReachable = false;
 	private walletTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -192,6 +216,8 @@ export class AgentApp {
 		this.spend = spendAccount(this.options.dataDir, network);
 		const spendSigner = accountSigner(this.spend);
 		this.wallet = null;
+		this.credits = null;
+		this.earned = { today: '0', total: '0' };
 		this.provider = new Provider({
 			store: this.store,
 			control: this.control,
@@ -208,6 +234,7 @@ export class AgentApp {
 			log: this.log,
 			onJob: this.onJob,
 			onChange: this.emitState,
+			earnings: () => this.earned,
 			...(this.options.WebSocketImpl ? { WebSocketImpl: this.options.WebSocketImpl } : {}),
 			...(this.options.localConditions ? { localConditions: this.options.localConditions } : {})
 		});
@@ -233,21 +260,40 @@ export class AgentApp {
 			this.log('error', `could not open the local endpoint on port ${port}: ${(error as Error).message}`);
 		}
 		this.provider.start();
-		void this.checkControl();
-		void this.refreshWallet().catch(() => undefined);
-		this.walletTimer = setInterval(() => void this.refreshWallet().catch(() => undefined), 60_000);
+		void this.checkControl().then(() => this.refreshWallet().catch(() => undefined));
+		this.walletTimer = setInterval(() => {
+			void this.refreshWallet().catch(() => undefined);
+			void this.buyer?.followUp().catch(() => undefined);
+		}, 60_000);
 		this.walletTimer.unref?.();
+		void this.buyer.followUp().catch(() => undefined);
 	}
 
+	/** Reach the control plane and read which credit token, settlement account and FX provider this network uses. */
 	async checkControl(): Promise<boolean> {
 		try {
-			await this.control!.get(null, '/v1/config');
+			const config = await this.control!.get<{ credits?: Partial<Record<NetworkName, NetworkCredits | null>> }>(null, '/v1/config');
+			this.credits = config.credits?.[this.store.state.network] ?? null;
 			this.controlReachable = true;
 		} catch {
 			this.controlReachable = false;
 		}
 		this.emitState();
 		return this.controlReachable;
+	}
+
+	/** Read the credits config if it has not been yet (the CLI opens offline). */
+	private async loadCredits(): Promise<void> {
+		if (!this.credits && this.control) {
+			await this.checkControl();
+		}
+	}
+
+	private requireCredits(): NetworkCredits {
+		if (!this.credits) {
+			throw new RpcError(RPC_ERRORS.network, `Keeta Compute Credits are not available on the ${this.store.state.network} network yet, or the control plane is unreachable`);
+		}
+		return this.credits;
 	}
 
 	/** Register with the control plane now (normally the provider loop does it). Null without a wallet. */
@@ -321,24 +367,45 @@ export class AgentApp {
 		const { spend, ledger } = this.requireInit();
 		const network = this.store.state.network;
 		const link = this.store.state.operatorLinks[network];
-		const asset = NETWORKS[network].settlementAsset;
-		const base: WalletState = { operator: link?.payTo ?? null, spend: spend.publicKeyString.get(), balances: this.wallet?.balances ?? null, asset, explorer: NETWORKS[network].explorer };
+		await this.loadCredits();
+		const credits = this.credits;
+		const stablecoins = availableAssets(network);
+		const base: WalletState = {
+			operator: link?.payTo ?? null,
+			spend: spend.publicKeyString.get(),
+			balances: this.wallet?.balances ?? null,
+			asset: creditAsset(credits),
+			creditsAvailable: Boolean(credits),
+			stablecoins: stablecoins.map((a) => ({ symbol: a.symbol, name: a.name, currency: a.currency, address: a.address, decimals: a.decimals })),
+			explorer: NETWORKS[network].explorer
+		};
+		const tokens = [...(credits ? [credits.token] : []), ...stablecoins.map((a) => a.address)];
+		const shown = (balances: Balances): AssetBalance => ({
+			credits: (credits ? balances.tokens[credits.token] : undefined)?.toString() ?? '0',
+			kta: balances.kta.toString(),
+			stablecoins: Object.fromEntries(stablecoins.map((a) => [a.symbol, (balances.tokens[a.address] ?? 0n).toString()]))
+		});
 		try {
-			const { Account } = await import('@keeta-compute/protocol/keeta');
-			const operatorBalances = link ? await ledger.balances(Account.fromPublicKeyString(link.payTo as never)) : null;
-			const spendBalances = await ledger.balances(spend);
-			this.wallet = {
-				...base,
-				balances: {
-					operator: operatorBalances ? { usdc: operatorBalances.usdc.toString(), kta: operatorBalances.kta.toString() } : null,
-					spend: { usdc: spendBalances.usdc.toString(), kta: spendBalances.kta.toString() }
-				}
-			};
+			const operatorBalances = link ? await ledger.balances(Account.fromPublicKeyString(link.payTo as never), tokens) : null;
+			const spendBalances = await ledger.balances(spend, tokens);
+			this.wallet = { ...base, balances: { operator: operatorBalances ? shown(operatorBalances) : null, spend: shown(spendBalances) } };
+			if (link && credits) {
+				this.earned = earnings(await ledger.received(link.payTo, credits.settlement, credits.token));
+			}
 		} catch (error) {
 			this.wallet = { ...base, error: `balances unavailable: ${(error as Error).message}` };
 		}
 		this.emitState();
 		return this.wallet;
+	}
+
+	private async walletAsset(name: string): Promise<WalletAsset> {
+		await this.loadCredits();
+		try {
+			return resolveWalletAsset(this.store.state.network, this.credits, name);
+		} catch (error) {
+			throw new RpcError(RPC_ERRORS.invalidParams, (error as Error).message);
+		}
 	}
 
 	private assertAmount(amount: string): bigint {
@@ -351,8 +418,9 @@ export class AgentApp {
 	async send(params: Params<'wallet.send'>): Result<'wallet.send'> {
 		const { ledger } = this.requireInit();
 		const amount = this.assertAmount(params.amount);
+		const asset = await this.walletAsset(params.asset);
 		const operator = await this.operatorFromEntropy(params.entropy);
-		const blockHash = await this.queue.run(operator.publicKeyString.get(), () => ledger.send(operator, params.to, amount, params.asset, params.memo));
+		const blockHash = await this.queue.run(operator.publicKeyString.get(), () => ledger.send(operator, params.to, amount, asset.address, params.memo));
 		void this.refreshWallet().catch(() => undefined);
 		return { blockHash };
 	}
@@ -360,8 +428,9 @@ export class AgentApp {
 	async fundBudget(params: Params<'wallet.fundBudget'>): Result<'wallet.fundBudget'> {
 		const { ledger, spend } = this.requireInit();
 		const amount = this.assertAmount(params.amount);
+		const asset = await this.walletAsset(params.asset);
 		const operator = await this.operatorFromEntropy(params.entropy);
-		const blockHash = await this.queue.run(operator.publicKeyString.get(), () => ledger.send(operator, spend.publicKeyString.get(), amount, params.asset, 'agent-budget'));
+		const blockHash = await this.queue.run(operator.publicKeyString.get(), () => ledger.send(operator, spend.publicKeyString.get(), amount, asset.address, 'agent-budget'));
 		void this.refreshWallet().catch(() => undefined);
 		return { blockHash };
 	}
@@ -369,10 +438,69 @@ export class AgentApp {
 	async drainBudget(params: Params<'wallet.drainBudget'>): Result<'wallet.drainBudget'> {
 		const { ledger, spend } = this.requireInit();
 		const amount = this.assertAmount(params.amount);
+		const asset = await this.walletAsset(params.asset);
 		const to = this.linkedOperator();
-		const blockHash = await this.queue.run(spend.publicKeyString.get(), () => ledger.send(spend, to, amount, params.asset, 'agent-budget'));
+		const blockHash = await this.queue.run(spend.publicKeyString.get(), () => ledger.send(spend, to, amount, asset.address, 'agent-budget'));
 		void this.refreshWallet().catch(() => undefined);
 		return { blockHash };
+	}
+
+	/* --------------------------------------------------------------- credits */
+
+	private exchange(): CreditExchange {
+		const network = this.store.state.network;
+		return this.options.exchangeFor?.(network) ?? new AnchorCreditExchange(network);
+	}
+
+	/** The swap that buys (`to` credits) or sells (`from` credits) `amount` credits for a stablecoin. */
+	private async swapFor(side: 'buy' | 'sell', amount: bigint, stablecoinName: string) {
+		await this.loadCredits();
+		const credits = this.requireCredits();
+		if (!credits.fx) {
+			throw new RpcError(RPC_ERRORS.network, 'the keeta.ai FX provider is not published for this network yet');
+		}
+		let stablecoin: WalletAsset;
+		try {
+			stablecoin = resolveStablecoin(this.store.state.network, stablecoinName);
+		} catch (error) {
+			throw new RpcError(RPC_ERRORS.invalidParams, (error as Error).message);
+		}
+		return side === 'buy'
+			? { stablecoin, request: { fx: credits.fx, from: stablecoin.address, to: credits.token, affinity: 'to' as const, amount } }
+			: { stablecoin, request: { fx: credits.fx, from: credits.token, to: stablecoin.address, affinity: 'from' as const, amount } };
+	}
+
+	async creditQuote(params: Params<'wallet.creditQuote'>): Result<'wallet.creditQuote'> {
+		this.requireInit();
+		const { request } = await this.swapFor(params.side === 'sell' ? 'sell' : 'buy', this.assertAmount(params.amount), params.stablecoin);
+		return { amount: (await this.exchange().estimate(request)).toString() };
+	}
+
+	/** Buy exactly `amount` credits with a stablecoin from the operator account, then fund the agent budget with them. */
+	async buyCredits(params: Params<'wallet.buyCredits'>): Result<'wallet.buyCredits'> {
+		const { ledger, spend } = this.requireInit();
+		const amount = this.assertAmount(params.amount);
+		const { request } = await this.swapFor('buy', amount, params.with);
+		const operator = await this.operatorFromEntropy(params.entropy);
+		const key = operator.publicKeyString.get();
+		const swap = await this.queue.run(key, () => this.exchange().swap(operator, request));
+		let budgetBlockHash: string | undefined;
+		if (params.toBudget !== false) {
+			budgetBlockHash = await this.queue.run(key, () => ledger.send(operator, spend.publicKeyString.get(), amount, request.to, 'agent-budget'));
+		}
+		void this.refreshWallet().catch(() => undefined);
+		return { exchangeId: swap.exchangeId, blockHash: swap.blockHash, paid: swap.sent.toString(), credits: swap.received.toString(), ...(budgetBlockHash ? { budgetBlockHash } : {}) };
+	}
+
+	/** Cash out: sell exactly `amount` credits from the operator account for a stablecoin. */
+	async sellCredits(params: Params<'wallet.sellCredits'>): Result<'wallet.sellCredits'> {
+		this.requireInit();
+		const amount = this.assertAmount(params.amount);
+		const { request } = await this.swapFor('sell', amount, params.to);
+		const operator = await this.operatorFromEntropy(params.entropy);
+		const swap = await this.queue.run(operator.publicKeyString.get(), () => this.exchange().swap(operator, request));
+		void this.refreshWallet().catch(() => undefined);
+		return { exchangeId: swap.exchangeId, blockHash: swap.blockHash, credits: swap.sent.toString(), received: swap.received.toString() };
 	}
 
 	async requestTestFunds(): Result<'wallet.requestTestFunds'> {
@@ -441,7 +569,7 @@ export class AgentApp {
 				tier: helper.tier,
 				status: helper.status,
 				offers: helper.offers.map((o) => o.modelId),
-				earnedTotal: helper.stats.earned,
+				completed: helper.stats.completed,
 				lastHeartbeat: helper.lastHeartbeat
 			})
 		);
@@ -468,7 +596,10 @@ export class AgentApp {
 			'wallet.refresh': () => this.refreshWallet(),
 			'wallet.send': (p: Params<'wallet.send'>) => this.send(p),
 			'wallet.fundBudget': (p: Params<'wallet.fundBudget'>) => this.fundBudget(p),
-			'wallet.drainBudget': (p: Params<'wallet.drainBudget'>) => this.drainBudget(p),
+				'wallet.drainBudget': (p: Params<'wallet.drainBudget'>) => this.drainBudget(p),
+			'wallet.creditQuote': (p: Params<'wallet.creditQuote'>) => this.creditQuote(p),
+			'wallet.buyCredits': (p: Params<'wallet.buyCredits'>) => this.buyCredits(p),
+			'wallet.sellCredits': (p: Params<'wallet.sellCredits'>) => this.sellCredits(p),
 			'wallet.requestTestFunds': () => this.requestTestFunds(),
 			'hardware.profile': () => this.hardwareProfile(),
 			'models.list': async () => this.requireInit().models.list(this.hardware),
@@ -514,7 +645,7 @@ export class AgentApp {
 				return this.requireInit().buyer.status;
 			},
 			'buyer.networkModels': () => this.requireInit().buyer.networkModels(),
-			'buyer.settle': () => this.requireInit().buyer.settle(),
+			'buyer.settle': () => this.requireInit().buyer.followUp(),
 			'fleet.createPairing': () => this.createPairing(),
 			'fleet.pairingStatus': (p: Params<'fleet.pairingStatus'>) => this.pairingStatus(p),
 			'fleet.approve': (p: Params<'fleet.approve'>) => this.approvePairing(p),

@@ -55,7 +55,7 @@ Don't use `npx skills add https://keeta.ai/SKILL.md`. Once the site publishes a 
 
 ## Keeta Compute
 
-Keeta Compute is a market for AI inference on Apple Silicon Macs, paid per request in USDC on Keeta. It is in a test-network preview. Its code lives in [`compute/`](compute/), and its developer docs are at <https://keeta.ai/compute/>. The docs come from `site/compute/`: every page is plain HTML with a Markdown twin (for example <https://keeta.ai/compute/router.md>), and the build fills the models table from `compute/packages/protocol/catalog.json`.
+Keeta Compute is a market for AI inference from spare compute: Macs and Linux GPU machines sell capacity running open-weight models. Buyers pay with Keeta stablecoins, KUSD first, then KEUR, KJPY, KMXN, KCAD, KAED, KGBP and USDC, through Keeta Compute Credits (a token on the Keeta ledger worth one US dollar each): credits are escrowed on the ledger for each request, and the provider is paid what it billed. Clients without the app pay per request with x402. It is in a test-network preview. Its code lives in [`compute/`](compute/), and its developer docs are at <https://keeta.ai/compute/>. The docs come from `site/compute/`: every page is plain HTML with a Markdown twin (for example <https://keeta.ai/compute/router.md>), and the build fills the models table from `compute/packages/protocol/catalog.json`.
 
 ## Hosting on keeta.ai
 

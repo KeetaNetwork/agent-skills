@@ -147,7 +147,7 @@ extension JobSummaryStatus {
     var title: String {
         switch self {
         case .running: return "Running"
-        case .completed: return "Completed"
+        case .completed: return "Settling"
         case .paid: return "Paid"
         case .failed: return "Failed"
         }

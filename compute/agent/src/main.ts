@@ -28,17 +28,21 @@ Linux node (own wallet, provides and buys):
   init [--network test|main] [--control URL] [--relay URL] [--name NAME] [--restore]
   status [--json]
   config [--network test|main] [--control URL] [--relay URL] [--name NAME]
-  wallet                                   balances and addresses
-  wallet send TO AMOUNT [--asset usdc|kta] [--memo TEXT]
-  wallet fund-budget AMOUNT [--asset usdc|kta]
-  wallet drain-budget AMOUNT [--asset usdc|kta]
+  wallet                                   balances (credits, stablecoins, KTA) and addresses
+  wallet buy-credits AMOUNT [--with KUSD|KEUR|KJPY|KMXN|KCAD|KAED|KGBP|USDC] [--keep]
+                                           buy credits with a stablecoin; they go to the agent budget unless --keep
+  wallet sell-credits AMOUNT [--to KUSD|...|USDC]
+                                           cash out credits for a stablecoin
+  wallet send TO AMOUNT [--asset credits|kta|KUSD|...] [--memo TEXT]
+  wallet fund-budget AMOUNT [--asset credits|kta|KUSD|...]
+  wallet drain-budget AMOUNT [--asset credits|kta|KUSD|...]
   wallet test-funds
   models list
-  models add --id ID --url URL --served-name NAME --weights DIR [--price-in USDC] [--price-out USDC] [--context N] [--name NAME]
-  models offer ID [--on|--off] [--price-in USDC] [--price-out USDC] [--access public|allowlist|default] [--allow KEY,...]
+  models add --id ID --url URL --served-name NAME --weights DIR [--price-in CREDITS] [--price-out CREDITS] [--context N] [--name NAME]
+  models offer ID [--on|--off] [--price-in CREDITS] [--price-out CREDITS] [--access public|allowlist|default] [--allow KEY,...]
   models remove ID
   provide [--on|--off] [--max-jobs N] [--access public|allowlist] [--allow KEY,...]
-  buy [--per-request-max USDC] [--daily-max USDC]
+  buy [--per-request-max CREDITS] [--daily-max CREDITS]
   token [--rotate]
   pair
   fleet list | approve PAIRING_ID | reject PAIRING_ID | revoke NODE_KEY
@@ -46,7 +50,7 @@ Linux node (own wallet, provides and buys):
 
 Linux helper (paired satellite, pays its master's operator):
   helper pair CODE [--control URL] [--name NAME]
-  helper add-model --id ID --url URL --served-name NAME --weights DIR [--price-in USDC] [--price-out USDC] [--context N]
+  helper add-model --id ID --url URL --served-name NAME --weights DIR [--price-in CREDITS] [--price-out CREDITS] [--context N]
   helper run
   helper status
 
@@ -55,6 +59,7 @@ macOS app:
 
   version
 
+Prices and limits are in Keeta Compute Credits per million tokens; one credit is one US dollar.
 The passphrase is read from KEETA_COMPUTE_PASSPHRASE or asked for on the terminal.`;
 
 function defaultDataDir(): string {
@@ -269,6 +274,9 @@ async function runNodeCommand(command: string, argv: string[]): Promise<void> {
 			restore: { type: 'boolean' },
 			json: { type: 'boolean' },
 			asset: { type: 'string' },
+			with: { type: 'string' },
+			to: { type: 'string' },
+			keep: { type: 'boolean' },
 			memo: { type: 'string' },
 			id: { type: 'string' },
 			url: { type: 'string' },
@@ -329,6 +337,12 @@ async function runNodeCommand(command: string, argv: string[]): Promise<void> {
 					return;
 				case 'drain-budget':
 					await cli.walletDrainBudget({ dataDir, amount: args[0] ?? '', ...asset }, io);
+					return;
+				case 'buy-credits':
+					await cli.walletBuyCredits({ dataDir, amount: args[0] ?? '', ...(values.with ? { with: values.with } : {}), ...(values.keep ? { keep: true } : {}) }, io);
+					return;
+				case 'sell-credits':
+					await cli.walletSellCredits({ dataDir, amount: args[0] ?? '', ...(values.to ? { to: values.to } : {}) }, io);
 					return;
 				case 'test-funds':
 					await cli.walletTestFunds({ dataDir }, io);

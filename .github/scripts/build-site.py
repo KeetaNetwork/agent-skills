@@ -55,7 +55,7 @@ COMPUTE_PATH = "compute"
 COMPUTE_CATALOG = ROOT / "compute" / "packages" / "protocol" / "catalog.json"
 COMPUTE_PAGES = ("index", "app", "models", "router", "helper", "protocol")
 MODELS_MARKER = "<!-- keeta-compute:models-table -->"
-USDC_DECIMALS = 6
+CREDIT_DECIMALS = 6
 GIB = 1024**3
 
 
@@ -121,18 +121,18 @@ def gib(size: object) -> str:
     return f"{value:.0f} GB" if value >= 10 else f"{value:.1f} GB".replace(".0 GB", " GB")
 
 
-def usdc(base_units: object) -> str:
+def credits(base_units: object) -> str:
     text = str(base_units)
     if not text.isdigit():
         raise SystemExit(f"{COMPUTE_CATALOG}: price {text!r} is not integer base units")
-    value = Decimal(text).scaleb(-USDC_DECIMALS)
+    value = Decimal(text).scaleb(-CREDIT_DECIMALS)
     return format(value.normalize(), "f") if value else "0"
 
 
 def models_tables(catalog: list[dict[str, object]]) -> tuple[str, str]:
-    """The catalog as a Markdown table and an HTML table (prices shown in USDC per million tokens)."""
+    """The catalog as a Markdown table and an HTML table (prices shown in credits per million tokens)."""
     head = ["id", "Name", "Parameters", "Quantization", "Memory", "Disk", "License",
-            "Input USDC / 1M", "Output USDC / 1M", "Notes"]
+            "Input credits / 1M", "Output credits / 1M", "Notes"]
     md = ["| " + " | ".join(head) + " |", "|" + " --- |" * len(head)]
     rows_html = []
     for model in catalog:
@@ -142,7 +142,7 @@ def models_tables(catalog: list[dict[str, object]]) -> tuple[str, str]:
             cells = [
                 str(model["id"]), str(model["name"]), str(model["parameters"]), str(model["quantization"]),
                 gib(model["memoryBytes"]), gib(model["diskBytes"]),
-                usdc(price["inputPerMillion"]), usdc(price["outputPerMillion"]),  # type: ignore[index]
+                credits(price["inputPerMillion"]), credits(price["outputPerMillion"]),  # type: ignore[index]
                 "cluster only" if model.get("requiresCluster") else "",
             ]
             license_name, license_url = str(license_["name"]), str(license_["url"])  # type: ignore[index]
@@ -299,7 +299,7 @@ def build(out: Path) -> None:
         "",
         "## Keeta Compute",
         "",
-        "AI inference on Apple Silicon Macs, paid per request in USDC on Keeta (test-network preview).",
+        "AI inference from spare compute (Macs and Linux GPU machines), paid with Keeta stablecoins (KUSD first) through Keeta Compute Credits, or per request with x402 (test-network preview).",
         "",
     ]
     for title, url in compute_pages:

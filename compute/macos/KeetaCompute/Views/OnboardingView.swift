@@ -81,7 +81,7 @@ private struct WelcomeStep: View {
                 message: "Earn by sharing your Mac's AI capacity, or use models running on other Macs."
             )
             VStack(alignment: .leading, spacing: 14) {
-                Point(symbol: "dollarsign.circle", text: "Get paid in USDC for every request your Mac serves.")
+                Point(symbol: "dollarsign.circle", text: "Earn Keeta Compute Credits for every request your Mac serves, and cash them out to KUSD or another Keeta stablecoin.")
                 Point(symbol: "hand.raised", text: "You decide which models to share, when, and with whom.")
                 Point(symbol: "terminal", text: "Point your own tools and agents at a local endpoint and pay per request.")
             }
@@ -367,7 +367,7 @@ private struct DoneStep: View {
                 title: "You're all set",
                 message: model.hardwareCheck?.canProvide == true
                     ? "Downloads continue in the background. When a model is ready, offer it to the network from Models and turn on Provide to start earning."
-                    : "Add USDC to your wallet, then point your tools at the local endpoint shown under Use."
+                    : "Buy credits with KUSD or another Keeta stablecoin in Wallet, then point your tools at the local endpoint shown under Use."
             )
             Button("Open Keeta Compute", action: finish)
                 .buttonStyle(.borderedProminent)

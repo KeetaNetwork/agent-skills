@@ -1,7 +1,9 @@
 /**
  * Records shared by the control plane, relay, agent and app. These are the
  * operational records held in the app backend (Firestore); prompts and
- * outputs never appear in them (plan §5.1).
+ * outputs never appear in them (plan §5.1). Nor do balances: credits,
+ * escrows, payouts and refunds live only on the Keeta ledger, and job
+ * records point at the blocks that moved them.
  */
 
 import type { NetworkName } from './constants.ts';
@@ -55,13 +57,50 @@ export interface ProviderRecord {
 	load: { active: number; capacity: number };
 	lastHeartbeat: number;
 	registeredAt: number;
-	stats: { completed: number; failed: number; tokensOut: number; earned: string; disputed?: number };
+	/**
+	 * Reputation counters the scheduler weighs; no money. What a provider
+	 * earned is on the ledger: the settlement account's payouts to `payTo`.
+	 */
+	stats: { completed: number; failed: number; tokensOut: number; disputed?: number };
 }
 
-export type PaymentMode = 'postpay' | 'prepaid';
+/**
+ * 'escrow': an app job. The buyer escrows its maximum cost in credits with
+ * keeta.ai before the ticket is issued, and the control plane pays the
+ * provider from it. 'prepaid': a public router job, paid to the provider
+ * directly over x402 before it runs.
+ */
+export type PaymentMode = 'escrow' | 'prepaid';
 
-/** `disputed`: the buyer refused a receipt that did not match what it received; it is not owed. */
-export type JobStatus = 'scheduled' | 'completed' | 'failed' | 'paid' | 'expired' | 'disputed';
+/**
+ * - `quoted`: an app job waiting for its escrow; no ticket yet.
+ * - `scheduled`: ticketed (escrowed, or a router quote).
+ * - `completed`: the provider filed its receipt; an app job waits for the relay's delivery record.
+ * - `paid`: the provider was paid (app jobs: from the escrow, with the rest refunded).
+ * - `failed`: the provider failed or never billed; the escrow is refunded.
+ * - `disputed`: the receipt does not match what the relay forwarded (or the relay recorded nothing); the escrow is refunded.
+ * - `expired`: never used; an escrow that arrived is refunded.
+ */
+export type JobStatus = 'quoted' | 'scheduled' | 'completed' | 'failed' | 'paid' | 'expired' | 'disputed';
+
+/** Why an escrowed job was settled the way it was. */
+export type SettlementReason = 'delivered' | 'mismatch' | 'no-delivery' | 'failed' | 'no-receipt' | 'expired';
+
+/**
+ * How an escrowed app job settles, decided once, and the payout block. No
+ * amounts: the payout splits the escrow block's amount (read from the
+ * ledger) by the reason, paying the receipt's amount when delivered.
+ */
+export interface Settlement {
+	reason: SettlementReason;
+	decidedAt: number;
+	/** When the last payout attempt started; another waits until it is stale, then checks the ledger first. */
+	attemptAt?: number;
+	/** The settlement account's payout block, once published. */
+	blockHash?: string;
+	sentAt?: number;
+	error?: string;
+}
 
 export interface JobRecord {
 	jobId: string;
@@ -71,28 +110,43 @@ export interface JobRecord {
 	nodeKey: string;
 	payTo: string;
 	modelId: string;
+	/** Credit base units per million tokens. */
 	price: Price;
 	maxInputTokens: number;
 	maxOutputTokens: number;
 	paymentMode: PaymentMode;
+	/** Token the job is paid in: the credit token for app jobs, the x402 stablecoin for router jobs. */
+	asset: string;
+	/** Router jobs: what the x402 payment must carry, in base units of `asset`. */
 	prepaidAmount?: string;
 	status: JobStatus;
 	createdAt: number;
 	completedAt?: number;
 	receipt?: SignedReceipt;
-	amountDue?: string;
+	/** Router jobs: the x402 settlement. */
 	payment?: { blockHash: string; paidAt: number; verified: boolean };
 	/** For router jobs: the account that paid through x402. */
 	routerPayer?: string;
 	fallback?: FallbackRoute;
-	/** For app (postpay) jobs: what the relay forwarded to the buyer, which settles a dispute over the receipt. */
+	/** App jobs: the quote holds its provider until then. Its escrow is maxJobCost(price, limits) credits. */
+	quoteExpiresAt?: number;
+	/** App jobs: the buyer's block escrowing the quote with the settlement account, verified on the ledger. */
+	escrow?: { blockHash: string; at: number };
+	/** App jobs: when the ticket was issued (on escrow). */
+	ticketIssuedAt?: number;
+	/** App jobs: how the escrow is split and the payout. */
+	settlement?: Settlement;
+	/** App jobs: a work-queue marker, set while a decided settlement has no payout block yet. */
+	payoutDue?: boolean;
+	/** For app jobs: what the relay forwarded to the buyer, which decides whether the receipt is paid. */
 	delivery?: { outputHash: string; maxOutputTokens: number; at: number };
 	/** For fallback jobs: when the router started the one upstream run this quote allows. */
 	claimedAt?: number;
 	/**
-	 * For app jobs: when the buyer handed the ticket back before a receipt. The
-	 * job stays open (and counted against the buyer's balance) until the ticket
-	 * lapses, so a provider that already streamed can still file its receipt.
+	 * For app jobs: when the ticket's slot was handed back before a receipt
+	 * (by the buyer, or by the sweep once the ticket went unused). The job
+	 * stays open until it lapses, so a provider that already streamed can still
+	 * file its receipt and be paid from the escrow.
 	 */
 	handedBackAt?: number;
 	error?: string;
@@ -112,8 +166,9 @@ export interface Receipt {
 	inputTokens: number;
 	outputTokens: number;
 	price: Price;
-	/** Base units owed (postpay) or consumed (prepaid). */
+	/** The priced usage, in credit base units (one credit is one US dollar). */
 	amount: string;
+	/** The ticket's asset: the credit token for app jobs, the stablecoin paid over x402 for router jobs. */
 	asset: string;
 	startedAt: number;
 	finishedAt: number;
@@ -153,6 +208,7 @@ export interface JobTicket {
 	asset: string;
 	payTo: string;
 	paymentMode: PaymentMode;
+	/** Router jobs: the x402 amount, in base units of `asset`. */
 	prepaidAmount?: string;
 	issuedAt: number;
 	expiresAt: number;
@@ -222,6 +278,7 @@ export interface NetworkModel {
 	id: string;
 	name: string;
 	providers: number;
+	/** Credit base units per million tokens. */
 	lowestPrice: Price;
 	contextLength: number;
 	license?: string;

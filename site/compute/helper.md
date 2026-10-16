@@ -49,15 +49,17 @@ keeta-compute-agent run
 - `--served-name` is the `model` value your local server expects.
 - `--weights` is hashed, and the hash appears on every receipt the node signs.
 - Keep the server bound to `127.0.0.1`. The agent refuses servers on other hosts.
-- `models offer ID --price-in 0.10 --price-out 0.40` sets prices in USDC per million tokens; `--off` stops offering a model; `--access allowlist --allow KEY,...` limits it to listed buyers.
+- `models offer ID --price-in 0.10 --price-out 0.40` sets prices in credits (one credit is one US dollar) per million tokens; `--off` stops offering a model; `--access allowlist --allow KEY,...` limits it to listed buyers.
 - `provide --access allowlist --allow KEY,...` sets the default for every model; `--max-jobs N` sets concurrency.
 
 ### Buy inference
 
-While `run` is running, agents on the machine can call `http://127.0.0.1:11435/v1` with the token from `keeta-compute-agent token`. Requests are paid from the agent budget, a separate local key.
+While `run` is running, agents on the machine can call `http://127.0.0.1:11435/v1` with the token from `keeta-compute-agent token`. Requests are paid in Keeta Compute Credits from the agent budget, a separate local key: each request escrows its most possible cost on the Keeta ledger, and what the provider does not bill comes back.
+
+Buy credits with a Keeta stablecoin held in the operator wallet (KUSD by default; also KEUR, KJPY, KMXN, KCAD, KAED, KGBP and USDC). They go straight to the agent budget:
 
 ```bash
-keeta-compute-agent wallet fund-budget 5
+keeta-compute-agent wallet buy-credits 5 --with KUSD
 keeta-compute-agent buy --per-request-max 0.25 --daily-max 5
 ```
 
@@ -66,9 +68,11 @@ keeta-compute-agent buy --per-request-max 0.25 --daily-max 5
 | Command | What it does |
 | --- | --- |
 | `status` | Node key, operator, network, endpoints, balances, policies and models (`--json` for scripts). |
-| `wallet` | Addresses and balances of the operator wallet and the agent budget. |
-| `wallet send TO AMOUNT` | Send USDC from the operator wallet (`--asset kta` for KTA, `--memo TEXT` for a memo). Needs the passphrase. |
-| `wallet fund-budget AMOUNT` / `wallet drain-budget AMOUNT` | Move funds into or out of the agent budget. Draining needs no passphrase. |
+| `wallet` | Addresses of the operator wallet and the agent budget, and their credits, stablecoins and KTA, read from the ledger. |
+| `wallet buy-credits AMOUNT [--with KUSD] [--keep]` | Buy credits with a stablecoin through keeta.ai's exchange; they go to the agent budget unless `--keep`. Needs the passphrase. |
+| `wallet sell-credits AMOUNT [--to KUSD]` | Cash out credits from the operator wallet for a stablecoin. Needs the passphrase. |
+| `wallet send TO AMOUNT` | Send credits from the operator wallet (`--asset KUSD` or another stablecoin, `--asset kta` for KTA, `--memo TEXT` for a memo). Needs the passphrase. |
+| `wallet fund-budget AMOUNT` / `wallet drain-budget AMOUNT` | Move credits into or out of the agent budget. Draining needs no passphrase. |
 | `wallet test-funds` | Request test-network KTA for fees. |
 | `models list` / `models remove ID` | List or forget registered models. |
 | `token [--rotate]` | Print or replace the local endpoint token. |

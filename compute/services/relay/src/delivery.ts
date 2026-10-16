@@ -1,8 +1,9 @@
 /**
  * The relay's delivery record for an app job: the hash of the text it
- * forwarded, posted to the control plane. A dispute over the provider's
- * receipt is decided by this record, so it is retried until the control
- * plane accepts it rather than dropped on the first failure.
+ * forwarded, posted to the control plane. The job's escrow is settled by
+ * this record (the provider is paid only for a receipt that matches it), so
+ * it is retried until the control plane accepts it rather than dropped on
+ * the first failure.
  */
 
 export const DELIVERY_RETRY_DELAYS_MS = [500, 1_000, 2_000, 4_000, 8_000];

@@ -125,8 +125,8 @@ private struct SidebarFooter: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Divider()
-            if let usdc = model.wallet?.balances?.operatorBalance?.usdc {
-                Text(model.money.string(usdc))
+            if let credits = model.creditBalance {
+                Text(model.money.string(credits))
                     .font(.headline)
                     .monospacedDigit()
             }

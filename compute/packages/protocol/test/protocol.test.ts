@@ -187,3 +187,63 @@ test('catalog.json is in sync with catalog.ts (run npm run catalog:export)', asy
 	const { catalogExport } = await import('../scripts/export-catalog.ts');
 	assert.deepEqual(JSON.parse(readFileSync(new URL('../catalog.json', import.meta.url), 'utf8')), catalogExport());
 });
+
+test('stablecoins: the Keeta stablecoins lead and USDC comes last; only pinned ones are usable; credits are dollars at 6 decimals', async () => {
+	const { CREDIT_DECIMALS, ONE_CREDIT, assetListing, availableAssets, defaultAsset, findAsset, pinnedCredits, rescaleAmount } = await import('../src/index.ts');
+	for (const network of ['test', 'main'] as const) {
+		const listing = assetListing(network);
+		assert.deepEqual(
+			listing.map((a) => a.symbol),
+			['KUSD', 'KEUR', 'KJPY', 'KMXN', 'KCAD', 'KAED', 'KGBP', 'USDC']
+		);
+		assert.deepEqual(
+			availableAssets(network).map((a) => a.symbol),
+			listing.filter((a) => a.available).map((a) => a.symbol),
+			'usable means pinned, in the same order'
+		);
+		assert.equal(defaultAsset(network).symbol, findAsset(network, 'KUSD') ? 'KUSD' : 'USDC', 'x402 asks for KUSD once it is pinned, else USDC');
+		const usdc = findAsset(network, 'usdc')!;
+		assert.equal(findAsset(network, usdc.address)?.symbol, 'USDC', 'found by symbol in any case, or by address');
+		assert.equal(pinnedCredits(network)?.decimals ?? CREDIT_DECIMALS, CREDIT_DECIMALS);
+	}
+	assert.equal(pinnedCredits('main'), null, 'main-network credits stay unset until keeta.ai issues them');
+	assert.equal(ONE_CREDIT, 1_000_000n);
+	assert.equal(rescaleAmount(1_234_567n, 6, 4), 12_346n, 'down-scaling rounds up, so a price never becomes zero');
+	assert.equal(rescaleAmount(5n, 6, 18), 5_000_000_000_000n);
+});
+
+test('escrow blocks: only the buyer\'s sends of the token to the settlement account that reference the job count', async () => {
+	const KeetaNet = await import('@keetanetwork/keetanet-client');
+	const { NETWORKS } = await import('../src/index.ts');
+	const { checkPaymentBlock } = await import('../src/keeta.ts');
+	const random = () => Account.fromSeed(Account.generateRandomSeed({ asString: true }), 0);
+	const [buyer, settlement, stranger] = [random(), random(), random()];
+	const credits = Account.generateBaseAddresses(BigInt(NETWORKS.test.caip2.split(':')[1]!)).baseToken;
+	const otherToken = Account.generateBaseAddresses(BigInt(NETWORKS.main.caip2.split(':')[1]!)).baseToken;
+	/* A real signed block, served by a stand-in for the ledger client's block lookup. */
+	const builder = new KeetaNet.lib.Block.Builder();
+	builder.account = buyer;
+	builder.signer = buyer;
+	builder.network = BigInt(NETWORKS.test.caip2.split(':')[1]!);
+	builder.previous = KeetaNet.lib.Block.NO_PREVIOUS;
+	builder.date = new Date();
+	const send = (to: typeof buyer, amount: bigint, token: typeof credits, external: string) =>
+		builder.addOperation({ type: KeetaNet.lib.Block.OperationType.SEND, to, amount, token, external } as never);
+	send(settlement, 3n, credits, 'job_1');
+	send(settlement, 4n, credits, 'job_1');
+	send(settlement, 9n, credits, 'job_2');
+	send(settlement, 100n, otherToken, 'job_1');
+	send(stranger, 50n, credits, 'job_1');
+	const block = await builder.seal();
+	const ledger = { getBlock: async (hash: string) => (hash === block.hash.toString() ? block : null) } as unknown as Parameters<typeof checkPaymentBlock>[0];
+	const expect = { blockHash: block.hash.toString(), from: buyer.publicKeyString.get(), to: settlement.publicKeyString.get(), asset: credits.publicKeyString.get(), minAmount: 7n, reference: 'job_1' };
+
+	assert.deepEqual(await checkPaymentBlock(ledger, expect), { status: 'confirmed', amount: 7n }, 'every send for the job counts, and only those');
+	assert.deepEqual(await checkPaymentBlock(ledger, { ...expect, minAmount: 8n }), { status: 'mismatch', reason: 'paid 7, due 8' });
+	assert.deepEqual(await checkPaymentBlock(ledger, { ...expect, reference: 'job_2', minAmount: 9n }), { status: 'confirmed', amount: 9n }, 'a send for another job counts only for that job');
+	assert.equal((await checkPaymentBlock(ledger, { ...expect, reference: 'job_3', minAmount: 1n })).status, 'mismatch', 'a block cannot escrow a job it does not name');
+	assert.equal((await checkPaymentBlock(ledger, { ...expect, to: random().publicKeyString.get() })).status, 'mismatch', 'sent somewhere else');
+	assert.equal((await checkPaymentBlock(ledger, { ...expect, asset: random().publicKeyString.get() })).status, 'mismatch', 'another token');
+	assert.deepEqual(await checkPaymentBlock(ledger, { ...expect, from: stranger.publicKeyString.get() }), { status: 'mismatch', reason: 'block was not signed by the buyer account' });
+	assert.deepEqual(await checkPaymentBlock(ledger, { ...expect, blockHash: 'F'.repeat(64) }), { status: 'not-found' }, 'not on the ledger yet');
+});

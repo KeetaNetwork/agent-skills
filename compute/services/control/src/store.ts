@@ -23,20 +23,18 @@ export interface Store {
 	getJob(jobId: string): Promise<JobRecord | null>;
 	putJob(job: JobRecord): Promise<void>;
 	/**
-	 * Write a job only if `admit` accepts it, given the buyer's open postpay jobs.
-	 * Atomic per buyer: concurrent calls for one buyer see each other's jobs.
-	 * `admit` throws to refuse.
+	 * Write a job only if `admit` accepts it, given the buyer's quotes still
+	 * waiting for escrow. Atomic per buyer: concurrent calls for one buyer see
+	 * each other's quotes. `admit` throws to refuse.
 	 */
-	putJobIf(job: JobRecord, admit: (openPostpay: JobRecord[]) => void): Promise<void>;
+	putJobIf(job: JobRecord, admit: (openQuotes: JobRecord[]) => void): Promise<void>;
 	/** Atomic read-modify-write. `update` may throw to abort. */
 	updateJob(jobId: string, update: (job: JobRecord) => JobRecord): Promise<JobRecord>;
 	listJobsByBuyer(buyer: string, limit: number): Promise<JobRecord[]>;
 	listJobsByNode(nodeKey: string, limit: number): Promise<JobRecord[]>;
-	/** Completed (receipted) postpay jobs still unpaid, completed before `before`. */
-	listUnpaid(buyer: string, before: number): Promise<JobRecord[]>;
-	/** Postpay jobs the buyer still owes for: scheduled (not yet receipted) or completed and unpaid. */
-	listOpenPostpay(buyer: string): Promise<JobRecord[]>;
 	listJobsByStatus(status: JobStatus, createdBefore: number, limit: number): Promise<JobRecord[]>;
+	/** Escrowed jobs whose settlement is decided but not yet paid out (`payoutDue`). */
+	listPayoutsDue(limit: number): Promise<JobRecord[]>;
 
 	getPairing(pairingId: string): Promise<PairingRecord | null>;
 	findPairingByCodeHash(codeHash: string): Promise<PairingRecord | null>;
@@ -107,14 +105,10 @@ export class MemoryStore implements Store {
 		this.jobs.set(job.jobId, clone(job));
 	}
 
-	async putJobIf(job: JobRecord, admit: (openPostpay: JobRecord[]) => void) {
+	async putJobIf(job: JobRecord, admit: (openQuotes: JobRecord[]) => void) {
 		/* No await between the check and the write, so this is atomic in one process. */
-		admit(this.openPostpay(job.buyer));
+		admit([...this.jobs.values()].filter((j) => j.buyer === job.buyer && j.status === 'quoted').map(clone));
 		this.jobs.set(job.jobId, clone(job));
-	}
-
-	private openPostpay(buyer: string) {
-		return [...this.jobs.values()].filter((j) => j.buyer === buyer && j.paymentMode === 'postpay' && (j.status === 'scheduled' || j.status === 'completed')).map(clone);
 	}
 
 	async updateJob(jobId: string, update: (job: JobRecord) => JobRecord) {
@@ -135,18 +129,12 @@ export class MemoryStore implements Store {
 		return [...this.jobs.values()].filter((j) => j.nodeKey === nodeKey).sort((a, b) => b.createdAt - a.createdAt).slice(0, limit).map(clone);
 	}
 
-	async listUnpaid(buyer: string, before: number) {
-		return [...this.jobs.values()]
-			.filter((j) => j.buyer === buyer && j.status === 'completed' && j.paymentMode === 'postpay' && (j.completedAt ?? 0) < before)
-			.map(clone);
-	}
-
-	async listOpenPostpay(buyer: string) {
-		return this.openPostpay(buyer);
-	}
-
 	async listJobsByStatus(status: JobStatus, createdBefore: number, limit: number) {
 		return [...this.jobs.values()].filter((j) => j.status === status && j.createdAt < createdBefore).slice(0, limit).map(clone);
+	}
+
+	async listPayoutsDue(limit: number) {
+		return [...this.jobs.values()].filter((j) => j.payoutDue).slice(0, limit).map(clone);
 	}
 
 	async getPairing(pairingId: string) {

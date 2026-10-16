@@ -1,5 +1,6 @@
 /**
- * Prices are integer base units of the settlement asset per million tokens.
+ * Prices are integer base units of Keeta Compute Credits (one credit is one
+ * US dollar, 6 decimals) per million tokens.
  * All arithmetic is bigint; nothing is converted through floating point.
  */
 

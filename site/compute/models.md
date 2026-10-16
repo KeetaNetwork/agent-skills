@@ -10,7 +10,7 @@ The curated catalog below makes the common case one click in the macOS app. The 
 
 - **Memory** is the unified memory the model needs once loaded, including working headroom. A Mac can give a model about two thirds of its memory under 64 GB and about three quarters above that.
 - **Disk** is the approximate download size.
-- **Price** is the suggested price in USDC per million input and output tokens. On the wire, prices are integer base units: USDC has 6 decimals, so 0.05 USDC is `50000`. [Pricing math](https://keeta.ai/compute/protocol.md).
+- **Price** is the suggested price in Keeta Compute Credits (one credit is one US dollar) per million input and output tokens. On the wire, prices are integer base units: credits have 6 decimals, so 0.05 credits is `50000`. [Pricing math](https://keeta.ai/compute/protocol.md).
 - **Cluster only** marks a model no single machine can hold. Clusters are not scheduled in this version.
 - Live prices and provider counts come from `GET /v1/models` on the [router](https://keeta.ai/compute/router.md) or the app's local endpoint.
 

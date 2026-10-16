@@ -1,18 +1,22 @@
 /**
  * The buyer side (plan §6.1): an OpenAI-compatible endpoint on localhost for
- * agents on this Mac. Each request is scheduled by the control plane, sent
- * through the relay to a provider, and paid from the agent budget with a
- * direct send to the provider once its signed receipt arrives (plan §6.3).
- * Spend limits are enforced here; the network does not enforce them.
+ * agents on this Mac. Each request is quoted by the control plane, paid for
+ * up front by escrowing its maximum cost in Keeta Compute Credits from the
+ * agent budget to keeta.ai's settlement account, then sent through the relay
+ * to the provider once the ticket is issued (plan §6.3). The control plane
+ * pays the provider what the relay saw delivered and refunds the rest, all
+ * on the ledger. Spend limits are enforced here; the network does not
+ * enforce them.
  */
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import {
-	NETWORKS,
+	CREDIT_SYMBOL,
 	ValidationError,
 	aggregateCompletion,
 	assertChatRequest,
 	chunkText,
+	formatAmount,
 	jobAuthMessage,
 	jobCost,
 	maxJobCost,
@@ -24,6 +28,7 @@ import {
 	sha256Hex,
 	timingSafeEqual,
 	type ChatCompletionRequest,
+	type EscrowQuote,
 	type JobEnvelope,
 	type JobRecord,
 	type NetworkModel,
@@ -37,10 +42,18 @@ import { ControlError, type ControlClient } from './control-client.ts';
 import type { Ledger, SerialQueue } from './ledger.ts';
 import type { Log } from './runtime/mlx.ts';
 import type { BuyerStatus, JobSummary } from './rpc/types.ts';
-import { today, type Delivery, type StateStore, type UnpaidReceipt } from './state.ts';
+import { today, type PendingEscrow, type StateStore } from './state.ts';
 
-/** How long to keep looking for the receipt of a job the buyer hung up on. */
-const LATE_RECEIPT_WINDOW_MS = 15 * 60_000;
+/** How long to keep reporting an escrow the control plane has not confirmed. */
+const ESCROW_REPORT_WINDOW_MS = 24 * 60 * 60_000;
+/** Waits between reports while the escrow block is still reaching the ledger. */
+const ESCROW_RETRY_MS = [0, 500, 1_000, 2_000, 4_000, 8_000];
+
+/** What the buyer actually received, which a receipt must match. */
+export interface Delivery {
+	outputHash: string;
+	maxOutputTokens: number;
+}
 
 async function deliveryOf(text: string): Promise<Delivery> {
 	return { outputHash: await sha256Hex(text), maxOutputTokens: maxOutputTokensFor(text) };
@@ -60,6 +73,8 @@ export interface BuyerDeps {
 	log: Log;
 	onJob: (job: JobSummary) => void;
 	fetchImpl?: typeof fetch;
+	/** Waits between escrow reports; defaults to ESCROW_RETRY_MS. */
+	escrowRetryMs?: number[];
 }
 
 class HttpError extends Error {
@@ -74,13 +89,13 @@ class HttpError extends Error {
 
 const encoder = new TextEncoder();
 
-/** Retries for a dispute the control plane holds until the relay's delivery record lands (it waits up to a minute). */
-const REFUSE_RETRY_DELAYS_MS = [2_000, 5_000, 15_000, 45_000];
-
 export class Buyer {
 	private server: Server | null = null;
 	private port = 0;
-	private readonly accepting = new Set<string>();
+	/** Jobs whose escrow is being sent now: one escrow per job. */
+	private readonly escrowing = new Set<string>();
+	/** The follow-up in progress; overlapping calls share it. */
+	private following: Promise<{ reported: number; settled: number }> | null = null;
 
 	constructor(private readonly deps: BuyerDeps) {}
 
@@ -96,7 +111,6 @@ export class Buyer {
 			token,
 			policy,
 			spentToday: s.spentByDay[today()] ?? '0',
-			unpaid: s.unpaid.length,
 			recentJobs: s.jobs.filter((j) => j.role === 'buyer').slice(0, 50)
 		};
 	}
@@ -144,7 +158,12 @@ export class Buyer {
 				const models = await this.networkModels();
 				return json(res, 200, {
 					object: 'list',
-					data: models.map((m) => ({ id: m.id, object: 'model', owned_by: 'keeta-compute', keeta: { name: m.name, providers: m.providers, lowestPrice: m.lowestPrice, contextLength: m.contextLength } }))
+					data: models.map((m) => ({
+						id: m.id,
+						object: 'model',
+						owned_by: 'keeta-compute',
+						keeta: { name: m.name, providers: m.providers, lowestPrice: m.lowestPrice, priceUnit: 'credit base units per million tokens', contextLength: m.contextLength }
+					}))
 				});
 			}
 			if (req.method === 'POST' && url.pathname === '/v1/chat/completions') {
@@ -172,7 +191,7 @@ export class Buyer {
 				return json(res, error.status, { error: { code: error.code, message: error.message, type: error.code } });
 			}
 			if (error instanceof ControlError) {
-				const status = error.status === 503 ? 503 : error.status === 402 ? 402 : 502;
+				const status = error.status === 503 || error.status === 429 || error.status === 402 ? error.status : 502;
 				return json(res, status, { error: { code: error.code, message: error.message, type: error.code } });
 			}
 			this.deps.log('error', `buyer request failed: ${(error as Error).message}`);
@@ -196,7 +215,7 @@ export class Buyer {
 		const maxOutputTokens = requestedMaxTokens(body);
 		const maxInputTokens = promptTokenBound(body);
 
-		const { ticket } = await control.post<{ ticket: SignedTicket; relayUrl: string }>(spend, '/v1/jobs', {
+		const { job, quote } = await control.post<{ job: JobRecord; quote: EscrowQuote; relayUrl: string }>(spend, '/v1/jobs', {
 			network,
 			model: body.model,
 			maxInputTokens,
@@ -204,30 +223,123 @@ export class Buyer {
 			maxPrice: policy.maxPrice,
 			...(policy.allowedProviders.length ? { allowedProviders: policy.allowedProviders } : {})
 		});
-		const t = ticket.ticket;
+		let ticket: SignedTicket;
 		try {
-			return await this.run(body, res, signal, ticket, maxInputTokens, maxOutputTokens);
+			this.checkQuote(job, quote, { maxInputTokens, maxOutputTokens });
+			ticket = await this.escrow(quote);
 		} catch (error) {
-			/* Hand back the ticket (or dispute a receipt) for a job this buyer will not pay, so it is neither held nor owed. */
-			await this.refuse(t.jobId, (error as Error).message);
+			/* Give the quote back so the provider is free at once; an escrow that did go out is refunded. */
+			await this.cancel(quote.jobId);
+			throw error;
+		}
+		try {
+			return await this.run(body, res, signal, ticket);
+		} catch (error) {
+			/* Hand the ticket back; the job settles from the relay's record and the rest of the escrow comes back. */
+			await this.cancel(quote.jobId);
 			throw error;
 		}
 	}
 
-	private async run(body: ChatCompletionRequest, res: ServerResponse, signal: AbortSignal, ticket: SignedTicket, maxInputTokens: number, maxOutputTokens: number): Promise<void> {
-		const { store, spend } = this.deps;
-		const policy = store.state.buyer;
-		const network = store.state.network;
-		const t = ticket.ticket;
-		const maxCost = maxJobCost(t.price, { maxInputTokens, maxOutputTokens });
-		const spentToday = BigInt(store.state.spentByDay[today()] ?? '0');
-		if (maxCost > BigInt(policy.perRequestMax)) {
-			throw new HttpError(402, 'spend_limit', `this request could cost up to ${maxCost} base units, above the per-request limit of ${policy.perRequestMax}; lower max_tokens or raise the limit in the app`);
+	/** The quote must be for what was asked, and fit this Mac's spend limits, before any credits move. */
+	private checkQuote(job: JobRecord, quote: EscrowQuote, limits: { maxInputTokens: number; maxOutputTokens: number }): void {
+		const policy = this.deps.store.state.buyer;
+		const maxCost = BigInt(quote.maxCost);
+		if (job.jobId !== quote.jobId || job.asset !== quote.token || maxCost !== maxJobCost(job.price, limits)) {
+			throw new HttpError(502, 'invalid_quote', 'the control plane quoted a job other than the one requested');
 		}
+		const credits = (amount: bigint | string) => `${formatAmount(BigInt(amount), quote.decimals)} ${CREDIT_SYMBOL}`;
+		if (maxCost > BigInt(policy.perRequestMax)) {
+			throw new HttpError(402, 'spend_limit', `this request could cost up to ${credits(maxCost)}, above the per-request limit of ${credits(policy.perRequestMax)}; lower max_tokens or raise the limit in the app`);
+		}
+		const spentToday = BigInt(this.deps.store.state.spentByDay[today()] ?? '0');
 		if (spentToday + maxCost > BigInt(policy.dailyMax)) {
 			throw new HttpError(402, 'spend_limit', 'the daily spend limit set in the app would be exceeded');
 		}
+	}
 
+	/**
+	 * Pay at ticket time: send the quote's maximum cost in credits from the
+	 * agent budget to the settlement account, referencing the job, then report
+	 * the block until the control plane sees it on the ledger and issues the
+	 * ticket. One escrow per job: a second call for the same job is refused,
+	 * and the send runs in the budget's queue after re-reading the stored
+	 * escrows, so a block an earlier run already sent is reported again
+	 * instead of sending another.
+	 */
+	private async escrow(quote: EscrowQuote): Promise<SignedTicket> {
+		if (this.escrowing.has(quote.jobId)) {
+			throw new HttpError(409, 'escrow_in_progress', `job ${quote.jobId} is already being escrowed`);
+		}
+		this.escrowing.add(quote.jobId);
+		try {
+			return await this.escrowOnce(quote);
+		} finally {
+			this.escrowing.delete(quote.jobId);
+		}
+	}
+
+	private async escrowOnce(quote: EscrowQuote): Promise<SignedTicket> {
+		const { ledger, queue, store, spend, spendAccount } = this.deps;
+		let pending: PendingEscrow;
+		try {
+			pending = await queue.run(spend.publicKey, async () => {
+				const sent = store.state.escrows.find((e) => e.jobId === quote.jobId);
+				if (sent) {
+					return sent;
+				}
+				const blockHash = await ledger.send(spendAccount, quote.settlement, BigInt(quote.maxCost), quote.token, quote.jobId);
+				const entry: PendingEscrow = { jobId: quote.jobId, network: quote.network, blockHash, at: Date.now() };
+				store.update((s) => s.escrows.push(entry));
+				return entry;
+			});
+		} catch (error) {
+			throw new HttpError(
+				402,
+				'insufficient_credits',
+				`could not escrow ${formatAmount(BigInt(quote.maxCost), quote.decimals)} ${CREDIT_SYMBOL} from the agent budget (${(error as Error).message}); buy credits in the app`
+			);
+		}
+		const ticket = await this.reportEscrow(pending, this.deps.escrowRetryMs ?? ESCROW_RETRY_MS);
+		if (!ticket) {
+			throw new HttpError(504, 'escrow_pending', 'the escrow has not reached the ledger yet; it is reported again later and refunded, since this request was not run');
+		}
+		return ticket;
+	}
+
+	/**
+	 * Report an escrow block until the control plane confirms it: the ticket,
+	 * or null while the block is still on its way. A refusal (the quote
+	 * expired, so the escrow is refunded, or the block does not escrow the
+	 * job) ends it; either way the escrow is no longer pending here.
+	 */
+	private async reportEscrow(pending: PendingEscrow, delays: number[]): Promise<SignedTicket | null> {
+		const { control, spend, store } = this.deps;
+		const done = () => store.update((s) => (s.escrows = s.escrows.filter((e) => e.jobId !== pending.jobId)));
+		for (const delay of delays) {
+			if (delay) {
+				await new Promise((resolve) => setTimeout(resolve, delay).unref?.());
+			}
+			try {
+				const result = await control.post<{ ticket?: SignedTicket; pending?: boolean }>(spend, `/v1/jobs/${pending.jobId}/escrow`, { blockHash: pending.blockHash });
+				if (result.ticket) {
+					done();
+					return result.ticket;
+				}
+			} catch (error) {
+				if (error instanceof ControlError && error.status >= 400 && error.status < 500 && error.status !== 429) {
+					done();
+					throw error;
+				}
+				this.deps.log('warn', `escrow for ${pending.jobId} not confirmed yet: ${(error as Error).message}`);
+			}
+		}
+		return null;
+	}
+
+	private async run(body: ChatCompletionRequest, res: ServerResponse, signal: AbortSignal, ticket: SignedTicket): Promise<void> {
+		const { store, spend } = this.deps;
+		const t = ticket.ticket;
 		const request: ChatCompletionRequest = { ...body, stream: true, stream_options: { include_usage: true } };
 		const envelope: JobEnvelope = { ticket, request, buyerSig: await spend.sign(await jobAuthMessage(t.jobId, request)) };
 		const fetchImpl = this.deps.fetchImpl ?? fetch;
@@ -238,7 +350,7 @@ export class Buyer {
 			signal
 		});
 		if (!upstream.ok || !upstream.body) {
-			throw new HttpError(502, 'provider_unavailable', 'the provider could not take the job; nothing was charged');
+			throw new HttpError(502, 'provider_unavailable', 'the provider could not take the job; its escrow is refunded');
 		}
 		const summary: JobSummary = { jobId: t.jobId, role: 'buyer', modelId: t.modelId, counterparty: t.payTo, inputTokens: 0, outputTokens: 0, amount: '0', status: 'running', at: Date.now() };
 		this.deps.onJob(summary);
@@ -275,8 +387,8 @@ export class Buyer {
 				const result = await aggregateCompletion(events, body.model);
 				if (result.error && !receipt) {
 					this.deps.onJob({ ...summary, status: 'failed', error: result.error, at: Date.now() });
-					void this.refuse(t.jobId, result.error);
-					return json(res, 502, { error: { code: 'provider_failed', message: `${result.error}; nothing was charged` } });
+					void this.cancel(t.jobId);
+					return json(res, 502, { error: { code: 'provider_failed', message: `${result.error}; the escrow is refunded` } });
 				}
 				json(res, 200, result.completion, { 'x-keeta-job': t.jobId });
 			}
@@ -284,28 +396,25 @@ export class Buyer {
 			if (!receipt && !delivered) {
 				throw error;
 			}
-			/* Text already arrived, so the provider bills it: settle that below, then report the failure. */
+			/* Text already arrived, so the provider bills it from the escrow; record that below, then report the failure. */
 			failure = error;
 		}
-		if (!receipt && delivered) {
-			/* The caller hung up or the stream broke after text arrived. Collect the provider's receipt for it and pay it. */
-			const late = { jobId: t.jobId, network, ticket, maxCost: maxCost.toString(), delivery: await deliveryOf(delivered), since: Date.now() };
-			store.update((s) => s.awaitingReceipts.push(late));
-			this.deps.onJob({ ...summary, status: 'running', at: Date.now() });
-			void this.chaseLateReceipts([2_000, 5_000, 15_000, 30_000]);
-			return this.endAfterFailure(res, failure, signal);
-		}
-
 		if (!receipt) {
+			if (delivered) {
+				/* The caller hung up or the stream broke after text arrived. The relay's record settles it; followUp() reads the outcome. */
+				void this.cancel(t.jobId);
+				this.deps.onJob({ ...summary, status: 'running', error: 'stream ended early; settling from the relay record', at: Date.now() });
+				return this.endAfterFailure(res, failure, signal);
+			}
 			this.deps.onJob({ ...summary, status: 'failed', error: 'no receipt', at: Date.now() });
-			void this.refuse(t.jobId, 'the provider sent no receipt');
+			void this.cancel(t.jobId);
 			return;
 		}
-		await this.accept(ticket, receipt, maxCost, await deliveryOf(delivered), summary);
+		this.record(ticket, receipt, await deliveryOf(delivered), summary);
 		this.endAfterFailure(res, failure, signal);
 	}
 
-	/** Answer a caller whose stream broke after its text was settled: an error if nothing was sent yet, else end the stream. */
+	/** Answer a caller whose stream broke after its text was billed: an error if nothing was sent yet, else end the stream. */
 	private endAfterFailure(res: ServerResponse, failure: unknown, signal: AbortSignal): void {
 		if (failure === undefined || signal.aborted || res.writableEnded) {
 			return;
@@ -317,105 +426,31 @@ export class Buyer {
 		}
 	}
 
-	/** Check a receipt against the ticket and the text received, then queue its payment. */
-	private async accept(ticket: SignedTicket, receipt: SignedReceipt, maxCost: bigint, delivery: Delivery, summary: JobSummary): Promise<void> {
-		const t = ticket.ticket;
-		/* One payment per job: overlapping receipt chases (two hang-ups, a hang-up and a settle) can reach here together. */
-		const state = this.deps.store.state;
-		const settled = state.unpaid.some((u) => u.jobId === t.jobId) || state.jobs.some((j) => j.jobId === t.jobId && j.role === 'buyer' && (j.status === 'completed' || j.status === 'paid'));
-		if (settled || this.accepting.has(t.jobId)) {
+	/**
+	 * Record a receipt. Nothing is paid here: the escrow already covers it,
+	 * and the control plane pays the provider only what the relay's delivery
+	 * record backs. A receipt that does not bill the text this buyer received
+	 * is logged; the relay's record decides it.
+	 */
+	private record(ticket: SignedTicket, receipt: SignedReceipt, delivery: Delivery, summary: JobSummary): void {
+		const r = receipt.receipt;
+		const invalid = this.checkReceipt(ticket, receipt, null);
+		if (invalid) {
+			this.deps.log('warn', `job ${ticket.ticket.jobId}: ${invalid}; the control plane refunds the escrow`);
+			this.deps.onJob({ ...summary, status: 'failed', error: invalid, at: Date.now() });
 			return;
 		}
-		this.accepting.add(t.jobId);
-		try {
-			await this.acceptOnce(ticket, receipt, maxCost, delivery, summary);
-		} finally {
-			this.accepting.delete(t.jobId);
+		const mismatch = this.checkReceipt(ticket, receipt, delivery);
+		if (mismatch) {
+			this.deps.log('warn', `job ${ticket.ticket.jobId}: ${mismatch}; the relay's delivery record decides the charge`);
 		}
-	}
-
-	private async acceptOnce(ticket: SignedTicket, receipt: SignedReceipt, maxCost: bigint, delivery: Delivery, summary: JobSummary): Promise<void> {
-		const t = ticket.ticket;
-		const problem = this.checkReceipt(ticket, receipt, maxCost, delivery);
-		if (problem) {
-			/* The relay's record of what it forwarded wins over this buyer's copy (text in flight at a hang-up). */
-			const attested = await this.refuse(t.jobId, problem);
-			if (!attested || this.checkReceipt(ticket, receipt, maxCost, null)) {
-				this.deps.log('warn', `not paying job ${t.jobId}: ${problem}`);
-				this.deps.onJob({ ...summary, status: 'failed', error: problem, at: Date.now() });
-				return;
-			}
-			this.deps.log('info', `paying job ${t.jobId}: the relay attests delivering the billed text`);
-		}
-		const unpaid: UnpaidReceipt = { jobId: t.jobId, network: t.network, payTo: t.payTo, amount: receipt.receipt.amount, asset: t.asset, receipt, attempts: 0 };
-		this.deps.store.update((s) => s.unpaid.push(unpaid));
-		this.deps.store.addToDay('spentByDay', BigInt(receipt.receipt.amount));
-		this.deps.onJob({ ...summary, inputTokens: receipt.receipt.inputTokens, outputTokens: receipt.receipt.outputTokens, amount: receipt.receipt.amount, status: 'completed', at: Date.now() });
-		void this.pay(unpaid);
-	}
-
-	/** Look up receipts for jobs the caller hung up on, retrying after each delay. */
-	private async chaseLateReceipts(delays: number[] = []): Promise<void> {
-		for (const delay of [0, ...delays]) {
-			if (delay) {
-				await new Promise((resolve) => setTimeout(resolve, delay).unref?.());
-			}
-			const network = this.deps.store.state.network;
-			const waiting = this.deps.store.state.awaitingReceipts.filter((a) => a.network === network);
-			if (waiting.length === 0) {
-				return;
-			}
-			let jobs: JobRecord[];
-			try {
-				({ jobs } = await this.deps.control.get<{ jobs: JobRecord[] }>(this.deps.spend, '/v1/jobs'));
-			} catch (error) {
-				this.deps.log('warn', `could not look up late receipts: ${(error as Error).message}`);
-				continue;
-			}
-			for (const late of waiting) {
-				const job = jobs.find((j) => j.jobId === late.jobId);
-				const settled = job && job.status !== 'scheduled' && !job.receipt;
-				const stale = Date.now() - late.since > LATE_RECEIPT_WINDOW_MS;
-				if (job?.receipt || settled || stale) {
-					this.deps.store.update((s) => (s.awaitingReceipts = s.awaitingReceipts.filter((a) => a.jobId !== late.jobId)));
-				}
-				const summary: JobSummary = { jobId: late.jobId, role: 'buyer', modelId: late.ticket.ticket.modelId, counterparty: late.ticket.ticket.payTo, inputTokens: 0, outputTokens: 0, amount: '0', status: 'failed', at: Date.now() };
-				if (job?.receipt) {
-					await this.accept(late.ticket, job.receipt, BigInt(late.maxCost), late.delivery, summary);
-				} else if (settled || stale) {
-					this.deps.onJob({ ...summary, error: 'the provider sent no receipt' });
-					void this.refuse(late.jobId, 'the provider sent no receipt');
-				}
-			}
-		}
-	}
-
-	/**
-	 * Tell the control plane this buyer will not pay a job: frees an unused
-	 * ticket, or disputes its receipt. True when the control plane refuses the
-	 * dispute because the relay attests delivering exactly the billed text.
-	 */
-	private async refuse(jobId: string, reason: string, retryDelays: number[] = REFUSE_RETRY_DELAYS_MS): Promise<boolean> {
-		for (const delay of [0, ...retryDelays]) {
-			if (delay) {
-				await new Promise((resolve) => setTimeout(resolve, delay).unref?.());
-			}
-			try {
-				await this.deps.control.post(this.deps.spend, `/v1/jobs/${jobId}/refuse`, { reason: reason.slice(0, 300) });
-				return false;
-			} catch (error) {
-				/* The relay's delivery record has not landed yet: it decides the dispute, so wait for it. */
-				if (error instanceof ControlError && error.code === 'delivery_pending') {
-					continue;
-				}
-				return error instanceof ControlError && error.code === 'delivery_attested';
-			}
-		}
-		return false;
+		/* Counted against the daily limit as billed; a refund after a mismatch does not give it back. */
+		this.deps.store.addToDay('spentByDay', BigInt(r.amount));
+		this.deps.onJob({ ...summary, inputTokens: r.inputTokens, outputTokens: r.outputTokens, amount: r.amount, status: 'completed', ...(mismatch ? { error: mismatch } : {}), at: Date.now() });
 	}
 
 	/** Problems with a receipt, or null. With `delivery`, it must also bill exactly the text received. */
-	checkReceipt(ticket: SignedTicket, signed: SignedReceipt, maxCost: bigint, delivery: Delivery | null): string | null {
+	checkReceipt(ticket: SignedTicket, signed: SignedReceipt, delivery: Delivery | null): string | null {
 		const t = ticket.ticket;
 		const r = signed.receipt;
 		if (!this.deps.verify(t.nodeKey, receiptMessage(r), signed.signature)) {
@@ -435,79 +470,83 @@ export class Buyer {
 			return 'receipt bills more output tokens than the text received';
 		}
 		const amount = jobCost(t.price, { inputTokens: r.inputTokens, outputTokens: r.outputTokens });
-		if (r.amount !== amount.toString() || amount > maxCost) {
+		if (r.amount !== amount.toString() || amount > maxJobCost(t.price, t)) {
 			return 'receipt amount does not match the price';
 		}
 		return null;
 	}
 
-	/** Pay one receipt from the agent budget, then report it. Payments from one account are serialized. */
-	private pay(unpaid: UnpaidReceipt): Promise<boolean> {
-		const { ledger, queue, store, control, spend, spendAccount } = this.deps;
-		return queue.run(spend.publicKey, async () => {
-			/* Read the stored entry inside the queue: an earlier run may have paid it or recorded its block already. */
-			const current = store.state.unpaid.find((u) => u.jobId === unpaid.jobId);
-			if (!current) {
-				return true;
-			}
-			try {
-				let blockHash = current.blockHash;
-				if (!blockHash) {
-					blockHash = await ledger.send(spendAccount, current.payTo, BigInt(current.amount), 'usdc', current.jobId);
-					store.update((s) => {
-						const entry = s.unpaid.find((u) => u.jobId === unpaid.jobId);
-						if (entry) {
-							entry.blockHash = blockHash;
-						}
-					});
-				}
-				await control.post(spend, `/v1/jobs/${unpaid.jobId}/payment`, { blockHash, receipt: current.receipt });
-				store.update((s) => {
-					s.unpaid = s.unpaid.filter((u) => u.jobId !== unpaid.jobId);
-					const job = s.jobs.find((j) => j.jobId === unpaid.jobId && j.role === 'buyer');
-					if (job) {
-						job.status = 'paid';
-					}
-				});
-				const job = store.state.jobs.find((j) => j.jobId === unpaid.jobId && j.role === 'buyer');
-				if (job) {
-					this.deps.onJob(job);
-				}
-				return true;
-			} catch (error) {
-				this.deps.log('warn', `payment for ${unpaid.jobId} failed: ${(error as Error).message}`);
-				store.update((s) => {
-					const entry = s.unpaid.find((u) => u.jobId === unpaid.jobId);
-					if (entry) {
-						entry.attempts += 1;
-						entry.lastError = (error as Error).message;
-					}
-				});
-				return false;
-			}
-		});
+	/** Give back a quote or ticket this buyer will not use. Best effort: unused tickets also lapse on their own. */
+	private async cancel(jobId: string): Promise<void> {
+		await this.deps.control.post(this.deps.spend, `/v1/jobs/${jobId}/cancel`, {}).catch(() => undefined);
 	}
 
-	async settle(): Promise<{ paid: number; failed: number }> {
-		await this.chaseLateReceipts();
-		let paid = 0;
-		let failed = 0;
-		for (const unpaid of [...this.deps.store.state.unpaid]) {
-			if (unpaid.network !== this.deps.store.state.network) {
+	/**
+	 * Catch up after being offline or after a request ended early: report
+	 * escrows the control plane has not confirmed (a ticket issued for one now
+	 * is handed back, so it is refunded), and update recent jobs from how
+	 * they settled. Overlapping calls (the wallet timer, a hang-up, the app)
+	 * share one run, so a job's outcome is counted once.
+	 */
+	followUp(): Promise<{ reported: number; settled: number }> {
+		if (!this.following) {
+			this.following = this.followUpOnce().finally(() => {
+				this.following = null;
+			});
+		}
+		return this.following;
+	}
+
+	private async followUpOnce(): Promise<{ reported: number; settled: number }> {
+		const { store, control, spend } = this.deps;
+		const network = store.state.network;
+		let reported = 0;
+		for (const pending of store.state.escrows.filter((e) => e.network === network && !this.escrowing.has(e.jobId))) {
+			if (Date.now() - pending.at > ESCROW_REPORT_WINDOW_MS) {
+				this.deps.log('warn', `escrow ${pending.blockHash} for ${pending.jobId} was never confirmed; check the settlement account's refunds`);
+				store.update((s) => (s.escrows = s.escrows.filter((e) => e.jobId !== pending.jobId)));
 				continue;
 			}
-			if (await this.pay(unpaid)) {
-				paid++;
-			} else {
-				failed++;
+			try {
+				const ticket = await this.reportEscrow(pending, [0]);
+				if (ticket) {
+					await this.cancel(pending.jobId);
+				}
+				reported++;
+			} catch (error) {
+				this.deps.log('info', `escrow for ${pending.jobId}: ${(error as Error).message}`);
+				reported++;
 			}
 		}
-		return { paid, failed };
-	}
-
-	/** The asset buyers pay in, for display. */
-	get asset() {
-		return NETWORKS[this.deps.store.state.network].settlementAsset;
+		const open = store.state.jobs.filter((j) => j.role === 'buyer' && (j.status === 'running' || j.status === 'completed'));
+		if (open.length === 0) {
+			return { reported, settled: 0 };
+		}
+		let jobs: JobRecord[];
+		try {
+			({ jobs } = await control.get<{ jobs: JobRecord[] }>(spend, '/v1/jobs'));
+		} catch (error) {
+			this.deps.log('warn', `could not look up how jobs settled: ${(error as Error).message}`);
+			return { reported, settled: 0 };
+		}
+		let settled = 0;
+		for (const summary of open) {
+			const job = jobs.find((j) => j.jobId === summary.jobId);
+			if (!job?.settlement?.blockHash) {
+				continue;
+			}
+			settled++;
+			const billed = job.receipt?.receipt;
+			if (job.settlement.reason === 'delivered' && billed) {
+				if (summary.status === 'running') {
+					store.addToDay('spentByDay', BigInt(billed.amount), billed.finishedAt);
+				}
+				this.deps.onJob({ ...summary, inputTokens: billed.inputTokens, outputTokens: billed.outputTokens, amount: billed.amount, status: 'paid', at: Date.now() });
+			} else {
+				this.deps.onJob({ ...summary, amount: '0', status: 'failed', error: `refunded (${job.settlement.reason})`, at: Date.now() });
+			}
+		}
+		return { reported, settled };
 	}
 }
 

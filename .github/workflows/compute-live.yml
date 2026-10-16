@@ -1,7 +1,8 @@
 # Keeta Compute against the live Keeta test network: real ledger sends, the
 # relay Worker under wrangler dev, and x402 through the real facilitator.
 # Spends from the suite's fixed test-network account (compute/test/live/support.ts),
-# which must hold test USDC and some KTA; the optional repository secret
+# which must hold test USDC and some KTA (and test KUSD once KUSD is pinned, for
+# the router test); the optional repository secret
 # KEETA_TESTNET_SEED (or KEETA_TESTNET_PASSPHRASE) swaps in another. See compute/README.md.
 name: Compute live (test network)
 

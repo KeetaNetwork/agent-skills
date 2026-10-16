@@ -3,11 +3,15 @@
 Keeta Compute is a menu bar and window app for Apple Silicon Macs. It lets the
 owner of a Mac:
 
-- **Earn**: install AI models, offer them to the network at a price per million
-  tokens, and get paid in USDC for each request the Mac serves.
+- **Pay with Keeta stablecoins**: buy Keeta Compute Credits (one credit is one
+  US dollar) with KUSD, KEUR, KJPY, KMXN, KCAD, KAED, KGBP or USDC in the Wallet
+  (Buy credits, KUSD by default), and cash credits out to any of them.
+- **Earn**: install AI models, offer them to the network at a price in credits
+  per million tokens, and earn credits for each request the Mac serves.
 - **Use**: give tools and agents on the Mac an OpenAI-compatible endpoint
-  (`http://127.0.0.1:11435/v1`) that runs requests on other Macs and pays per
-  request from an "agent budget".
+  (`http://127.0.0.1:11435/v1`) that runs requests on other providers. Each
+  request escrows its maximum cost in credits from an "agent budget" before it
+  runs; the provider is paid what it billed and the rest comes back.
 - **Manage a fleet**: pair Linux machines as provider-only helpers whose
   earnings land in this Mac's wallet.
 
@@ -145,8 +149,8 @@ use the `?mode=developer` suffix on the associated domain together with
   extension, salt SHA-256("keeta.com/wallet/seed/v1"), the same scheme as the
   Keeta web wallet. Onboarding creates the passkey, then performs an assertion to
   get the 32-byte PRF output and passes it to the agent (`wallet.setOperator`).
-  Every send and every move into the agent budget performs a fresh assertion
-  (Touch ID). The PRF output is never stored; the app keeps only the passkey's
+  Every send, credit purchase, cash-out and move into the agent budget performs
+  a fresh assertion (Touch ID). The PRF output is never stored; the app keeps only the passkey's
   credential ID in UserDefaults. There is no seed phrase. Because platform
   passkeys sync through iCloud Keychain, "I already have a wallet passkey"
   restores the same wallet on another Mac.
@@ -164,4 +168,5 @@ from `compute/packages/protocol/src/`. The Swift mirror is
 `RPCMethods.swift`; change those together with the TypeScript and keep
 `Tests/KeetaComputeKitTests/RPCCodecTests.swift` in step. Amounts are always
 strings of integer base units and are formatted with the decimals the agent
-reports in `WalletState.asset`, without floating point.
+reports (`WalletState.asset` for credits, `WalletState.stablecoins` for each
+stablecoin), without floating point.

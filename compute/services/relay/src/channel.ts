@@ -3,7 +3,7 @@
  * WebSocket open to it (works behind NAT and sleep/wake), and buyers' job
  * requests are forwarded over that socket. Prompts and tokens pass through
  * memory only; nothing is stored. For app jobs the relay reports a hash of
- * the text it forwarded, which settles a dispute over the provider's receipt.
+ * the text it forwarded, which decides how the job's escrow is settled.
  */
 
 import { chunkText, maxOutputTokensFor, sha256Hex, type JobEnvelope, type ProviderFrame, type RelayFrame } from '@keeta-compute/protocol';
@@ -114,7 +114,7 @@ export class ProviderChannel {
 			timer: setTimeout(() => this.finish(id, 'timeout', 'the provider did not respond in time'), FIRST_FRAME_TIMEOUT_MS),
 			closed: false,
 			jobId: envelope.ticket.ticket.jobId,
-			delivered: envelope.ticket.ticket.paymentMode === 'postpay' ? '' : null,
+			delivered: envelope.ticket.ticket.paymentMode === 'escrow' ? '' : null,
 			attesting: null
 		};
 		this.pending.set(id, entry);
@@ -150,7 +150,7 @@ export class ProviderChannel {
 			}
 			void entry.writer.write(sseData(frame.data)).catch(() => this.close(frame.id));
 		} else if (frame.type === 'receipt') {
-			/* Record the delivery before the buyer sees the receipt, so a dispute over it is decided by this record. */
+			/* Record the delivery before the buyer sees the receipt; the control plane pays the receipt only if it matches this record. */
 			void this.attest(entry)
 				.then(() => entry.writer.write(sseEvent('keeta.receipt', frame.receipt)))
 				.finally(() => this.close(frame.id));

@@ -25,8 +25,8 @@ struct MenuBarView: View {
                         .monospacedDigit()
                 }
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Balance").font(.caption).foregroundStyle(.secondary)
-                    Text(model.wallet?.balances?.operatorBalance.map { model.money.string($0.usdc) } ?? "—")
+                    Text("Credits").font(.caption).foregroundStyle(.secondary)
+                    Text(model.creditBalance.map { model.money.string($0) } ?? "—")
                         .font(.title3.weight(.semibold))
                         .monospacedDigit()
                 }

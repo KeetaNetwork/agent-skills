@@ -97,10 +97,10 @@ struct HelperRow: View {
             }
             Spacer()
             VStack(alignment: .trailing, spacing: 6) {
-                Text(model.money.string(helper.earnedTotal))
+                Text("\(helper.completed)")
                     .monospacedDigit()
                     .font(.body.weight(.medium))
-                Text("earned").font(.caption).foregroundStyle(.secondary)
+                Text(helper.completed == 1 ? "job served" : "jobs served").font(.caption).foregroundStyle(.secondary)
                 Button("Remove…", role: .destructive, action: onRemove)
                     .controlSize(.small)
             }

@@ -5,15 +5,38 @@
 import Foundation
 
 public struct AssetBalance: Codable, Sendable, Equatable {
-    /// Settlement stablecoin (USDC at launch), base units.
-    public var usdc: String
+    /// Keeta Compute Credits, which pay for requests, base units.
+    public var credits: String
     /// KTA, which pays network fees, base units.
     public var kta: String
+    /// Each available stablecoin by symbol (KUSD, …, USDC), in its own base units.
+    public var stablecoins: [String: String]
 
-    public init(usdc: String, kta: String) {
-        self.usdc = usdc
+    public init(credits: String, kta: String, stablecoins: [String: String] = [:]) {
+        self.credits = credits
         self.kta = kta
+        self.stablecoins = stablecoins
     }
+}
+
+/// A stablecoin that buys credits and that credits cash out to.
+public struct StablecoinInfo: Codable, Sendable, Equatable, Hashable, Identifiable {
+    public var symbol: String
+    public var name: String
+    /// ISO 4217 code it tracks.
+    public var currency: String
+    public var address: String
+    public var decimals: Int
+
+    public init(symbol: String, name: String, currency: String, address: String, decimals: Int) {
+        self.symbol = symbol
+        self.name = name
+        self.currency = currency
+        self.address = address
+        self.decimals = decimals
+    }
+
+    public var id: String { symbol }
 }
 
 public struct WalletBalances: Codable, Sendable, Equatable {
@@ -38,21 +61,28 @@ public struct WalletState: Codable, Sendable, Equatable {
     /// Local key used to pay for inference on behalf of agents on this Mac ("agent budget").
     public var spend: String
     public var balances: WalletBalances?
+    /// Keeta Compute Credits: what prices, limits, costs and earnings are in.
     public var asset: NetworkAsset
+    /// False until credits exist on this network; buying inference needs them.
+    public var creditsAvailable: Bool
+    /// Stablecoins available on this network, in lead order (KUSD first, USDC last).
+    public var stablecoins: [StablecoinInfo]
     public var explorer: String
     /// Last balance read error, e.g. network unreachable.
     public var error: String?
 
     private enum CodingKeys: String, CodingKey {
         case operatorAddress = "operator"
-        case spend, balances, asset, explorer, error
+        case spend, balances, asset, creditsAvailable, stablecoins, explorer, error
     }
 
-    public init(operatorAddress: String?, spend: String, balances: WalletBalances?, asset: NetworkAsset, explorer: String, error: String? = nil) {
+    public init(operatorAddress: String?, spend: String, balances: WalletBalances?, asset: NetworkAsset, creditsAvailable: Bool, stablecoins: [StablecoinInfo], explorer: String, error: String? = nil) {
         self.operatorAddress = operatorAddress
         self.spend = spend
         self.balances = balances
         self.asset = asset
+        self.creditsAvailable = creditsAvailable
+        self.stablecoins = stablecoins
         self.explorer = explorer
         self.error = error
     }
@@ -64,6 +94,8 @@ public struct WalletState: Codable, Sendable, Equatable {
         try container.encode(spend, forKey: .spend)
         try container.encode(balances, forKey: .balances)
         try container.encode(asset, forKey: .asset)
+        try container.encode(creditsAvailable, forKey: .creditsAvailable)
+        try container.encode(stablecoins, forKey: .stablecoins)
         try container.encode(explorer, forKey: .explorer)
         try container.encodeIfPresent(error, forKey: .error)
     }
@@ -124,15 +156,15 @@ public struct ProviderPolicyUpdate: Codable, Sendable, Equatable {
 }
 
 public struct BuyerPolicy: Codable, Sendable, Equatable {
-    /// Largest amount a single request may cost, base units.
+    /// Largest amount a single request may cost (its escrow), credit base units.
     public var perRequestMax: String
-    /// Largest total per UTC day, base units.
+    /// Largest total providers may bill per UTC day, credit base units.
     public var dailyMax: String
     /// Empty means any model.
     public var allowedModels: [String]
     /// Empty means any provider.
     public var allowedProviders: [String]
-    /// Highest price the app will accept per million tokens.
+    /// Highest price the app will accept, credit base units per million tokens.
     public var maxPrice: Price
 
     public init(perRequestMax: String, dailyMax: String, allowedModels: [String], allowedProviders: [String], maxPrice: Price) {
@@ -225,6 +257,7 @@ public enum JobRole: String, Codable, Sendable {
     case provider, buyer
 }
 
+/// 'completed': receipt in; 'paid': settled from the escrow on the ledger; 'failed': refunded or not run.
 public enum JobSummaryStatus: String, Codable, Sendable {
     case running, completed, paid, failed
 }
@@ -236,7 +269,7 @@ public struct JobSummary: Codable, Sendable, Equatable, Identifiable {
     public var counterparty: String
     public var inputTokens: Int
     public var outputTokens: Int
-    /// Base units.
+    /// Credit base units billed.
     public var amount: String
     public var status: JobSummaryStatus
     /// Milliseconds since the Unix epoch.
@@ -264,6 +297,7 @@ public struct ProviderStatus: Codable, Sendable, Equatable {
     /// Why the node is not taking jobs right now, if it isn't.
     public var state: ProviderState
     public var activeJobs: Int
+    /// Credits the settlement account paid the operator, read from the ledger.
     public var earnedToday: String
     public var earnedTotal: String
     public var tokensServedToday: Int
@@ -274,8 +308,8 @@ public struct BuyerStatus: Codable, Sendable, Equatable {
     public var endpoint: String
     public var token: String
     public var policy: BuyerPolicy
+    /// Credits charged today (what providers billed; escrow refunds are not counted).
     public var spentToday: String
-    public var unpaid: Int
     public var recentJobs: [JobSummary]
 }
 
@@ -290,7 +324,8 @@ public struct FleetHelper: Codable, Sendable, Equatable, Identifiable {
     public var tier: HardwareTier
     public var status: HelperStatus
     public var offers: [String]
-    public var earnedTotal: String
+    /// Jobs this helper completed; what they earned is paid to the master's operator account.
+    public var completed: Int
     public var lastHeartbeat: Double
 
     public var id: String { nodeKey }

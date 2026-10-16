@@ -65,7 +65,9 @@
 <tbody>
 <tr><td>Node key</td><td>Each Mac, Linux node or Linux helper</td><td class="wrap">Signs requests to the network and the receipts for its jobs. Cannot move funds.</td></tr>
 <tr><td>Payout address (<code>payTo</code>)</td><td>The operator's wallet (passkey on the Mac, an encrypted wallet file on a Linux node)</td><td class="wrap">Receives every payment for the operator's machines, including paired Linux helpers</td></tr>
-<tr><td>Buyer key</td><td>The paying account</td><td class="wrap">Pays providers; is what provider allowlists list</td></tr>
+<tr><td>Buyer key</td><td>The paying account (the Agent budget in the app)</td><td class="wrap">Escrows credits for app jobs, or pays the router; is what provider allowlists list</td></tr>
+<tr><td>Settlement account</td><td>keeta.ai</td><td class="wrap">Receives app escrows and pays them out: the provider's bill and the buyer's refund</td></tr>
+<tr><td>FX account</td><td>keeta.ai</td><td class="wrap">Holds the credit supply and swaps credits with the Keeta stablecoins</td></tr>
 </tbody>
 </table>
 <p>At onboarding the operator signs a link message tying each node key to its payout address.</p>
@@ -94,19 +96,31 @@ sha256hex(body)</code></pre>
 <li>Ticket: <code>keeta-compute-ticket-v1\n</code> + canonical JSON of the ticket.</li>
 <li>Buyer job authorization: <code>keeta-compute-job-v1\n</code> + job id + <code>\n</code> + sha256 hex of the canonical JSON of the request.</li>
 </ul>
+<h2 id="credits-and-stablecoins">Credits and stablecoins</h2>
+<p>Keeta Compute Credits are a token on the Keeta ledger: one credit is one US dollar, with 6 decimals, so one credit is <code>1000000</code> base units. Prices, quotes, receipts and payouts for app jobs are in credits. The token address of each network is published by the control plane (<code>GET /v1/config</code>, field <code>credits</code>), with the settlement account and the FX account.</p>
+<p>Buyers get credits with Keeta stablecoins, in this order: KUSD, KEUR, KJPY, KMXN, KCAD, KAED, KGBP, USDC. keeta.ai's FX account sells and buys credits for each of them as a Keeta anchor FX service, published in the FX account's metadata so the anchor SDK's resolver finds it. KUSD and USDC trade one to one; the others at a US dollar rate with a small spread. <code>GET /v1/config</code> also lists the stablecoins of each network (field <code>assets</code>) and which are available yet.</p>
+<p>Balances are only ever read from the ledger. The network's job records keep the hashes of the escrow and payout blocks, never balances or amounts owed.</p>
 <h2 id="job-lifecycle">Job lifecycle</h2>
 <ol>
-<li><strong>Schedule.</strong> The buyer asks the control plane for a provider for a model, with its token limits. The scheduler picks an online provider (heartbeat in the last 90 seconds) that offers the model, accepts the buyer and has capacity.</li>
-<li><strong>Ticket.</strong> The control plane signs a ticket for that one job and provider. It is valid for 60 seconds.</li>
+<li><strong>Schedule.</strong> The buyer asks the control plane for a provider for a model, with its token limits (<code>POST /v1/jobs</code>). The scheduler picks an online provider (heartbeat in the last 90 seconds) that offers the model, accepts the buyer and has capacity.</li>
+<li><strong>Escrow quote.</strong> For an app job the control plane answers with a quote instead of a ticket: <code>maxCost</code> (the most the job can cost, in credit base units), the credit <code>token</code>, the <code>settlement</code> account and <code>expiresAt</code>, 60 seconds out.</li>
+<li><strong>Escrow.</strong> The buyer sends <code>maxCost</code> of the credit token to the settlement account in one Keeta send whose external reference is the job id, and reports the block hash (<code>POST /v1/jobs/{jobId}/escrow</code>). The control plane reads the block from the ledger: it must be signed by the buyer and send at least <code>maxCost</code> of the credit token to the settlement account with this job's reference. Until the ledger shows the block the answer is <code>pending</code>; a block that does not escrow the job gets 402. A buyer escrows each job once, and reports the same block again on a retry. An escrow that arrives after the quote expired is refunded.</li>
+<li><strong>Ticket.</strong> Once the escrow is confirmed, the control plane signs a ticket for that one job and provider, valid for 60 seconds. Router jobs get their ticket in the quote and pay with x402 instead (<a href="/compute/router">router</a>).</li>
 <li><strong>Relay.</strong> The buyer sends the ticket, the request and its job authorization to the relay, which forwards them over the provider's open connection.</li>
 <li><strong>Provider.</strong> The provider checks the ticket signature, its own key, the expiry and its allowlist, then runs the model and streams tokens back through the relay.</li>
-<li><strong>Signed receipt.</strong> The provider signs a receipt with the actual token counts and the amount.</li>
-<li><strong>Payment.</strong> The buyer pays <code>amount</code> to <code>payTo</code> in the settlement asset: a Keeta send from the app (postpay), or an x402 payment before the job on the <a href="/compute/router">router</a> (prepaid). A buyer with a receipt left unpaid for more than 10 minutes is not scheduled again until it pays. For app jobs the relay records a hash of the text it forwarded. A buyer can dispute a receipt that bills other text (or text the relay never forwarded), so the receipt is not owed and the dispute counts against the provider; a receipt matching the relay's record cannot be disputed.</li>
+<li><strong>Signed receipt.</strong> The provider signs a receipt with the actual token counts and the amount. If the buyer hangs up, the provider bills the text it sent.</li>
+<li><strong>Delivery record.</strong> For app jobs the relay records a sha256 hash of the text it forwarded and the job's output limit.</li>
+<li><p><strong>Settlement.</strong> The relay's record decides how the escrow is paid out, in one Keeta block from the settlement account whose sends reference the job:</p>
+<ul>
+<li>The receipt's <code>outputHash</code> matches the record and its output tokens fit in that text: <code>amount</code> to <code>payTo</code>, the rest of the escrow back to the buyer.</li>
+<li>The receipt bills other text: the whole escrow back to the buyer, and the dispute counts against the provider.</li>
+<li>A receipt with no record yet waits up to a minute for one, then the whole escrow goes back to the buyer.</li>
+<li>The provider fails the job, or no receipt arrives within 15 minutes: the whole escrow goes back to the buyer.</li>
+</ul>
+<p>Before paying, the settlement account looks for a block of its own that references the job, so a job is never paid out twice.</p></li>
+<li><strong>Reputation.</strong> Completed, failed and disputed jobs update the provider's record, which the scheduler reads.</li>
 </ol>
 <p>Structured output is compiled before the first token, so requests are bounded: <code>response_format</code> JSON schemas (and tool parameters when a tool call is forced) must be at most 8 KB, nest at most 8 levels and avoid <code>anyOf</code>, <code>oneOf</code>, <code>allOf</code>, <code>not</code>, <code>$ref</code>, <code>pattern</code> and conditionals; <code>stop</code> takes at most 4 sequences of 256 bytes.</p>
-<ol>
-<li><strong>Reputation.</strong> Completed, failed and paid jobs update the provider's record, which the scheduler reads.</li>
-</ol>
 <h2 id="tickets">Tickets</h2>
 <table>
 <thead><tr><th>Field</th><th>Meaning</th></tr></thead>
@@ -118,10 +132,10 @@ sha256hex(body)</code></pre>
 <tr><td><code>modelId</code></td><td class="wrap">Model id</td></tr>
 <tr><td><code>buyer</code></td><td class="wrap">The paying key</td></tr>
 <tr><td><code>maxInputTokens</code>, <code>maxOutputTokens</code></td><td class="wrap">Token limits for the job</td></tr>
-<tr><td><code>price</code></td><td class="wrap"><code>{inputPerMillion, outputPerMillion}</code>, base units</td></tr>
-<tr><td><code>asset</code></td><td class="wrap">Settlement token address (USDC)</td></tr>
+<tr><td><code>price</code></td><td class="wrap"><code>{inputPerMillion, outputPerMillion}</code>, credit base units</td></tr>
+<tr><td><code>asset</code></td><td class="wrap">The credit token (app jobs), or the stablecoin the router was paid in</td></tr>
 <tr><td><code>payTo</code></td><td class="wrap">Where payment goes</td></tr>
-<tr><td><code>paymentMode</code></td><td class="wrap"><code>postpay</code> (app) or <code>prepaid</code> (router)</td></tr>
+<tr><td><code>paymentMode</code></td><td class="wrap"><code>escrow</code> (app) or <code>prepaid</code> (router)</td></tr>
 <tr><td><code>prepaidAmount</code></td><td class="wrap">Amount already paid, prepaid jobs only</td></tr>
 <tr><td><code>issuedAt</code>, <code>expiresAt</code></td><td class="wrap">Unix milliseconds</td></tr>
 </tbody>
@@ -142,9 +156,9 @@ sha256hex(body)</code></pre>
 <tr><td><code>weightsHash</code></td><td class="wrap">sha256 over the installed weight files</td></tr>
 <tr><td><code>runtime</code></td><td class="wrap"><code>{kind, build}</code>: <code>mlx</code> or <code>openai-compatible</code>, and the runtime name and version, such as <code>mlx-lm 0.26.0</code></td></tr>
 <tr><td><code>inputTokens</code>, <code>outputTokens</code></td><td class="wrap">Tokens actually processed and generated</td></tr>
-<tr><td><code>price</code></td><td class="wrap"><code>{inputPerMillion, outputPerMillion}</code>, base units</td></tr>
-<tr><td><code>amount</code></td><td class="wrap">Base units owed (postpay) or consumed (prepaid)</td></tr>
-<tr><td><code>asset</code></td><td class="wrap">Settlement token address</td></tr>
+<tr><td><code>price</code></td><td class="wrap"><code>{inputPerMillion, outputPerMillion}</code>, credit base units</td></tr>
+<tr><td><code>amount</code></td><td class="wrap">Credit base units billed, paid from the escrow (app jobs), or consumed of the prepayment (router)</td></tr>
+<tr><td><code>asset</code></td><td class="wrap">The ticket's <code>asset</code></td></tr>
 <tr><td><code>startedAt</code>, <code>finishedAt</code></td><td class="wrap">Unix milliseconds</td></tr>
 <tr><td><code>outputHash</code></td><td class="wrap">sha256 of the generated text. The text itself is never stored.</td></tr>
 <tr><td><code>finishReason</code></td><td class="wrap">As in the OpenAI response, such as <code>stop</code> or <code>length</code></td></tr>
@@ -152,15 +166,15 @@ sha256hex(body)</code></pre>
 </table>
 <p>To check a receipt: verify the signature with the Keeta SDK against <code>nodeKey</code>, then compare <code>modelId</code>, <code>price</code>, <code>payTo</code> and the token limits with your ticket or 402 challenge, and <code>outputHash</code> with the sha256 of the text you received.</p>
 <h2 id="pricing-math">Pricing math</h2>
-<p>Prices are integer base units of the settlement asset per million tokens. USDC has 6 decimals, so 1 USDC is <code>1000000</code> base units and 0.05 USDC per million tokens is <code>50000</code>. All arithmetic is integer.</p>
+<p>Prices are integer credit base units per million tokens. Credits have 6 decimals, so 1 credit (one US dollar) is <code>1000000</code> base units and 0.05 credits per million tokens is <code>50000</code>. All arithmetic is integer.</p>
 <pre><code class="language-text">raw    = inputTokens × inputPerMillion + outputTokens × outputPerMillion
 amount = ceil(raw / 1000000)</code></pre>
-<p>Any job that processed at least one token costs at least 1 base unit. A quote or x402 challenge uses the same formula with <code>maxInputTokens</code> and <code>maxOutputTokens</code>.</p>
-<p>Example: 1200 input and 300 output tokens at <code>50000</code> / <code>100000</code> gives raw = 60000000 + 30000000 = 90000000, so amount = 90 base units (0.00009 USDC).</p>
+<p>Any job that processed at least one token costs at least 1 base unit. An escrow quote (<code>maxCost</code>) or x402 challenge uses the same formula with <code>maxInputTokens</code> and <code>maxOutputTokens</code>. The router converts the result to its stablecoin's decimals, one US dollar per credit, rounding up.</p>
+<p>Example: 1200 input and 300 output tokens at <code>50000</code> / <code>100000</code> gives raw = 60000000 + 30000000 = 90000000, so amount = 90 base units (0.00009 credits, or $0.00009).</p>
 <h2 id="on-chain-and-off-chain">On-chain and off-chain</h2>
 <ul>
-<li><strong>On-chain (Keeta Network):</strong> payments only. Each payment is an ordinary Keeta send of USDC from the buyer to the provider's payout address.</li>
-<li><strong>Off-chain (app backend):</strong> the provider registry (node keys, hardware, offers, prices, access lists, heartbeats), job records and receipts, pairing records for Linux helpers, and reputation counters.</li>
+<li><strong>On-chain (Keeta Network):</strong> all money and every balance. The credit token, swaps between credits and stablecoins, each app job's escrow to the settlement account and its payout block, and router payments straight from the buyer to the provider's payout address.</li>
+<li><strong>Off-chain (app backend):</strong> the provider registry (node keys, hardware, offers, prices, access lists, heartbeats), job records (routing state, the receipt, the relay's delivery record, and the hashes of the escrow and payout blocks), pairing records for Linux helpers, and reputation counters. No balances, amounts owed or earnings.</li>
 <li><strong>Never stored:</strong> prompts and outputs. They pass through the relay to the provider and back. Job records hold the receipt, which holds only the output's hash.</li>
 </ul>
         <p class="docs-source">This page as Markdown: <a href="/compute/protocol.md">protocol.md</a>. Every Compute page for agents: <a href="/llms.txt">llms.txt</a>.</p>

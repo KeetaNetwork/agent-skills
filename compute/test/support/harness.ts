@@ -13,6 +13,7 @@ import type { AddressInfo } from 'node:net';
 import { p256 } from '@noble/curves/p256';
 import { fromHex, toHex, type HardwareProfile } from '@keeta-compute/protocol';
 import { AgentApp } from '../../agent/src/app.ts';
+import type { CreditExchange } from '../../agent/src/fx.ts';
 import type { Ledger } from '../../agent/src/ledger.ts';
 
 export const GB = 1024 ** 3;
@@ -124,7 +125,7 @@ export function fakeModelServer(servedName = 'fake'): Server {
 }
 
 /** A Mac agent as the macOS app runs it, with a P-256 software key standing in for the Secure Enclave. */
-export function macAgent(dataDir: string, options: { ledger?: Ledger; WebSocketImpl?: typeof WebSocket; hardware?: HardwareProfile } = {}) {
+export function macAgent(dataDir: string, options: { ledger?: Ledger; exchange?: CreditExchange; WebSocketImpl?: typeof WebSocket; hardware?: HardwareProfile } = {}) {
 	const enclaveKey = p256.utils.randomPrivateKey();
 	const app = new AgentApp({
 		dataDir,
@@ -132,6 +133,7 @@ export function macAgent(dataDir: string, options: { ledger?: Ledger; WebSocketI
 		notify: () => undefined,
 		log: (level, message) => void (process.env.KC_TEST_LOG ? process.stderr.write(`[agent ${level}] ${message}\n`) : undefined),
 		...(options.ledger ? { ledgerFor: () => options.ledger! } : {}),
+		...(options.exchange ? { exchangeFor: () => options.exchange! } : {}),
 		...(options.WebSocketImpl ? { WebSocketImpl: options.WebSocketImpl } : {}),
 		buyerPort: 0,
 		hardware: options.hardware ?? mac64,

@@ -58,11 +58,11 @@
         <p class="eyebrow"><span aria-hidden="true"></span>Test-network preview</p>
 <h1 id="public-api-router">Public API router</h1>
 <p>Status: test-network preview. <code>https://api.keeta.ai/v1</code> is the planned production base URL.</p>
-<p>The router serves Keeta Compute to clients without the macOS app: servers, other platforms, any HTTP client. It speaks the OpenAI chat API and charges per request with x402 on Keeta. There is no account, API key or invoice: the payment is the authorization.</p>
+<p>The router serves Keeta Compute to clients without the macOS app: servers, other platforms, any HTTP client. It speaks the OpenAI chat API and charges per request with x402 on Keeta, in KUSD (in USDC until KUSD is live on the network). There is no account, API key or invoice: the payment is the authorization.</p>
 <pre><code class="language-text">Base URL: https://api.keeta.ai/v1</code></pre>
 <h2 id="endpoints">Endpoints</h2>
 <h3 id="get-v1-models">GET /v1/models</h3>
-<p>Free. Lists models with at least one online provider, plus any model the router can serve through its fallback, in the OpenAI list format. Each entry has an extra <code>keeta</code> object: how many providers serve the model, and the lowest price per million input and output tokens in USDC base units (6 decimals, so <code>50000</code> is 0.05 USDC).</p>
+<p>Free. Lists models with at least one online provider, plus any model the router can serve through its fallback, in the OpenAI list format. Each entry has an extra <code>keeta</code> object: how many providers serve the model, and the lowest price per million input and output tokens in Keeta Compute Credit base units (one credit is one US dollar, with 6 decimals, so <code>50000</code> is $0.05).</p>
 <pre><code class="language-json">{
   "object": "list",
   "data": [
@@ -78,7 +78,7 @@
 }</code></pre>
 <h3 id="post-v1-chat-completions">POST /v1/chat/completions</h3>
 <p>Paid. OpenAI request and response format; <code>stream: true</code> is supported. Set <code>max_tokens</code>: it bounds what the request can cost.</p>
-<h2 id="payment-x402-on-keeta">Payment: x402 on Keeta</h2>
+<h2 id="payment-x402-in-keeta-stablecoins">Payment: x402 in Keeta stablecoins</h2>
 <ol>
 <li>Send the request with no payment. The router picks a provider and answers <code>402 Payment Required</code> with a <code>PAYMENT-REQUIRED</code> header: base64 JSON, x402 version 2.</li>
 <li>Your client signs one Keeta send block for <code>amount</code> to <code>payTo</code> and retries the same request with the <code>PAYMENT-SIGNATURE</code> header. The block is signed, not published.</li>
@@ -100,12 +100,13 @@ payment-required: eyJ4NDAyVmVyc2lvbiI6Mi...</code></pre>
     {
       "scheme": "exact",
       "network": "keeta:1413829460",
-      "asset": "keeta_apna75yhhvnv4ei7ape55hndk4yepno7a7i2mhtiwahiygixjcnmvswxhnmnk",
+      "asset": "keeta_&lt;the KUSD token address&gt;",
       "amount": "27",
       "payTo": "keeta_&lt;the serving provider's address&gt;",
       "maxTimeoutSeconds": 60,
       "extra": {
         "jobId": "job_&lt;id&gt;",
+        "assetSymbol": "KUSD",
         "model": "qwen3-8b",
         "maxInputTokens": 20,
         "maxOutputTokens": 256,
@@ -118,13 +119,13 @@ payment-required: eyJ4NDAyVmVyc2lvbiI6Mi...</code></pre>
 <thead><tr><th>Field</th><th>Meaning</th></tr></thead>
 <tbody>
 <tr><td><code>network</code></td><td class="wrap"><code>keeta:1413829460</code> on the test network, <code>keeta:21378</code> on the main network</td></tr>
-<tr><td><code>asset</code></td><td class="wrap">The USDC token address on that network</td></tr>
-<tr><td><code>amount</code></td><td class="wrap">The maximum cost in base units: estimated input tokens plus <code>max_tokens</code>, at the provider's price, rounded up</td></tr>
+<tr><td><code>asset</code></td><td class="wrap">The KUSD token address on that network, or USDC's until KUSD is live there. <code>extra.assetSymbol</code> names it.</td></tr>
+<tr><td><code>amount</code></td><td class="wrap">The maximum cost in the asset's base units: estimated input tokens plus <code>max_tokens</code>, at the provider's price in credits, one US dollar per credit, rounded up</td></tr>
 <tr><td><code>payTo</code></td><td class="wrap">The serving provider's Keeta address</td></tr>
-<tr><td><code>extra</code></td><td class="wrap">The job id, model, token limits and price the amount was computed from</td></tr>
+<tr><td><code>extra</code></td><td class="wrap">The job id, the asset's symbol, the model, token limits and price the amount was computed from</td></tr>
 </tbody>
 </table>
-<p>In the example, 20 × 50000 + 256 × 100000 = 26600000, divided by one million and rounded up: 27 base units, or 0.000027 USDC.</p>
+<p>In the example, 20 × 50000 + 256 × 100000 = 26600000, divided by one million and rounded up: 27 base units, or 0.000027 KUSD.</p>
 <p>You pay the maximum. Tokens not used are not refunded in this version, so keep <code>max_tokens</code> close to what you need.</p>
 <h2 id="when-the-network-is-full">When the network is full</h2>
 <p>When no provider can take a request, keeta.ai may answer it from its own capacity so paid requests still get an answer. keeta.ai turns this on per model and sets its price.</p>
@@ -158,10 +159,11 @@ const model = "qwen3-8b";
 try {
   const client = new x402Client()
     .register(KEETA_TESTNET_CAIP2, new ExactKeetaScheme(signer))
-    .setSpendControls({ maxAmountPerPayment: "$0.05" }) // USDC cap per request
+    .setSpendControls({ maxAmountPerPayment: "$0.05" }) // cap per request
     .onBeforePaymentCreation(async ({ selectedRequirements: req }) =&gt; {
-      const extra = req.extra as { model?: string } | undefined;
-      if (req.network !== KEETA_TESTNET_CAIP2 || extra?.model !== model) {
+      const extra = req.extra as { model?: string; assetSymbol?: string } | undefined;
+      const stablecoin = extra?.assetSymbol === "KUSD" || extra?.assetSymbol === "USDC";
+      if (req.network !== KEETA_TESTNET_CAIP2 || extra?.model !== model || !stablecoin) {
         return { abort: true, reason: "unexpected payment request" };
       }
     });
@@ -188,7 +190,7 @@ try {
 <ul>
 <li>The spend cap and the <code>onBeforePaymentCreation</code> check run in your client. The chain does not enforce them.</li>
 <li>Pay sequentially from each account. Keeta account chains are ordered, so one account cannot sign two payments at once. Queue requests, or spread them over several funded accounts when you need parallel requests.</li>
-<li>On the main network use <code>KEETA_MAINNET_CAIP2</code> and main-network USDC.</li>
+<li>Fund the paying account with the stablecoin the 402 asks for: KUSD, or USDC where KUSD is not live yet. On the main network use <code>KEETA_MAINNET_CAIP2</code> and main-network stablecoins.</li>
 </ul>
 <h2 id="errors">Errors</h2>
 <table>

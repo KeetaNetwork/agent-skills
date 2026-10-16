@@ -1,8 +1,8 @@
 # Keeta Compute for macOS
 
-Status: test-network preview. The app uses the Keeta test network and test USDC.
+Status: test-network preview. The app uses the Keeta test network and test stablecoins.
 
-One app does both sides of the market: it sells your Mac's spare capacity, and it buys inference for the agents running on your Mac.
+One app does both sides of the market: it sells your Mac's spare capacity, and it buys inference for the agents running on your Mac. Both sides are paid in Keeta Compute Credits, which you buy and cash out with Keeta stablecoins.
 
 ## Requirements
 
@@ -19,8 +19,17 @@ One app does both sides of the market: it sells your Mac's spare capacity, and i
 
 1. The app creates your wallet and secures it with a passkey. There is no recovery phrase to write down.
 2. The passkey syncs through iCloud Keychain, so another Mac signed in to the same Apple Account can open the same wallet.
-3. Your wallet address (`keeta_…`) is your identity on the network. Buyers pay it and providers can allowlist it.
+3. Your wallet address (`keeta_…`) is your identity on the network. Your earnings are paid to it and providers can allowlist it.
 4. The app checks the hardware: chip, memory, free disk, and a short benchmark.
+
+## Pay with Keeta stablecoins
+
+Keeta Compute Credits pay for requests and are what providers earn. A credit is a token on the Keeta ledger worth one US dollar, with 6 decimals.
+
+- **Buy credits.** In Wallet, choose Buy credits, pick a stablecoin (KUSD by default; also KEUR, KJPY, KMXN, KCAD, KAED, KGBP and USDC) and the number of credits. The app shows what they cost, then swaps them through keeta.ai's exchange once you confirm with Touch ID. KUSD and USDC buy credits one to one; the other stablecoins at the exchange's rate. New credits go to the Agent budget unless you turn that off.
+- **Cash out.** Choose Cash out to sell credits from your balance for any of those stablecoins.
+- **Balances.** The app reads every balance from the Keeta ledger: your credits, the Agent budget's credits, the stablecoins you hold, and a little KTA for network fees.
+- **Send and receive.** You can send credits to, and receive credits or stablecoins from, any Keeta address.
 
 ## Provide capacity
 
@@ -40,7 +49,7 @@ A tier describes what a machine proves in its benchmark, not the badge on it.
 - The Models tab lists the [catalog](https://keeta.ai/compute/models.md) models that fit your Mac. A model may use about two thirds of memory on Macs under 64 GB and about three quarters above that. The rest stays free for macOS and your own work.
 - Installing a model downloads its weights and hashes them. That weights hash appears on every receipt you sign.
 - Offering is per model. Each installed model can be offered to the network or kept for your own use.
-- Set a price per million input tokens and per million output tokens, in USDC, for each offered model. The catalog suggests a price, and you can change it.
+- Set a price per million input tokens and per million output tokens, in credits, for each offered model. The catalog suggests a price, and you can change it.
 - Read the model's license before you offer it. Its terms are your responsibility as the operator.
 
 ### When and to whom
@@ -53,9 +62,11 @@ A tier describes what a machine proves in its benchmark, not the badge on it.
 
 ## Get paid
 
-- You are paid per completed request, in USDC, directly to your wallet. The amount is the tokens used times your price ([pricing math](https://keeta.ai/compute/protocol.md)).
-- Each job in the app shows its signed receipt and its payment.
-- You can send USDC to, and receive it from, any Keeta address in the app.
+- You earn credits for each completed request, paid to your wallet on the Keeta ledger. The amount is the tokens used times your price ([pricing math](https://keeta.ai/compute/protocol.md)).
+- The buyer's credits are escrowed before your Mac runs anything. When your signed receipt matches what the relay forwarded, one Keeta transaction pays you what you billed. A receipt that bills anything else is not paid and counts against you.
+- Earnings in the app are read from the ledger: what keeta.ai's settlement account sent your wallet.
+- Requests from the public router are paid to your wallet directly in KUSD (USDC until KUSD is live).
+- Cash credits out to KUSD or another Keeta stablecoin whenever you like.
 - Bank deposits and withdrawals go through Keeta's banking anchors and need identity verification (KYC for people, KYB for businesses). Coming later; not part of the preview.
 
 ## Buy inference for agents on this Mac
@@ -69,7 +80,7 @@ http://127.0.0.1:11435/v1
 - `GET /v1/models` lists the models you can buy, with the lowest price on the network.
 - `POST /v1/chat/completions` takes the OpenAI request format. `stream: true` is supported.
 - Every request needs the bearer token shown in the app. Treat it like a password: any program holding it can spend your Agent budget.
-- Spend limits: set a maximum per request and per day in the app. A request that would go over a limit is refused before anything is paid.
+- Spend limits: set a maximum per request and per day, in credits. A request is refused before anything is escrowed if its most possible cost is over the per-request limit, or would take the day's spending over the daily limit.
 - Set `max_tokens` on each request to bound its cost.
 
 curl:
@@ -108,7 +119,8 @@ export OPENAI_API_KEY=<token shown in the app>
 
 ### How the app pays
 
-1. The app checks your spend limits, then the scheduler picks a provider and signs a ticket for the job.
-2. The request goes to the provider through the relay, and the tokens stream back to your agent.
-3. The provider signs a receipt with the token counts and the amount.
-4. The app checks the receipt against the ticket, then pays the provider directly with a Keeta send from your Agent budget. No x402 round trip is needed between apps.
+1. The scheduler picks a provider and quotes the most the request can cost, from its price and the request's token limits. The app checks that against your spend limits.
+2. The app escrows that many credits from your Agent budget with keeta.ai's settlement account, in one Keeta transaction that names the job, and gets a ticket for the job. It escrows each job once, even if it retries.
+3. The request goes to the provider through the relay, and the tokens stream back to your agent. The relay records a hash of what it forwarded.
+4. The provider signs a receipt with the token counts and the amount, and the app checks it against the ticket and the text it received.
+5. Settlement is one Keeta transaction from the settlement account: when the receipt matches the relay's record, the provider gets what it billed and the rest comes back to your Agent budget. If the provider fails, the receipt bills other text, or no receipt arrives, all of it comes back. No x402 round trip is needed between apps.

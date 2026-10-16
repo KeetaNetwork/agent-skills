@@ -1,9 +1,11 @@
 /**
  * Live: the app flow with everything real except the model. A buyer agent
- * (the Mac app's local endpoint) runs jobs through the relay Worker on a
- * Mac provider and on a Linux node driven by the real CLI, pays each receipt
- * with a send on the Keeta test network, and the control plane marks a job
- * paid only once it finds that send on the ledger.
+ * (the Mac app's local endpoint) buys Keeta Compute Credits with test USDC
+ * through the FX service, runs jobs through the relay Worker on a Mac
+ * provider and on a Linux node driven by the real CLI, and escrows each
+ * job's maximum cost with the settlement account on the Keeta test network
+ * before its ticket. The relay's delivery record settles each job in one
+ * payout block, and the provider cashes its credits out to USDC.
  *
  * The in-process e2e test owns the agent and control logic with a fake
  * ledger and an emulated relay; this file owns what only the network shows.
@@ -15,10 +17,10 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { spendAccount } from '../../agent/src/keys.ts';
-import { Scratch, macAgent, until } from '../support/harness.ts';
-import { Funder, NETWORK, announceSkip, skipLive } from './support.ts';
-import { fundAppBuyer, watchSettlement } from './payments.ts';
+import { operatorAccount, spendAccount } from '../../agent/src/keys.ts';
+import { Scratch, macAgent, passkeyEntropy, until } from '../support/harness.ts';
+import { Funder, NETWORK, USDC, announceSkip, skipLive } from './support.ts';
+import { fundAppBuyer, watchSettlement, type AppBuyer } from './payments.ts';
 import { MODEL, startStack, type Stack } from './stack.ts';
 
 announceSkip();
@@ -31,6 +33,7 @@ const scratch = new Scratch();
 let funder: Funder;
 let stack: Stack;
 let buyer: ReturnType<typeof macAgent>;
+let buyerWallet: AppBuyer;
 let endpoint: { url: string; token: string };
 const linux = { dir: '', operator: '', nodeKey: '' };
 
@@ -60,7 +63,7 @@ before(async () => {
 		return;
 	}
 	funder = await Funder.open();
-	stack = await startStack(scratch);
+	stack = await startStack(scratch, { credits: { funder } });
 
 	/* Linux node: init (its own wallet), add the model, turn providing on, run. */
 	linux.dir = scratch.dir('linux-node');
@@ -80,15 +83,19 @@ before(async () => {
 		throw new Error(`${error.message}\n--- node output ---\n${await running.done.catch((e: Error) => e.message)}`);
 	});
 
-	/* Buyer: the Mac app's local endpoint, paying from its budget key. */
+	/* Buyer: the Mac app's local endpoint, escrowing from its budget key credits its operator bought. */
 	const buyerDir = scratch.dir('mac-buyer');
 	buyer = macAgent(buyerDir);
 	scratch.defer(() => buyer.app.shutdown());
 	await buyer.rpc['agent.initialize']!({ network: NETWORK, controlUrl: stack.control.url, relayUrl: stack.worker.url, nodePublicKey: buyer.nodePublicKey, appVersion: 'live', machineName: 'Live Laptop' });
+	const entropy = passkeyEntropy();
+	const { operator } = (await buyer.rpc['wallet.setOperator']!({ entropy })) as { operator: string };
 	const spend = ((await buyer.rpc['wallet.refresh']!({})) as { spend: string }).spend;
-	/* The budget key lives in the buyer's data directory; track it so the sweep returns what is left. */
+	/* Both keys can be rebuilt here; track them so the sweep returns what is left. */
 	assert.equal(funder.track(spendAccount(buyerDir, NETWORK)).publicKeyString.get(), spend);
-	await fundAppBuyer(funder, spend);
+	assert.equal(funder.track(await operatorAccount(entropy)).publicKeyString.get(), operator);
+	buyerWallet = { rpc: buyer.rpc, entropy, operator, spend };
+	await fundAppBuyer(funder, stack, buyerWallet);
 	const status = (await buyer.rpc['buyer.status']!({})) as { endpoint: string; token: string };
 	endpoint = { url: status.endpoint, token: status.token };
 });
@@ -107,10 +114,10 @@ async function complete(content: string, options: { stream?: boolean; signal?: A
 	});
 }
 
-/** Serve one job on `nodeKey` and check it was paid on the ledger to `operator`. */
+/** Serve one job on `nodeKey` and check it was paid out on the ledger to `operator`. */
 async function servedAndPaid(nodeKey: string, operator: string) {
 	await buyer.rpc['buyer.setPolicy']!({ allowedProviders: [nodeKey] });
-	const settled = await watchSettlement(stack, funder, operator);
+	const settled = await watchSettlement(stack, funder, operator, buyerWallet.spend);
 	const response = await complete('Say hello');
 	const body = (await response.json()) as { choices: Array<{ message: { content: string } }> };
 	assert.equal(response.status, 200, JSON.stringify(body));
@@ -124,7 +131,7 @@ async function servedAndPaid(nodeKey: string, operator: string) {
 	assert.equal(job.delivery?.outputHash, job.receipt!.receipt.outputHash, 'the relay recorded the text it forwarded');
 }
 
-test('a Mac provider serves the buyer agent through the relay Worker and is paid on the ledger', { skip: skipLive, timeout: 300_000 }, async () => {
+test('a Mac provider serves the buyer agent through the relay Worker and is paid out of the escrow on the ledger', { skip: skipLive, timeout: 300_000 }, async () => {
 	await servedAndPaid(stack.mac.nodeKey, stack.mac.operator);
 });
 
@@ -134,9 +141,9 @@ test('a Linux CLI node serves the buyer agent through the relay Worker and is pa
 	await servedAndPaid(linux.nodeKey, linux.operator);
 });
 
-test('a buyer that hangs up mid-answer pays on the ledger for the text the relay attests it forwarded', { skip: skipLive, timeout: 300_000 }, async () => {
+test('a buyer that hangs up mid-answer pays from its escrow for the text the relay attests it forwarded, and gets the rest back', { skip: skipLive, timeout: 300_000 }, async () => {
 	await buyer.rpc['buyer.setPolicy']!({ allowedProviders: [stack.mac.nodeKey] });
-	const settled = await watchSettlement(stack, funder, stack.mac.operator);
+	const settled = await watchSettlement(stack, funder, stack.mac.operator, buyerWallet.spend);
 	const hangUp = new AbortController();
 	/* The fake model stalls after each piece when asked to answer slowly; a real one is asked for a long answer. */
 	const response = await complete(stack.model.fake ? 'Say hello slowly' : 'Count from one to two hundred in words.', { stream: true, signal: hangUp.signal });
@@ -153,4 +160,20 @@ test('a buyer that hangs up mid-answer pays on the ledger for the text the relay
 
 	const job = await settled(jobId, 180_000);
 	assert.equal(job.receipt!.receipt.outputHash, job.delivery?.outputHash, 'the bill matches the relay record');
+});
+
+test("the Mac provider's earnings are its credits on the ledger, and it cashes them out to USDC through the FX service", { skip: skipLive, timeout: 300_000 }, async () => {
+	const { operator, entropy } = stack.mac;
+	const token = stack.credits!.token;
+	const earned = await funder.balance(operator, token);
+	assert.ok(earned > 0n, 'the earlier jobs paid the Mac operator');
+	await stack.mac.rpc['wallet.refresh']!({});
+	assert.equal((await stack.mac.rpc['provider.status']!({})).earnedTotal, earned.toString(), 'the app reads earnings from the settlement account\'s payouts');
+	funder.track(await operatorAccount(entropy));
+	await funder.fundKta([operator]);
+	const usdcBefore = await funder.balance(operator, 'usdc');
+	const sold = await stack.mac.rpc['wallet.sellCredits']!({ entropy, amount: earned.toString(), to: USDC.symbol });
+	assert.equal(sold.received, earned.toString(), 'credits cash out to USDC one to one');
+	await until('the USDC to reach the operator', async () => (await funder.balance(operator, 'usdc')) >= usdcBefore + earned, 60_000, 1_000);
+	assert.equal(await funder.balance(operator, token), 0n);
 });

@@ -108,9 +108,10 @@ export interface ExpectedPayment {
 export type PaymentCheck = { status: 'confirmed'; amount: bigint } | { status: 'not-found' } | { status: 'mismatch'; reason: string };
 
 /**
- * Confirm a payment block on the ledger: a send from the buyer to the
- * provider's payout account, in the settlement asset, for at least the amount
- * due, carrying the job id as its external reference.
+ * Confirm a payment block on the ledger: a block signed by `from` sending
+ * `asset` to `to` (for an app job's escrow, credits to the settlement
+ * account), at least `minAmount` in total, counting only sends whose
+ * external reference is the job id. `amount` is that total.
  */
 export async function checkPaymentBlock(client: InstanceType<typeof KeetaNet.Client>, expected: ExpectedPayment): Promise<PaymentCheck> {
 	const block = await client.getBlock(expected.blockHash);

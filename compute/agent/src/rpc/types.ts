@@ -7,17 +7,31 @@
  * and the agent calls `signer.signDigest` on the app because the node key
  * lives in the Secure Enclave. Notifications (no `id`) carry events.
  *
- * Amounts are always strings of integer base units. Addresses are Keeta
- * public key strings (keeta_…).
+ * Amounts are always strings of integer base units. Prices, limits, costs
+ * and earnings are in Keeta Compute Credits (one credit is one US dollar,
+ * 6 decimals); stablecoin amounts are in that stablecoin's own decimals.
+ * Addresses are Keeta public key strings (keeta_…).
  */
 
 import type { CatalogModel, Compatibility, HardwareProfile, HardwareTier, NetworkModel, NetworkName, PairingRecord, Price, AccessPolicy } from '@keeta-compute/protocol';
 
 export interface AssetBalance {
-	/** Settlement stablecoin (USDC at launch). */
-	usdc: string;
+	/** Keeta Compute Credits, which pay for requests. */
+	credits: string;
 	/** KTA, which pays network fees. */
 	kta: string;
+	/** Each available stablecoin by symbol (KUSD, …, USDC), in its own base units. */
+	stablecoins: Record<string, string>;
+}
+
+/** A stablecoin that buys credits and that credits cash out to. */
+export interface StablecoinInfo {
+	symbol: string;
+	name: string;
+	/** ISO 4217 code it tracks. */
+	currency: string;
+	address: string;
+	decimals: number;
 }
 
 export interface WalletState {
@@ -26,11 +40,19 @@ export interface WalletState {
 	/** Local key used to pay for inference on behalf of agents on this Mac ("agent budget"). */
 	spend: string;
 	balances: { operator: AssetBalance | null; spend: AssetBalance } | null;
+	/** Keeta Compute Credits: what prices, limits, costs and earnings are in. */
 	asset: { address: string; symbol: string; decimals: number };
+	/** False until credits exist on this network; buying inference needs them. */
+	creditsAvailable: boolean;
+	/** Stablecoins available on this network, in lead order (KUSD first, USDC last). */
+	stablecoins: StablecoinInfo[];
 	explorer: string;
 	/** Last balance read error, e.g. network unreachable. */
 	error?: string;
 }
+
+/** What `wallet.send`, `wallet.fundBudget` and `wallet.drainBudget` move: credits, KTA, or a stablecoin by symbol. */
+export type WalletAssetName = 'credits' | 'kta' | (string & {});
 
 export interface ProviderPolicy {
 	enabled: boolean;
@@ -42,15 +64,15 @@ export interface ProviderPolicy {
 }
 
 export interface BuyerPolicy {
-	/** Largest amount a single request may cost, base units. */
+	/** Largest amount a single request may cost (its escrow), credit base units. */
 	perRequestMax: string;
-	/** Largest total per UTC day, base units. */
+	/** Largest total providers may bill per UTC day, credit base units. */
 	dailyMax: string;
 	/** Empty means any model. */
 	allowedModels: string[];
 	/** Empty means any provider. */
 	allowedProviders: string[];
-	/** Highest price the app will accept per million tokens. */
+	/** Highest price the app will accept, credit base units per million tokens. */
 	maxPrice: Price;
 }
 
@@ -88,7 +110,9 @@ export interface JobSummary {
 	counterparty: string;
 	inputTokens: number;
 	outputTokens: number;
+	/** Credit base units billed. */
 	amount: string;
+	/** 'completed': receipt in; 'paid': settled from the escrow on the ledger; 'failed': refunded or not run. */
 	status: 'running' | 'completed' | 'paid' | 'failed';
 	at: number;
 	helper?: string;
@@ -100,6 +124,11 @@ export interface ProviderStatus {
 	/** Why the node is not taking jobs right now, if it isn't. */
 	state: 'online' | 'paused' | 'outside-schedule' | 'on-battery' | 'no-offers' | 'not-eligible' | 'connecting' | 'offline';
 	activeJobs: number;
+	/**
+	 * Credits the settlement account paid the operator, read from the ledger
+	 * (UTC today, and in all the history read). Router jobs pay the operator
+	 * in stablecoins directly, which shows in the wallet balance instead.
+	 */
 	earnedToday: string;
 	earnedTotal: string;
 	tokensServedToday: number;
@@ -110,8 +139,8 @@ export interface BuyerStatus {
 	endpoint: string;
 	token: string;
 	policy: BuyerPolicy;
+	/** Credits charged today (what providers billed; escrow refunds are not counted). */
 	spentToday: string;
-	unpaid: number;
 	recentJobs: JobSummary[];
 }
 
@@ -122,7 +151,8 @@ export interface FleetHelper {
 	tier: HardwareTier;
 	status: 'online' | 'paused' | 'offline';
 	offers: string[];
-	earnedTotal: string;
+	/** Jobs this helper completed; what they earned is paid to the master's operator account. */
+	completed: number;
 	lastHeartbeat: number;
 }
 
@@ -152,11 +182,28 @@ export interface AppToAgent {
 	'wallet.setOperator': { params: { entropy: string }; result: { operator: string } };
 	'wallet.refresh': { params: Record<string, never>; result: WalletState };
 	/** Send from the operator account; each call needs a fresh passkey assertion. */
-	'wallet.send': { params: { entropy: string; to: string; amount: string; asset: 'usdc' | 'kta'; memo?: string }; result: { blockHash: string } };
+	'wallet.send': { params: { entropy: string; to: string; amount: string; asset: WalletAssetName; memo?: string }; result: { blockHash: string } };
 	/** Move funds from the operator account into the agent budget. */
-	'wallet.fundBudget': { params: { entropy: string; amount: string; asset: 'usdc' | 'kta' }; result: { blockHash: string } };
+	'wallet.fundBudget': { params: { entropy: string; amount: string; asset: WalletAssetName }; result: { blockHash: string } };
 	/** Move funds from the agent budget back to the operator account (no passkey needed). */
-	'wallet.drainBudget': { params: { amount: string; asset: 'usdc' | 'kta' }; result: { blockHash: string } };
+	'wallet.drainBudget': { params: { amount: string; asset: WalletAssetName }; result: { blockHash: string } };
+	/**
+	 * What a swap would cost or bring, without making it. `side` 'buy': the
+	 * stablecoin needed for `amount` credits; 'sell': the stablecoin `amount`
+	 * credits bring.
+	 */
+	'wallet.creditQuote': { params: { side: 'buy' | 'sell'; amount: string; stablecoin: string }; result: { amount: string } };
+	/**
+	 * Buy exactly `amount` credits with a stablecoin from the operator account
+	 * through the keeta.ai FX provider, then (unless `toBudget` is false) move
+	 * them into the agent budget, where requests are paid from.
+	 */
+	'wallet.buyCredits': {
+		params: { entropy: string; amount: string; with: string; toBudget?: boolean };
+		result: { exchangeId: string; blockHash: string; paid: string; credits: string; budgetBlockHash?: string };
+	};
+	/** Cash out: sell exactly `amount` credits from the operator account for a stablecoin. */
+	'wallet.sellCredits': { params: { entropy: string; amount: string; to: string }; result: { exchangeId: string; blockHash: string; credits: string; received: string } };
 	'wallet.requestTestFunds': { params: Record<string, never>; result: { requested: boolean; message: string } };
 
 	'hardware.profile': { params: Record<string, never>; result: { hardware: HardwareProfile; tier: HardwareTier; canProvide: boolean; reason?: string } };
@@ -175,8 +222,8 @@ export interface AppToAgent {
 	'buyer.setPolicy': { params: Partial<BuyerPolicy>; result: BuyerStatus };
 	'buyer.rotateToken': { params: Record<string, never>; result: BuyerStatus };
 	'buyer.networkModels': { params: Record<string, never>; result: NetworkModel[] };
-	/** Pay any receipts that are still unpaid (e.g. after the app was offline). */
-	'buyer.settle': { params: Record<string, never>; result: { paid: number; failed: number } };
+	/** Report escrows not confirmed yet and read how recent jobs settled (refunds and payouts are on the ledger). */
+	'buyer.settle': { params: Record<string, never>; result: { reported: number; settled: number } };
 
 	'fleet.createPairing': { params: Record<string, never>; result: { pairingId: string; code: string; expiresAt: number } };
 	'fleet.pairingStatus': { params: { pairingId: string }; result: PairingRecord };

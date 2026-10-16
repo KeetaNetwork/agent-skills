@@ -6,8 +6,8 @@
 
 import {
 	HEARTBEAT_INTERVAL_MS,
-	NETWORKS,
 	canonicalJSON,
+	findAsset,
 	chunkText,
 	estimateTokens,
 	findCatalogModel,
@@ -54,6 +54,12 @@ export interface ProviderDeps {
 	log: Log;
 	onJob: (job: JobSummary) => void;
 	onChange: () => void;
+	/**
+	 * What the operator earned, read from the ledger (the settlement
+	 * account's payouts to it); zero where nothing reads it, as on a helper,
+	 * whose earnings land in its master's wallet.
+	 */
+	earnings?: () => { today: string; total: string };
 	WebSocketImpl?: typeof WebSocket;
 	/** Testing: skip battery/idle probes. */
 	localConditions?: () => Promise<{ onBattery: boolean; idleSeconds: number }>;
@@ -76,19 +82,21 @@ export class Provider {
 	/* Stopped until start(), so a poke on a provider that was never started (CLI one-shot commands) stays offline. */
 	private stopped = true;
 	private reconnectDelay = 1000;
-	private earnedTotal = '0';
+	/** The credit token app tickets are paid in, from the heartbeat. */
+	private creditToken: string | null = null;
 
 	constructor(private readonly deps: ProviderDeps) {}
 
 	get status(): ProviderStatus {
 		const s = this.deps.store.state;
 		const day = today();
+		const earned = this.deps.earnings?.() ?? { today: '0', total: '0' };
 		return {
 			policy: s.provider,
 			state: this.state,
 			activeJobs: this.active.size,
-			earnedToday: s.earnedByDay[day] ?? '0',
-			earnedTotal: this.earnedTotal !== '0' ? this.earnedTotal : s.earnedTotal,
+			earnedToday: earned.today,
+			earnedTotal: earned.total,
 			tokensServedToday: s.tokensByDay[day] ?? 0,
 			recentJobs: s.jobs.filter((j) => j.role === 'provider').slice(0, 50)
 		};
@@ -270,13 +278,14 @@ export class Provider {
 		const local = await this.localState();
 		const offers = await this.readyOffers(local === 'online');
 		const online = local === 'online' && offers.length > 0;
-		const result = await control.post<{ status: string; eligible: boolean; relayUrl: string; relayToken: string; relayTokenExpiresAt: number }>(node, '/v1/providers/heartbeat', {
+		const result = await control.post<{ status: string; eligible: boolean; relayUrl: string; relayToken: string; relayTokenExpiresAt: number; creditToken?: string | null }>(node, '/v1/providers/heartbeat', {
 			status: online ? 'online' : 'paused',
 			offers,
 			access: store.state.provider.access,
 			load: { active: this.active.size, capacity: store.state.provider.maxConcurrentJobs }
 		});
 		this.eligible = result.eligible;
+		this.creditToken = result.creditToken ?? null;
 		this.relay = { url: result.relayUrl, token: result.relayToken, expiresAt: result.relayTokenExpiresAt };
 		await this.flushReceipts();
 		if (online) {
@@ -288,12 +297,6 @@ export class Provider {
 				this.socket?.close();
 				this.socket = null;
 			}
-		}
-		try {
-			const me = await control.get<{ provider: { stats: { earned: string } } }>(node, '/v1/providers/me');
-			this.earnedTotal = me.provider.stats.earned;
-		} catch {
-			/* informational only */
 		}
 	}
 
@@ -370,8 +373,10 @@ export class Provider {
 		if (ticket.expiresAt < Date.now()) {
 			return { code: 'ticket_expired', error: 'ticket expired' };
 		}
-		if (ticket.asset !== NETWORKS[state.network].settlementAsset.address) {
-			return { code: 'invalid_ticket', error: 'ticket asset is not the settlement asset' };
+		/* App jobs are paid in credits (escrowed with keeta.ai); router jobs in a pinned stablecoin, paid to this node's operator. */
+		const assetOk = ticket.paymentMode === 'escrow' ? Boolean(this.creditToken) && ticket.asset === this.creditToken : ticket.paymentMode === 'prepaid' && Boolean(findAsset(state.network, ticket.asset));
+		if (!assetOk) {
+			return { code: 'invalid_ticket', error: 'ticket asset is not the credit token or a pinned stablecoin' };
 		}
 		const model = this.deps.models.installed(ticket.modelId);
 		if (!model || !model.offer.offered) {
@@ -381,10 +386,10 @@ export class Provider {
 			return { code: 'price_changed', error: 'the price changed since the ticket was issued' };
 		}
 		const access = model.offer.access ?? state.provider.access;
-		if (access.mode === 'allowlist' && (ticket.paymentMode !== 'postpay' || !access.allow.includes(ticket.buyer))) {
+		if (access.mode === 'allowlist' && (ticket.paymentMode !== 'escrow' || !access.allow.includes(ticket.buyer))) {
 			return { code: 'not_allowed', error: 'this provider only serves listed buyers' };
 		}
-		if (ticket.paymentMode === 'postpay') {
+		if (ticket.paymentMode === 'escrow') {
 			if (!envelope.buyerSig || !this.deps.verify(ticket.buyer, await jobAuthMessage(ticket.jobId, envelope.request), envelope.buyerSig)) {
 				return { code: 'invalid_buyer_signature', error: 'the request is not signed by the paying key' };
 			}
@@ -496,11 +501,9 @@ export class Provider {
 			this.send({ type: 'receipt', id, receipt: signed });
 			this.pendingReceipts.push(signed);
 			void this.flushReceipts();
-			this.deps.store.addToDay('earnedByDay', amount);
 			this.deps.store.update((s) => {
 				const day = today();
 				s.tokensByDay[day] = (s.tokensByDay[day] ?? 0) + outputTokens;
-				s.earnedTotal = (BigInt(s.earnedTotal) + amount).toString();
 			});
 			this.deps.onJob({ ...summary, inputTokens, outputTokens, amount: amount.toString(), status: 'completed', at: Date.now() });
 		};
@@ -549,7 +552,7 @@ export class Provider {
 				await this.deps.control.post(this.deps.node, `/v1/jobs/${signed.receipt.jobId}/receipt`, { receipt: signed });
 			} catch (error) {
 				if (error instanceof ControlError && error.status === 409) {
-					/* The buyer already delivered this receipt with its payment. */
+					/* Already filed, or the job settled without it. */
 				} else if (error instanceof ControlError && error.status >= 400 && error.status < 500) {
 					this.deps.log('warn', `control plane refused receipt ${signed.receipt.jobId}: ${error.message}`);
 				} else {

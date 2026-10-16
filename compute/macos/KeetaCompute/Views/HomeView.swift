@@ -25,8 +25,8 @@ struct HomeView: View {
         Card {
             HStack(alignment: .top, spacing: 24) {
                 Stat(
-                    title: "Balance",
-                    value: model.wallet?.balances?.operatorBalance.map { model.money.string($0.usdc) } ?? "—",
+                    title: "Credits",
+                    value: model.creditBalance.map { model.money.string($0) } ?? "—",
                     detail: model.wallet?.error ?? (model.hasOperator ? nil : "Set up your wallet to see your balance.")
                 )
                 Stat(

@@ -76,7 +76,7 @@ const MUSE_LICENSE: ModelLicense = {
 };
 
 function price(input: number, output: number): CatalogModel['suggestedPrice'] {
-	/* USDC has 6 decimals: 0.10 USDC per million tokens is 100000 base units. */
+	/* Credits have 6 decimals and track the US dollar: 0.10 credits per million tokens is 100000 base units. */
 	return {
 		inputPerMillion: String(Math.round(input * 1_000_000)),
 		outputPerMillion: String(Math.round(output * 1_000_000))

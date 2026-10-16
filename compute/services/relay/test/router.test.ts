@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { NETWORKS, ticketMac, type JobTicket, type SignedTicket } from '@keeta-compute/protocol';
+import { defaultAsset, ticketMac, type JobTicket, type SignedTicket } from '@keeta-compute/protocol';
 import { createRouter, type PaymentGateway, type PaymentPayload } from '../src/router.ts';
 import { checkEnvelope } from '../src/relay.ts';
 import { lazyGateway } from '../src/gateway.ts';
@@ -14,7 +14,7 @@ async function makeTicket(overrides: Partial<JobTicket> = {}): Promise<SignedTic
 	const ticket: JobTicket = {
 		v: 1, jobId: 'job_abc', network: 'test', nodeKey: payTo, modelId: 'qwen3-8b', buyer: coordinator,
 		maxInputTokens: 1000, maxOutputTokens: 64, price: { inputPerMillion: '100000', outputPerMillion: '400000' },
-		asset: NETWORKS.test.settlementAsset.address, payTo, paymentMode: 'prepaid', prepaidAmount: '36',
+		asset: defaultAsset('test').address, payTo, paymentMode: 'prepaid', prepaidAmount: '36',
 		issuedAt: Date.now(), expiresAt: Date.now() + 60_000, ...overrides
 	};
 	return { ticket, coordinatorSig: '00', relayMac: await ticketMac(SECRET, ticket) };
@@ -81,6 +81,8 @@ async function paymentFor(router: ReturnType<typeof setup>['router']): Promise<s
 	assert.equal(required.accepts[0]!.payTo, payTo);
 	assert.equal(required.accepts[0]!.amount, '36');
 	assert.equal(required.accepts[0]!.network, 'keeta:1413829460');
+	assert.equal(required.accepts[0]!.asset, defaultAsset('test').address, 'paid in the stablecoin the ticket names');
+	assert.equal((required.accepts[0]!.extra as { assetSymbol?: string }).assetSymbol, defaultAsset('test').symbol, 'and named, so a client knows KUSD from USDC');
 	const payload: PaymentPayload = { x402Version: 2, accepted: required.accepts[0]!, payload: { block: 'signed-block' } };
 	return btoa(JSON.stringify(payload));
 }
@@ -251,7 +253,7 @@ test('forged, expired or mismatched quotes are rejected before verification', as
 });
 
 test('relay rejects envelopes without a valid MAC or buyer signature', async () => {
-	const ticket = await makeTicket({ paymentMode: 'postpay' });
+	const ticket = await makeTicket({ paymentMode: 'escrow' });
 	const request = { model: 'qwen3-8b', messages: [] };
 	assert.equal(await checkEnvelope(SECRET, 'job_abc', { ticket, request, buyerSig: 'aa' }, Date.now()), null);
 	assert.match((await checkEnvelope(SECRET, 'job_abc', { ticket, request }, Date.now()))!, /buyer signature/);

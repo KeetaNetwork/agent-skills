@@ -2,8 +2,9 @@
  * Live: the public router (POST /v1/chat/completions on the relay Worker)
  * paid with real x402 on the Keeta test network. A client with no Keeta
  * Compute software, only @x402/fetch and the Keeta exact scheme, gets a 402,
- * signs a USDC send from a fresh account, and the facilitator settles it to
- * the provider's operator. The router unit tests own the flow with a stubbed
+ * signs a send of the router's stablecoin (KUSD once it is pinned, test USDC
+ * until then) from a fresh account, and the facilitator settles it to the
+ * provider's operator. The funding account must hold that stablecoin. The router unit tests own the flow with a stubbed
  * gateway; this file owns what only the real facilitator and ledger show.
  */
 
@@ -12,15 +13,18 @@ import assert from 'node:assert/strict';
 import { HTTPFacilitatorClient } from '@x402/core/server';
 import { decodePaymentResponseHeader, wrapFetchWithPayment, x402Client } from '@x402/fetch';
 import { ExactKeetaScheme, KEETA_TESTNET_CAIP2, toClientKeetaSigner } from '@x402/keeta';
-import type { SignedReceipt } from '@keeta-compute/protocol';
+import { CREDIT_DECIMALS, defaultAsset, formatAmount, receiptMessage, rescaleAmount, type SignedReceipt } from '@keeta-compute/protocol';
 import { verifyKeetaSignature } from '@keeta-compute/protocol/keeta';
-import { receiptMessage } from '@keeta-compute/protocol';
 import { Scratch, until } from '../support/harness.ts';
-import { Funder, USDC, announceSkip, freshAccount, skipLive, type KeetaAccount } from './support.ts';
+import { Funder, NETWORK, announceSkip, freshAccount, skipLive, type KeetaAccount } from './support.ts';
 import { FACILITATOR_URL, MODEL, startStack, type Stack } from './stack.ts';
 
 announceSkip();
 
+/** What the router quotes x402 payments in. */
+const ASSET = defaultAsset(NETWORK);
+/* A hundredth of a credit's worth: far more than one small completion costs. */
+const PAYER_FUNDS = rescaleAmount(10_000n, CREDIT_DECIMALS, ASSET.decimals);
 const scratch = new Scratch();
 let funder: Funder;
 let stack: Stack;
@@ -38,10 +42,12 @@ before(async () => {
 		`the facilitator does not settle exact payments on ${KEETA_TESTNET_CAIP2}; the public router cannot be paid on the test network`
 	);
 	funder = await Funder.open();
+	const held = await funder.balance(funder.address, ASSET.address);
+	assert.ok(held >= PAYER_FUNDS, `the funding account ${funder.address} holds ${formatAmount(held, ASSET.decimals)} test ${ASSET.symbol}, which the router quotes in; it needs at least ${formatAmount(PAYER_FUNDS, ASSET.decimals)}`);
 	stack = await startStack(scratch);
 	payer = funder.track(freshAccount());
 	/* x402 payers need no KTA: the facilitator pays the network fee. */
-	await funder.fundUsdc(payer.publicKeyString.get(), 10_000n);
+	await funder.fund(payer.publicKeyString.get(), ASSET.address, PAYER_FUNDS);
 });
 
 after(async () => {
@@ -53,9 +59,9 @@ const body = JSON.stringify({ model: MODEL, messages: [{ role: 'user', content: 
 
 let paymentHeader = '';
 
-test('an x402 client pays the router in USDC and gets the completion with the provider receipt; the operator is paid on the ledger', { skip: skipLive, timeout: 300_000 }, async () => {
+test('an x402 client pays the router in its stablecoin and gets the completion with the provider receipt; the operator is paid on the ledger', { skip: skipLive, timeout: 300_000 }, async () => {
 	const operator = stack.mac.operator;
-	const before = await funder.balance(operator, 'usdc');
+	const before = await funder.balance(operator, ASSET.address);
 	const signer = toClientKeetaSigner(payer);
 	let quoted = '';
 	try {
@@ -68,7 +74,7 @@ test('an x402 client pays the router in USDC and gets the completion with the pr
 			if (response.status === 402) {
 				const required = JSON.parse(atob(response.headers.get('payment-required')!)) as { accepts: Array<{ amount: string; payTo: string; asset: string }> };
 				assert.equal(required.accepts[0]!.payTo, operator, 'the quote pays the provider directly');
-				assert.equal(required.accepts[0]!.asset, USDC.address);
+				assert.equal(required.accepts[0]!.asset, ASSET.address, `the router quotes in ${ASSET.symbol}`);
 				quoted = required.accepts[0]!.amount;
 			}
 			return response;
@@ -100,21 +106,21 @@ test('an x402 client pays the router in USDC and gets the completion with the pr
 	} finally {
 		await signer.destroy();
 	}
-	await until('the payment to show on the ledger', async () => (await funder.balance(operator, 'usdc')) >= before + BigInt(quoted), 60_000, 1_000);
-	assert.equal(await funder.balance(operator, 'usdc'), before + BigInt(quoted), 'the operator received exactly the quoted amount');
+	await until('the payment to show on the ledger', async () => (await funder.balance(operator, ASSET.address)) >= before + BigInt(quoted), 60_000, 1_000);
+	assert.equal(await funder.balance(operator, ASSET.address), before + BigInt(quoted), 'the operator received exactly the quoted amount');
 });
 
 test('a replayed x402 payment header is refused and moves no money', { skip: skipLive, timeout: 120_000 }, async () => {
 	assert.ok(paymentHeader, 'needs the payment from the previous test');
 	const operator = stack.mac.operator;
-	const before = await funder.balance(operator, 'usdc');
-	const payerBefore = await funder.balance(payer.publicKeyString.get(), 'usdc');
+	const before = await funder.balance(operator, ASSET.address);
+	const payerBefore = await funder.balance(payer.publicKeyString.get(), ASSET.address);
 	const replay = await fetch(`${stack.worker.url}/v1/chat/completions`, { method: 'POST', headers: { 'content-type': 'application/json', 'payment-signature': paymentHeader }, body });
 	const text = await replay.text();
 	assert.notEqual(replay.status, 200, text);
 	assert.equal(replay.headers.get('payment-response'), null, 'nothing was settled');
 	/* Give a wrongly published send time to land before checking that none did. */
 	await new Promise((r) => setTimeout(r, 5_000));
-	assert.equal(await funder.balance(operator, 'usdc'), before);
-	assert.equal(await funder.balance(payer.publicKeyString.get(), 'usdc'), payerBefore);
+	assert.equal(await funder.balance(operator, ASSET.address), before);
+	assert.equal(await funder.balance(payer.publicKeyString.get(), ASSET.address), payerBefore);
 });

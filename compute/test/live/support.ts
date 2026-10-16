@@ -5,11 +5,12 @@
  * Only the Keeta test network is used. The funding account is the fixed
  * test-network account below, unless KEETA_TESTNET_SEED (hex seed) or
  * KEETA_TESTNET_PASSPHRASE (24 words) names another. It must hold test USDC
- * and some KTA; see compute/README.md.
+ * and some KTA; see compute/README.md. Keeta Compute Credits are created
+ * fresh for each run (credits.ts) and bought with that USDC.
  */
 
 import * as KeetaNet from '@keetanetwork/keetanet-client';
-import { NETWORKS, formatAmount } from '@keeta-compute/protocol';
+import { NETWORKS, formatAmount, usdcAsset } from '@keeta-compute/protocol';
 import { Account } from '@keeta-compute/protocol/keeta';
 import { SerialQueue } from '../../agent/src/ledger.ts';
 import { until } from '../support/harness.ts';
@@ -18,7 +19,7 @@ export type KeetaAccount = InstanceType<typeof Account>;
 type UserClient = InstanceType<typeof KeetaNet.UserClient>;
 
 export const NETWORK = 'test' as const;
-export const USDC = NETWORKS.test.settlementAsset;
+export const USDC = usdcAsset('test');
 const TEST_NETWORK_ID = BigInt(NETWORKS.test.caip2.split(':')[1]!);
 const FAUCET_URL = 'https://faucet.test.keeta.com/';
 
@@ -93,6 +94,8 @@ async function decimalsOf(client: UserClient, token: string): Promise<number | n
 export class Funder {
 	private readonly queue = new SerialQueue();
 	private readonly tracked = new Map<string, KeetaAccount>();
+	/** The stablecoins sent out, which the sweep brings back: test USDC, and any other the funding account holds (KUSD once pinned). */
+	private readonly funded = new Set<string>([USDC.address]);
 
 	private constructor(
 		readonly account: KeetaAccount,
@@ -132,9 +135,13 @@ export class Funder {
 		return funder;
 	}
 
-	/** An account's balance, read with the funding account's client (the code under test is not involved). */
-	balance(address: string, asset: 'usdc' | 'kta'): Promise<bigint> {
-		return this.client.client.getBalance(address, asset === 'usdc' ? USDC.address : this.kta);
+	private tokenOf(asset: 'usdc' | 'kta' | (string & {})): string {
+		return asset === 'usdc' ? USDC.address : asset === 'kta' ? this.kta : asset;
+	}
+
+	/** An account's balance of USDC, KTA or a token address, read with the funding account's client (the code under test is not involved). */
+	balance(address: string, asset: 'usdc' | 'kta' | (string & {})): Promise<bigint> {
+		return this.client.client.getBalance(address, this.tokenOf(asset));
 	}
 
 	/** Remember an account so `sweep` returns what it holds. */
@@ -144,16 +151,22 @@ export class Funder {
 	}
 
 	/** Send from the funding account; sends are serialized because one account cannot publish two at once. */
-	send(to: string, amount: bigint, asset: 'usdc' | 'kta', reference?: string): Promise<void> {
+	send(to: string, amount: bigint, asset: 'usdc' | 'kta' | (string & {}), reference?: string): Promise<void> {
 		return this.queue.run('funder', async () => {
-			await this.client.send(to, amount, asset === 'usdc' ? USDC.address : this.kta, reference);
+			await this.client.send(to, amount, this.tokenOf(asset), reference);
 		});
 	}
 
-	async fundUsdc(to: string, amount: bigint): Promise<void> {
-		const before = await this.balance(to, 'usdc');
-		await this.send(to, amount, 'usdc', 'keeta-compute live test');
-		await until(`${to} to receive test USDC`, async () => (await this.balance(to, 'usdc')) >= before + amount, 60_000, 1_000);
+	/** Send a token the funding account holds (test USDC, or a stablecoin it was given) and wait for it to land. */
+	async fund(to: string, asset: 'usdc' | (string & {}), amount: bigint): Promise<void> {
+		this.funded.add(this.tokenOf(asset));
+		const before = await this.balance(to, asset);
+		await this.send(to, amount, asset, 'keeta-compute live test');
+		await until(`${to} to receive ${asset}`, async () => (await this.balance(to, asset)) >= before + amount, 60_000, 1_000);
+	}
+
+	fundUsdc(to: string, amount: bigint): Promise<void> {
+		return this.fund(to, 'usdc', amount);
 	}
 
 	/** Give each address at least `amount` KTA for network fees: the faucet first, the funding account if it is slow. */
@@ -181,15 +194,17 @@ export class Funder {
 		}
 	}
 
-	/** Best effort: return the USDC and KTA left on tracked accounts to the funding account, then close. */
+	/** Best effort: return the stablecoins and KTA left on tracked accounts to the funding account, then close. Credits made for the run stay where they are. */
 	async sweep(): Promise<void> {
 		for (const account of this.tracked.values()) {
 			const address = account.publicKeyString.get();
 			const client = KeetaNet.UserClient.fromNetwork(NETWORK, account as Parameters<typeof KeetaNet.UserClient.fromNetwork>[1]);
 			try {
-				const usdc = await client.balance(USDC.address);
-				if (usdc > 0n && (await client.balance(client.baseToken)) > 0n) {
-					await client.send(this.address, usdc, USDC.address, 'keeta-compute live test sweep').catch((error: Error) => console.log(`could not sweep USDC from ${address}: ${error.message}`));
+				for (const token of this.funded) {
+					const held = await client.balance(token);
+					if (held > 0n && (await client.balance(client.baseToken)) > 0n) {
+						await client.send(this.address, held, token, 'keeta-compute live test sweep').catch((error: Error) => console.log(`could not sweep ${token} from ${address}: ${error.message}`));
+					}
 				}
 				const kta = await client.balance(client.baseToken);
 				/* Leave a little for the fee of this last send. */

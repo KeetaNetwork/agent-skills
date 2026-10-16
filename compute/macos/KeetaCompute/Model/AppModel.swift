@@ -104,9 +104,22 @@ final class AppModel: ObservableObject {
     var hasOperator: Bool { wallet?.operatorAddress != nil }
     var isTestNetwork: Bool { (agent?.network ?? network) == .test }
 
-    /// Formats the settlement asset (USDC) using the decimals the agent reports.
+    /// Formats Keeta Compute Credits (one credit is one US dollar), which prices, costs and earnings are in.
     var money: AssetFormatter {
-        AssetFormatter(asset: wallet?.asset ?? ProtocolConstants.fallbackSettlementAsset)
+        AssetFormatter(asset: wallet?.asset ?? ProtocolConstants.fallbackCreditAsset)
+    }
+
+    /// Every credit this Mac holds, read from the ledger: the operator account's and the agent budget's.
+    var creditBalance: String? {
+        guard let balances = wallet?.balances else { return nil }
+        return BaseUnits.add(balances.operatorBalance?.credits ?? "0", balances.spend.credits)
+    }
+
+    /// Keeta stablecoins that buy credits and that credits cash out to, KUSD first.
+    var stablecoins: [StablecoinInfo] { wallet?.stablecoins ?? [] }
+
+    func formatter(for stablecoin: StablecoinInfo) -> AssetFormatter {
+        AssetFormatter(symbol: stablecoin.symbol, decimals: stablecoin.decimals)
     }
 
     /// KTA pays network fees; it is only shown in small print.
@@ -351,14 +364,39 @@ final class AppModel: ObservableObject {
     func fundBudget(amount: String) async throws {
         let client = self.client
         _ = try await passkeys.withEntropy { entropy in
-            try await client.call(AgentRPC.WalletFundBudget.self, FundBudgetParams(entropy: entropy, amount: amount, asset: .usdc), timeout: .seconds(90))
+            try await client.call(AgentRPC.WalletFundBudget.self, FundBudgetParams(entropy: entropy, amount: amount, asset: .credits), timeout: .seconds(90))
         }
         await refreshWallet()
     }
 
     func drainBudget(amount: String) async throws {
-        _ = try await client.call(AgentRPC.WalletDrainBudget.self, DrainBudgetParams(amount: amount, asset: .usdc), timeout: .seconds(90))
+        _ = try await client.call(AgentRPC.WalletDrainBudget.self, DrainBudgetParams(amount: amount, asset: .credits), timeout: .seconds(90))
         await refreshWallet()
+    }
+
+    /// What `amount` credits cost in a stablecoin ('buy'), or bring when cashed out ('sell'), without swapping.
+    func creditQuote(side: CreditSide, amount: String, stablecoin: String) async throws -> String {
+        try await client.call(AgentRPC.WalletCreditQuote.self, CreditQuoteParams(side: side, amount: amount, stablecoin: stablecoin), timeout: .seconds(30)).amount
+    }
+
+    /// Buy credits with a stablecoin from the operator account through the FX service; they go to the agent budget unless `toBudget` is false.
+    func buyCredits(amount: String, with stablecoin: String, toBudget: Bool) async throws -> BuyCreditsResult {
+        let client = self.client
+        let result = try await passkeys.withEntropy { entropy in
+            try await client.call(AgentRPC.WalletBuyCredits.self, BuyCreditsParams(entropy: entropy, amount: amount, with: stablecoin, toBudget: toBudget), timeout: .seconds(120))
+        }
+        await refreshWallet()
+        return result
+    }
+
+    /// Cash out credits from the operator account for a stablecoin.
+    func sellCredits(amount: String, to stablecoin: String) async throws -> SellCreditsResult {
+        let client = self.client
+        let result = try await passkeys.withEntropy { entropy in
+            try await client.call(AgentRPC.WalletSellCredits.self, SellCreditsParams(entropy: entropy, amount: amount, to: stablecoin), timeout: .seconds(120))
+        }
+        await refreshWallet()
+        return result
     }
 
     func requestTestFunds() async throws -> String {
@@ -433,20 +471,6 @@ final class AppModel: ObservableObject {
             let status = try await client.call(AgentRPC.BuyerRotateToken.self, EmptyParams())
             agent?.buyer = status
             flash("New API token created. Update your tools.")
-        }
-    }
-
-    func settle() async {
-        await perform("Couldn't pay outstanding requests") {
-            let result = try await client.call(AgentRPC.BuyerSettle.self, EmptyParams(), timeout: .seconds(120))
-            if result.failed > 0 {
-                alert = AppAlert(title: "Some payments didn't go through", message: "Paid \(result.paid), \(result.failed) still unpaid. Check your agent budget and try again.")
-            } else {
-                flash(result.paid == 1 ? "Paid 1 request." : "Paid \(result.paid) requests.")
-            }
-            if let status = try? await client.call(AgentRPC.BuyerStatusGet.self, EmptyParams()) {
-                agent?.buyer = status
-            }
         }
     }
 
