@@ -29,11 +29,10 @@ import { checkEnvelope, checkProviderToken } from '../services/relay/src/relay.t
 import { postDelivery } from '../services/relay/src/delivery.ts';
 import { fxConfigFromEnv } from '../services/fx/src/config.ts';
 import { fxAccount, quoteAmount } from '../services/fx/src/server.ts';
-import * as cli from '../agent/src/cli.ts';
-import type { CreditExchange } from '../agent/src/fx.ts';
-import { addHelperModel, pairHelper, runHelper } from '../agent/src/helper.ts';
-import type { Ledger } from '../agent/src/ledger.ts';
-import type { ModelManager } from '../agent/src/models/manager.ts';
+import * as cli from '@keeta-compute/cli';
+import { addHelperModel, pairHelper, runHelper } from '@keeta-compute/cli';
+import type { ModelManager } from '@keeta-compute/provider';
+import type { CreditExchange, Ledger } from '@keeta-compute/wallet';
 import { GB, fakeModelServer, listen, macAgent as makeMacAgent, readBody, until } from './support/harness.ts';
 import { FakeLedger, newTokenAddress } from './support/ledger.ts';
 

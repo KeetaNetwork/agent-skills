@@ -12,9 +12,8 @@ import { join } from 'node:path';
 import type { AddressInfo } from 'node:net';
 import { p256 } from '@noble/curves/p256';
 import { fromHex, toHex, type HardwareProfile } from '@keeta-compute/protocol';
-import { AgentApp } from '../../agent/src/app.ts';
-import type { CreditExchange } from '../../agent/src/fx.ts';
-import type { Ledger } from '../../agent/src/ledger.ts';
+import { AgentApp } from '@keeta-compute/agent';
+import type { CreditExchange, Ledger } from '@keeta-compute/wallet';
 
 export const GB = 1024 ** 3;
 

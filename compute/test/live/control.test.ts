@@ -15,8 +15,8 @@ import { jobCost, operatorLinkMessage, receiptMessage, type EscrowQuote, type Jo
 import { Account, accountSigner } from '@keeta-compute/protocol/keeta';
 import { startServer } from '../../services/control/src/server.ts';
 import { ledgerSettlement } from '../../services/control/src/config.ts';
-import { ControlClient, ControlError } from '../../agent/src/control-client.ts';
-import { KeetaLedger } from '../../agent/src/ledger.ts';
+import { ControlClient, ControlError } from '@keeta-compute/protocol/client';
+import { KeetaLedger } from '@keeta-compute/wallet';
 import { GB, Scratch, until } from '../support/harness.ts';
 import { startCredits, type LiveCredits } from './credits.ts';
 import { Funder, NETWORK, announceSkip, freshAccount, skipLive, type KeetaAccount } from './support.ts';

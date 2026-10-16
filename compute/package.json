@@ -6,8 +6,7 @@
   "type": "module",
   "workspaces": [
     "packages/*",
-    "services/*",
-    "agent"
+    "services/*"
   ],
   "engines": {
     "node": ">=22"
@@ -21,7 +20,8 @@
     "assets:pin": "npm run pin-assets -w @keeta-compute/fx --",
     "credits:create": "npm run create-credits -w @keeta-compute/fx",
     "fx:start": "npm start -w @keeta-compute/fx",
-    "fx:publish": "npm run publish-metadata -w @keeta-compute/fx"
+    "fx:publish": "npm run publish-metadata -w @keeta-compute/fx",
+    "catalog:pin": "npm run catalog:pin -w @keeta-compute/provider --"
   },
   "devDependencies": {
     "@keetanetwork/keetanet-client": "0.18.7",

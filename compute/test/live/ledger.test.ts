@@ -1,5 +1,5 @@
 /**
- * Live: the agent's ledger adapter (agent/src/ledger.ts KeetaLedger) on the
+ * Live: the agent's ledger adapter (KeetaLedger in @keeta-compute/wallet) on the
  * Keeta test network, checked against the control plane's own escrow
  * verifier. Unit tests cannot cover this: they never reach a ledger.
  */
@@ -7,7 +7,7 @@
 import { after, before, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Account } from '@keeta-compute/protocol/keeta';
-import { KeetaLedger } from '../../agent/src/ledger.ts';
+import { KeetaLedger } from '@keeta-compute/wallet';
 import { ledgerPaymentVerifier } from '../../services/control/src/config.ts';
 import { until } from '../support/harness.ts';
 import { Funder, NETWORK, USDC, announceSkip, freshAccount, skipLive, type KeetaAccount } from './support.ts';

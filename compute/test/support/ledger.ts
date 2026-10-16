@@ -11,8 +11,7 @@
 
 import { findAsset, randomId, toHex, type NetworkName } from '@keeta-compute/protocol';
 import { Account } from '@keeta-compute/protocol/keeta';
-import type { Balances, Ledger } from '../../agent/src/ledger.ts';
-import type { CreditExchange } from '../../agent/src/fx.ts';
+import type { Balances, CreditExchange, Ledger } from '@keeta-compute/wallet';
 import type { PaymentVerifier, SettlementLedger } from '../../services/control/src/service.ts';
 
 export interface LedgerSend {

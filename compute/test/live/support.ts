@@ -12,7 +12,7 @@
 import * as KeetaNet from '@keetanetwork/keetanet-client';
 import { NETWORKS, formatAmount, usdcAsset } from '@keeta-compute/protocol';
 import { Account } from '@keeta-compute/protocol/keeta';
-import { SerialQueue } from '../../agent/src/ledger.ts';
+import { SerialQueue } from '@keeta-compute/wallet';
 import { until } from '../support/harness.ts';
 
 export type KeetaAccount = InstanceType<typeof Account>;

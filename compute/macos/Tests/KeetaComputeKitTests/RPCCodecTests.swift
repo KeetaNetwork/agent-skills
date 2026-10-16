@@ -1,7 +1,7 @@
 import XCTest
 import KeetaComputeKit
 
-/// Sample messages written by hand from compute/agent/src/rpc/types.ts.
+/// Sample messages written by hand from compute/packages/protocol/src/app-rpc.ts.
 final class RPCCodecTests: XCTestCase {
     private func line(_ text: String) -> Data { Data(text.utf8) }
 

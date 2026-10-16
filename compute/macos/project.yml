@@ -22,7 +22,7 @@ settings:
     # Apple Silicon only.
     ARCHS: arm64
     EXCLUDED_ARCHS: x86_64
-    # The bundle-agent run script reads ../agent, outside the project folder.
+    # The bundle-agent run script reads ../packages/cli, outside the project folder.
     ENABLE_USER_SCRIPT_SANDBOXING: NO
     DEAD_CODE_STRIPPING: YES
     CODE_SIGN_STYLE: Automatic

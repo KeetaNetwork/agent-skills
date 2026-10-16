@@ -58,10 +58,10 @@ Or open `KeetaCompute.xcodeproj` after `make project` and run the
 
 ### The bundled agent
 
-A Run Script phase calls `scripts/bundle-agent.sh`, which builds the agent and
-places it at `Keeta Compute.app/Contents/Resources/keeta-compute-agent`. That
-script is maintained separately. In Debug builds a missing script only prints a
-warning; Release builds fail without it.
+A Run Script phase calls `scripts/bundle-agent.sh`, which compiles the agent
+from `compute/packages/cli` with bun and places it at
+`Keeta Compute.app/Contents/Resources/keeta-compute-agent`. In Debug builds a
+missing bun only prints a warning; Release builds fail without it.
 
 The script must also sign the helper, because Xcode does not sign executables
 in `Resources`:
@@ -162,7 +162,7 @@ agent's stdin (app → agent) and stdout (agent → app); the agent's stderr is
 forwarded to `os.Logger` (subsystem `ai.keeta.compute`, category
 `agent-stderr`) and to the in-app Logs window.
 
-The contract is defined in `compute/agent/src/rpc/types.ts`, with shared shapes
+The contract is defined in `compute/packages/protocol/src/app-rpc.ts` (`@keeta-compute/protocol/rpc`), with shared shapes
 from `compute/packages/protocol/src/`. The Swift mirror is
 `Sources/KeetaComputeKit/RPCTypes.swift`, `ProtocolTypes.swift` and
 `RPCMethods.swift`; change those together with the TypeScript and keep

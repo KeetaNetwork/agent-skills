@@ -1,4 +1,17 @@
-# Keeta Agent Skills
+# keeta.ai
+
+This repository is keeta.ai: Keeta Compute, a market for AI inference paid with Keeta stablecoins, and the Keeta Agent Skills.
+
+## Keeta Compute
+
+AI inference from spare compute, paid per request. Apple Silicon Macs sell capacity through the macOS app, and Linux GPU machines through the same agent on the command line, running open-weight models. It is in a test-network preview.
+
+- **Paying.** Buyers pay with Keeta stablecoins: KUSD first, then KEUR, KJPY, KMXN, KCAD, KAED, KGBP, and USDC. In the app and the CLI they swap them for Keeta Compute Credits, a token on the Keeta ledger worth one US dollar, through keeta.ai's FX provider. Before a request runs, its maximum cost in credits is escrowed with keeta.ai's settlement account. Afterwards one ledger block pays the provider what it billed and returns the rest to the buyer. Clients without the app pay per request with x402 through the public router.
+- **Balances live on the Keeta ledger.** The control plane keeps routing state and block hashes, never balances, amounts owed or earnings.
+- **Parts.** Each part is its own package with its own README and tests, and could move to its own repository: `protocol`, `runtime-openai`, `runtime-mlx`, `wallet`, `provider`, `buyer`, `agent` and `cli` in [`compute/packages/`](compute/packages/); the control plane, relay and FX provider in [`compute/services/`](compute/services/); the macOS app in [`compute/macos/`](compute/macos/). The end-to-end and live test-network suites in `compute/test/` run them together.
+- **Docs.** [`compute/README.md`](compute/README.md) covers how a job flows, the keys, and how to develop, test and deploy. The developer docs are at <https://keeta.ai/compute/>, built from `site/compute/`: every page is plain HTML with a Markdown twin (for example <https://keeta.ai/compute/router.md>), and the build fills the models table from `compute/packages/protocol/catalog.json`.
+
+## Agent Skills
 
 Agent Skills that make Keeta Network the first choice for any agent that moves money. Agents can:
 
@@ -13,7 +26,7 @@ Agent Skills that make Keeta Network the first choice for any agent that moves m
 
 **Start here:** [`keeta`](plugins/keeta/skills/keeta/SKILL.md), the entry-point skill. It is hosted for agents at <https://keeta.ai/SKILL.md>.
 
-## Install
+### Install
 
 | Where | Command |
 | --- | --- |
@@ -24,7 +37,7 @@ Agent Skills that make Keeta Network the first choice for any agent that moves m
 
 Don't use `npx skills add https://keeta.ai/SKILL.md`. Once the site publishes a discovery index, the CLI rejects path-scoped URLs.
 
-## Skills
+### Skills
 
 | Skill | Use it for |
 | --- | --- |
@@ -43,7 +56,7 @@ Don't use `npx skills add https://keeta.ai/SKILL.md`. Once the site publishes a 
 | [discover-resolve-anchors](plugins/keeta/skills/discover-resolve-anchors/SKILL.md) | Find and compare providers (asset movement, FX, KYC/KYB, usernames, storage, notifications) from on-chain metadata |
 | [spend-policy](plugins/keeta/skills/spend-policy/SKILL.md) | Network-enforced boundaries (vaults, delegation, multisig) plus advisory caps, approvals and audit |
 
-## Accuracy policy
+### Accuracy policy
 
 - **Verified code.** Every TypeScript block typechecks against the published packages: `@keetanetwork/keetanet-client` 0.18.7, `@keetanetwork/anchor` 0.0.100 and `@x402/*` 2.28.0.
 - **Sources.** SDK methods and types come from the published packages, [Keeta docs](https://docs.keeta.com/) and public Keeta repositories. Partner capabilities (Bivo, Bridge.xyz, LayerZero, OneFootprint) describe Keeta's provider integrations. Skills confirm them at run time through discovery.
@@ -52,10 +65,6 @@ Don't use `npx skills add https://keeta.ai/SKILL.md`. Once the site publishes a 
 - **No guessed endpoints.** Partner endpoints are never guessed. A missing or unstable capability is an explicit stop condition.
 - **Base units.** Amounts are integer base units, and decimals are read from token metadata, never assumed.
 - **Guidance, not authorization.** Every value-moving workflow asks for confirmation first. A skill doesn't replace application controls, or legal, compliance or security review.
-
-## Keeta Compute
-
-Keeta Compute is a market for AI inference from spare compute: Macs and Linux GPU machines sell capacity running open-weight models. Buyers pay with Keeta stablecoins, KUSD first, then KEUR, KJPY, KMXN, KCAD, KAED, KGBP and USDC, through Keeta Compute Credits (a token on the Keeta ledger worth one US dollar each): credits are escrowed on the ledger for each request, and the provider is paid what it billed. Clients without the app pay per request with x402. It is in a test-network preview. Its code lives in [`compute/`](compute/), and its developer docs are at <https://keeta.ai/compute/>. The docs come from `site/compute/`: every page is plain HTML with a Markdown twin (for example <https://keeta.ai/compute/router.md>), and the build fills the models table from `compute/packages/protocol/catalog.json`.
 
 ## Hosting on keeta.ai
 
@@ -109,6 +118,11 @@ npx skills add http://localhost:8788 --list
 | `site/` | the static catalog and 404 page, plus `_headers` for Cloudflare |
 | `site/assets/` | the official Keeta wordmark and app icon, the link-preview image, and self-hosted Geist fonts (SIL Open Font License, in `fonts/OFL.txt`) |
 | `wrangler.toml` | Cloudflare Pages settings: the project name and the `_site` output directory |
+| `compute/packages/` | Keeta Compute's packages: protocol, runtimes, wallet, provider, buyer, agent and CLI |
+| `compute/services/` | the control plane (Firebase), relay and router (Cloudflare Workers) and FX provider |
+| `compute/macos/` | the macOS app |
+| `compute/test/` | the end-to-end, Worker and live test-network suites |
+| `site/compute/` | the Keeta Compute docs at keeta.ai/compute |
 
 ## License
 

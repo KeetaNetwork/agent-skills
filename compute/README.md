@@ -16,14 +16,22 @@ Every balance is read from the ledger. The control plane keeps no balances, amou
 
 ## Layout
 
+Each part is its own npm package with its own README and tests, and uses the others only by package name (`@keeta-compute/...`), never by a relative path. Any of them can move to its own repository with the packages it depends on published.
+
 | Path | What it is |
 | --- | --- |
-| `packages/protocol` | Shared types, model catalog, hardware tiers, pricing, signed message formats, validation, Keeta key helpers, the stablecoin and credit pins. `catalog.json` is generated from it. |
+| `packages/protocol` | `@keeta-compute/protocol`: shared types, model catalog, hardware tiers, pricing, signed message formats, validation, Keeta key helpers, the stablecoin and credit pins, the control-plane client (`/client`) and the app-to-agent RPC contract (`/rpc`). `catalog.json` is generated from it. |
+| `packages/runtime-openai` | `@keeta-compute/runtime-openai`: streams a chat completion from a local OpenAI-compatible server (mlx_lm.server, llama.cpp, vLLM, SGLang) and returns what a receipt needs. |
+| `packages/runtime-mlx` | `@keeta-compute/runtime-mlx`: the MLX runtime for Apple Silicon. A pinned uv and Python with hash-locked mlx-lm, and one `mlx_lm.server` per offered model on 127.0.0.1. |
+| `packages/wallet` | `@keeta-compute/wallet`: node, budget and operator keys, the encrypted Linux wallet file with its recovery phrase, ledger sends and balances, and credit swaps through the FX provider. |
+| `packages/provider` | `@keeta-compute/provider`: the provider loop (registration, heartbeats, the relay WebSocket, ticket checks, jobs, receipts), hardware probes, and the model manager that downloads and hash-verifies catalog models. Holds the `catalog:pin` script. |
+| `packages/buyer` | `@keeta-compute/buyer`: the local OpenAI-compatible endpoint. It quotes each request, escrows its maximum cost in credits, streams the answer through the relay and checks the receipt. |
+| `packages/agent` | `@keeta-compute/agent`: wires the wallet, provider and buyer together behind the JSON-RPC contract the macOS app drives, and keeps the node's saved state. |
+| `packages/cli` | `@keeta-compute/cli`: the `keeta-compute-agent` binary. The macOS app bundles it and runs `app`. On Linux it is a full node with its own encrypted wallet, or a `helper` paired with one. |
 | `services/control` | Control plane on Firebase (Functions + Firestore): provider registry, scheduler, escrow quotes and checks, tickets, receipts, settlement from the settlement account, router quotes, pairing of Linux helpers to a Mac or Linux master. |
 | `services/relay` | Cloudflare Worker: the provider relay (one Durable Object per node, outbound WebSocket from the provider) that posts a delivery record for each app job, and the public OpenAI-compatible router paid with x402. |
 | `services/fx` | keeta.ai's FX provider: swaps the Keeta stablecoins and USDC with credits, plus the `assets:pin`, `credits:create` and `fx:publish` scripts. |
-| `agent` | The agent daemon. Bundled into the macOS app, where it talks JSON-RPC over stdio, and shipped as the Linux CLI (`src/cli.ts`: a full node with its own encrypted wallet, plus the `helper` satellite mode). Provider loop, local buyer endpoint, credit purchases and escrows, budget wallet, model manager. |
-| `macos` | The SwiftUI app: onboarding, passkey wallet, Buy credits and Cash out, Secure Enclave node key, models, provide, use, fleet. |
+| `macos` | The SwiftUI app: onboarding, passkey wallet, Buy credits and Cash out, Secure Enclave node key, models, provide, use, fleet. It runs the agent from `packages/cli`. |
 | `test/e2e.test.ts` | Runs control, a relay emulation, two Macs, a paired helper and a Linux CLI node in one process with real signatures and an in-memory ledger: credits bought through an exchange, escrows, payouts and cash-outs. |
 | `test/worker.test.ts` | Runs the real relay Worker under `wrangler dev` (workerd, local Durable Objects) with a provider on a real WebSocket. No network needed. |
 | `test/live/` | The live suite: everything above against the Keeta test network, the real relay Worker, a real FX service and the real x402 facilitator. See [Live tests](#live-tests). |
@@ -71,7 +79,7 @@ Spend limits are kept by the agent on the buyer's machine, not by the control pl
 cd compute
 npm ci
 npm run typecheck
-npm test
+npm test              # every package's own tests
 npm run test:e2e
 npm run test:worker   # the relay Worker in workerd; no Cloudflare account needed
 ```
@@ -97,19 +105,20 @@ Try the Linux CLI against the control plane with a throwaway data directory (`ru
 
 ```bash
 export KEETA_COMPUTE_HOME=$(mktemp -d) KEETA_COMPUTE_PASSPHRASE=dev-passphrase
-node --import tsx agent/src/main.ts init --control http://127.0.0.1:8787
-node --import tsx agent/src/main.ts wallet
-node --import tsx agent/src/main.ts wallet buy-credits 1 --with KUSD
+node --import tsx packages/cli/src/main.ts init --control http://127.0.0.1:8787
+node --import tsx packages/cli/src/main.ts wallet
+node --import tsx packages/cli/src/main.ts wallet buy-credits 1 --with KUSD
 ```
 
 Build the agent binaries (needs [bun](https://bun.sh)):
 
 ```bash
-cd agent
-npm run build:mac          # bundled into the app by macos/
-npm run build:linux-x64
-npm run build:linux-arm64
+npm run build:mac -w @keeta-compute/cli          # bundled into the app by macos/
+npm run build:linux-x64 -w @keeta-compute/cli
+npm run build:linux-arm64 -w @keeta-compute/cli
 ```
+
+The binaries land in `packages/cli/dist/`.
 
 ## Live tests
 
@@ -169,16 +178,17 @@ Nothing is deployed by CI. Each step below is run by hand by someone with access
 
 1. **Stablecoins**: `npm run assets:pin` (or `npm run assets:pin -- test`) resolves KUSD, KEUR, KJPY, KMXN, KCAD, KAED and KGBP through each network's anchor resolver and writes `packages/protocol/src/asset-pins.ts`. It only reads the ledger. Review the diff and commit it.
 2. **Credit token** (test network): `FX_SEED=<fx seed> npm run credits:create` creates Keeta Compute Credits, mints the supply (1,000,000 credits, or `CREDITS_SUPPLY`) to the FX account and writes the token and the FX account into `packages/protocol/src/credit-pins.ts`. The issuer (`CREDITS_ISSUER_SEED`, or the FX account) needs test KTA. Commit the pin. The main network is refused; its pin stays empty until keeta.ai issues credits there.
-3. **FX service**: run `npm run fx:start` behind HTTPS with `FX_SEED`, `FX_NETWORK`, `FX_PORT` and `FX_PUBLIC_URL` (the main network also needs `FX_RATE_SOURCE`, an https endpoint answering `{"EUR": "1.08", ...}` in US dollars per unit; `FX_SPREAD_BPS` sets the spread). Then `FX_SEED=... FX_PUBLIC_URL=https://fx.keeta.ai npm run fx:publish` publishes the service in the FX account's metadata; run it again whenever the URL or the pinned stablecoins change. The FX account needs KTA, and stablecoins to pay out cash-outs.
-4. **Control plane** (Firebase project with Firestore in native mode):
+3. **Catalog pins**: `npm run catalog:pin` (needs huggingface.co) pins each catalog model to its current Hugging Face commit and the weights hash those files produce, in `packages/protocol/src/catalog-pins.ts`. Review the diff and commit it. A pinned model installs only from that commit and only with that hash, and the main network refuses catalog models that are not pinned.
+4. **FX service**: run `npm run fx:start` behind HTTPS with `FX_SEED`, `FX_NETWORK`, `FX_PORT` and `FX_PUBLIC_URL` (the main network also needs `FX_RATE_SOURCE`, an https endpoint answering `{"EUR": "1.08", ...}` in US dollars per unit; `FX_SPREAD_BPS` sets the spread). Then `FX_SEED=... FX_PUBLIC_URL=https://fx.keeta.ai npm run fx:publish` publishes the service in the FX account's metadata; run it again whenever the URL or the pinned stablecoins change. The FX account needs KTA, and stablecoins to pay out cash-outs.
+5. **Control plane** (Firebase project with Firestore in native mode):
    - Set secrets: `firebase functions:secrets:set COORDINATOR_SEED RELAY_SECRET ROUTER_SECRET SETTLEMENT_SEED`. Fund the settlement account with KTA for fees. App jobs stay off on a network until it has a credit token and `SETTLEMENT_SEED` is set.
    - Before the test-network credit pin lands, the `TEST_CREDIT_TOKEN` and `TEST_FX_ACCOUNT` parameters name the token and FX account; the main network only ever uses its pin.
    - `cd services/control && npm run build && firebase deploy --only functions,firestore,hosting`. The scheduled `sweep` function settles jobs whose background settlement did not finish.
    - Point `control.keeta.ai` at the Hosting site; `/v1/**` rewrites to the `api` function.
-5. **Relay and router** (Cloudflare):
+6. **Relay and router** (Cloudflare):
    - `cd services/relay && wrangler secret put RELAY_SECRET && wrangler secret put ROUTER_SECRET`.
    - Set `CONTROL_URL`, `NETWORK` and `FACILITATOR_URL` in `wrangler.toml`, then `wrangler deploy`.
    - `RELAY_SECRET` must match the control plane's; it signs provider connect tokens and ticket MACs. `ROUTER_SECRET` authenticates the relay's delivery records and the router's calls.
    - Optional fallback: set `FALLBACK_PAY_TO` (keeta.ai's receiving address) and `FALLBACK_MODELS` (JSON: model id → `{"route": "<OpenRouter slug>", "price": {...}, "contextLength": N}`, prices in credits) on the control plane, and `wrangler secret put OPENROUTER_API_KEY` on the worker. Price each model above its OpenRouter cost. Leaving `FALLBACK_MODELS` empty keeps the fallback off.
-6. **Linux CLI**: build the binaries and attach them to a GitHub release (`keeta-compute-agent-linux-x64`, `...-linux-arm64`). Then set `VERSION`, `SHA256_X64` and `SHA256_ARM64` in `site/compute/install-helper.sh` to that tag and the binaries' SHA-256 through a reviewed PR; the installer refuses anything else, so a replaced release asset is never installed.
-7. **macOS app**: see `macos/README.md` for signing, notarization and the associated domain needed by passkeys.
+7. **Linux CLI**: build the binaries and attach them to a GitHub release (`keeta-compute-agent-linux-x64`, `...-linux-arm64`). Then set `VERSION`, `SHA256_X64` and `SHA256_ARM64` in `site/compute/install-helper.sh` to that tag and the binaries' SHA-256 through a reviewed PR; the installer refuses anything else, so a replaced release asset is never installed.
+8. **macOS app**: see `macos/README.md` for signing, notarization and the associated domain needed by passkeys.

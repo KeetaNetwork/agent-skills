@@ -1,10 +1,12 @@
 #!/bin/bash
-# Compiles the TypeScript agent with bun and places it in the app bundle at
-# Contents/Resources/keeta-compute-agent, signed with the app's identity and
-# the agent's JIT entitlements. Run by the Xcode build phase.
+# Compiles the TypeScript agent (compute/packages/cli, @keeta-compute/cli) with
+# bun and places it in the app bundle at Contents/Resources/keeta-compute-agent,
+# signed with the app's identity and the agent's JIT entitlements. Run by the
+# Xcode build phase.
 set -euo pipefail
 
-AGENT_DIR="${SRCROOT}/../agent"
+COMPUTE_DIR="${SRCROOT}/.."
+AGENT_DIR="${COMPUTE_DIR}/packages/cli"
 OUT_DIR="${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}"
 BINARY="${AGENT_DIR}/dist/darwin-arm64/keeta-compute-agent"
 
@@ -19,8 +21,8 @@ if [ -z "${BUN}" ]; then
 	exit 1
 fi
 
-if [ ! -d "${AGENT_DIR}/../node_modules" ]; then
-	(cd "${AGENT_DIR}/.." && npm ci)
+if [ ! -d "${COMPUTE_DIR}/node_modules" ]; then
+	(cd "${COMPUTE_DIR}" && npm ci)
 fi
 (cd "${AGENT_DIR}" && "${BUN}" build src/main.ts --compile --minify --target=bun-darwin-arm64 \
 	--external bufferutil --external utf-8-validate --outfile dist/darwin-arm64/keeta-compute-agent)

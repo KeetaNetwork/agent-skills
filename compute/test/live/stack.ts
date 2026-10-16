@@ -10,7 +10,7 @@
 import { Account } from '@keeta-compute/protocol/keeta';
 import type { Price } from '@keeta-compute/protocol';
 import { startServer } from '../../services/control/src/server.ts';
-import type { ModelManager } from '../../agent/src/models/manager.ts';
+import type { ModelManager } from '@keeta-compute/provider';
 import { Scratch, fakeModelServer, freePort, listen, macAgent, passkeyEntropy, until } from '../support/harness.ts';
 import { startWorker, type RunningWorker } from '../support/worker.ts';
 import { startCredits, type LiveCredits } from './credits.ts';

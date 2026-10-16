@@ -27,7 +27,7 @@ export interface RuntimeInfo {
 /** One model a provider offers to the network. */
 export interface Offer {
 	modelId: string;
-	/** sha256 over the installed weight files (see agent/src/models). */
+	/** sha256 over the installed weight files (see @keeta-compute/provider's models). */
 	weightsHash: string;
 	runtime: RuntimeInfo;
 	price: Price;

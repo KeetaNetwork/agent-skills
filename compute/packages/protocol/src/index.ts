@@ -13,3 +13,4 @@ export * from './messages.ts';
 export * from './pairing.ts';
 export * from './validation.ts';
 export * from './stream.ts';
+export * from './local.ts';

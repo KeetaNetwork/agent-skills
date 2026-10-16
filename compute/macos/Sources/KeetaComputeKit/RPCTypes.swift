@@ -1,4 +1,4 @@
-// Mirrors compute/agent/src/rpc/types.ts — the contract between this app and
+// Mirrors compute/packages/protocol/src/app-rpc.ts — the contract between this app and
 // the bundled `keeta-compute-agent`. Keep field names identical to the
 // TypeScript; when the contract changes, change this file and the tests.
 

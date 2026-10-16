@@ -17,7 +17,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { operatorAccount, spendAccount } from '../../agent/src/keys.ts';
+import { operatorAccount, spendAccount } from '@keeta-compute/wallet';
 import { Scratch, macAgent, passkeyEntropy, until } from '../support/harness.ts';
 import { Funder, NETWORK, USDC, announceSkip, skipLive } from './support.ts';
 import { fundAppBuyer, watchSettlement, type AppBuyer } from './payments.ts';
