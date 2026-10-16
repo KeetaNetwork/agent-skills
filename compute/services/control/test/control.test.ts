@@ -189,12 +189,12 @@ test('a buyer can dispute a receipt for text the relay never forwarded, but not 
 	await online();
 	const buyer = newSigner();
 	const router = { 'x-router-secret': 'router-secret' };
-	const receiptFor = async (outputHash: string) => {
-		const created = await h.call(buyer, 'POST', '/v1/jobs', { network: 'test', model: 'qwen3-8b', maxInputTokens: 10, maxOutputTokens: 10 });
+	const receiptFor = async (outputHash: string, who = buyer) => {
+		const created = await h.call(who, 'POST', '/v1/jobs', { network: 'test', model: 'qwen3-8b', maxInputTokens: 10, maxOutputTokens: 10 });
 		assert.equal(created.status, 200, JSON.stringify(created.body));
 		const { ticket } = created.body as { ticket: { ticket: { jobId: string; price: Offer['price'] } } };
 		const receipt: Receipt = {
-			v: 1, jobId: ticket.ticket.jobId, network: 'test', nodeKey: node.publicKey, payTo: operator.publicKey, buyer: buyer.publicKey, modelId: 'qwen3-8b',
+			v: 1, jobId: ticket.ticket.jobId, network: 'test', nodeKey: node.publicKey, payTo: operator.publicKey, buyer: who.publicKey, modelId: 'qwen3-8b',
 			weightsHash: 'c'.repeat(64), runtime: { kind: 'mlx', build: 'x' }, inputTokens: 5, outputTokens: 5, price: ticket.ticket.price,
 			amount: jobCost(ticket.ticket.price, { inputTokens: 5, outputTokens: 5 }).toString(), asset: NETWORKS.test.settlementAsset.address,
 			startedAt: 0, finishedAt: 0, outputHash, finishReason: 'stop'
@@ -222,6 +222,22 @@ test('a buyer can dispute a receipt for text the relay never forwarded, but not 
 	assert.equal((refused.body as { error: { code: string } }).error.code, 'delivery_attested', 'the first delivery record stands');
 	assert.equal((await h.store.getJob(delivered))!.status, 'completed');
 	assert.equal((await h.call(null, 'POST', `/v1/relay/jobs/${delivered}/delivery`, { outputHash: 'a'.repeat(64), maxOutputTokens: 20 })).status, 401, 'only the relay records deliveries');
+
+	/* No record yet: the dispute waits for one, since the provider's receipt can land before the relay's record. */
+	const other = newSigner();
+	const early = await receiptFor('f'.repeat(64), other);
+	const pending = await h.call(other, 'POST', `/v1/jobs/${early}/refuse`, {});
+	assert.equal(pending.status, 409);
+	assert.equal((pending.body as { error: { code: string } }).error.code, 'delivery_pending');
+	assert.equal((await h.store.getJob(early))!.status, 'completed');
+	/* A record that never comes lets the dispute stand; one that comes late and matches makes the receipt owed again. */
+	h.advance(60_001);
+	const lapsed = await h.call(other, 'POST', `/v1/jobs/${early}/refuse`, {});
+	assert.equal((lapsed.body as { job: { status: string } }).job.status, 'disputed');
+	const disputedBefore = (await h.store.getProvider(node.publicKey))!.stats.disputed!;
+	await h.call(null, 'POST', `/v1/relay/jobs/${early}/delivery`, { outputHash: 'f'.repeat(64), maxOutputTokens: 20 }, router);
+	assert.equal((await h.store.getJob(early))!.status, 'completed');
+	assert.equal((await h.store.getProvider(node.publicKey))!.stats.disputed, disputedBefore - 1);
 });
 
 test('a buyer who hands a ticket back mid-stream still owes the receipt for what it was sent', async () => {

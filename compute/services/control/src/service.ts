@@ -53,6 +53,13 @@ export class DeliveredError extends ConflictError {
 	readonly code = 'delivery_attested';
 }
 
+export class DeliveryPendingError extends ConflictError {
+	readonly code = 'delivery_pending';
+}
+
+/** How long a receipt without the relay's delivery record waits for it before the buyer may dispute it. */
+const DELIVERY_GRACE_MS = 60_000;
+
 export class AuthError extends Error {
 	readonly status = 401;
 }
@@ -685,9 +692,12 @@ export class ControlService {
 		}
 		const updated = await this.store.updateJob(jobId, (current) => {
 			if (current.status === 'completed' && !current.payment) {
-				const billed = current.receipt?.receipt;
-				if (current.delivery && billed && billed.outputHash === current.delivery.outputHash && billed.outputTokens <= current.delivery.maxOutputTokens) {
+				if (deliveryMatches(current)) {
 					throw new DeliveredError('the relay attests this text was delivered; the receipt is owed');
+				}
+				/* The provider's receipt can land before the relay's record; wait for the record before judging. */
+				if (!current.delivery && this.now() - (current.completedAt ?? 0) < DELIVERY_GRACE_MS) {
+					throw new DeliveryPendingError('the relay has not recorded this delivery yet; try again shortly');
 				}
 				return { ...current, status: 'disputed', error: reason };
 			}
@@ -729,12 +739,24 @@ export class ControlService {
 		if (!outputHash || maxOutputTokens === null) {
 			throw new ValidationError('outputHash and maxOutputTokens are required');
 		}
+		let restored = false;
 		const job = await this.store.updateJob(jobId, (current) => {
+			restored = false; /* a store may retry this update */
 			if (current.paymentMode !== 'postpay' || current.delivery) {
 				return current;
 			}
-			return { ...current, delivery: { outputHash, maxOutputTokens, at: this.now() } };
+			const recorded: JobRecord = { ...current, delivery: { outputHash, maxOutputTokens, at: this.now() } };
+			/* A record that arrives after a dispute and matches the receipt makes it owed again. */
+			if (recorded.status === 'disputed' && !recorded.payment && deliveryMatches(recorded)) {
+				restored = true;
+				const { error: _dropped, ...owed } = recorded;
+				return { ...owed, status: 'completed' };
+			}
+			return recorded;
 		});
+		if (restored) {
+			await this.store.updateProvider(job.nodeKey, (record) => ({ ...record, stats: { ...record.stats, disputed: Math.max(0, (record.stats.disputed ?? 0) - 1) } }));
+		}
 		return { recorded: job.delivery?.outputHash === outputHash };
 	}
 
@@ -1066,6 +1088,12 @@ function publicProvider(record: StoredProvider): ProviderRecord {
 }
 
 /** What a buyer still owes on open postpay jobs: the amount due once receipted, else the job's maximum cost. */
+/** Whether the relay's delivery record covers exactly the text the job's receipt bills. */
+function deliveryMatches(job: JobRecord): boolean {
+	const billed = job.receipt?.receipt;
+	return Boolean(job.delivery && billed && billed.outputHash === job.delivery.outputHash && billed.outputTokens <= job.delivery.maxOutputTokens);
+}
+
 /** Whether a scheduled job still holds a slot in its provider's load: app jobs until handed back. */
 function holdsSlot(job: JobRecord): boolean {
 	return job.paymentMode === 'postpay' && !job.handedBackAt;

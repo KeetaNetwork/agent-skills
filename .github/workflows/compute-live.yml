@@ -30,8 +30,13 @@ concurrency:
 
 jobs:
   live:
-    # Pull requests from forks don't spend the shared test account.
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    # Automatic runs (nightly, pull requests) wait for the repository variable
+    # COMPUTE_LIVE=on, set once the test account is funded; a manual run always
+    # goes. Pull requests from forks never spend the shared test account.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (vars.COMPUTE_LIVE == 'on' &&
+       (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository))
     runs-on: ubuntu-latest
     timeout-minutes: 45
     defaults:

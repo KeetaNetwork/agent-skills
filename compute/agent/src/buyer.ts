@@ -74,6 +74,9 @@ class HttpError extends Error {
 
 const encoder = new TextEncoder();
 
+/** Retries for a dispute the control plane holds until the relay's delivery record lands (it waits up to a minute). */
+const REFUSE_RETRY_DELAYS_MS = [2_000, 5_000, 15_000, 45_000];
+
 export class Buyer {
 	private server: Server | null = null;
 	private port = 0;
@@ -392,13 +395,23 @@ export class Buyer {
 	 * ticket, or disputes its receipt. True when the control plane refuses the
 	 * dispute because the relay attests delivering exactly the billed text.
 	 */
-	private async refuse(jobId: string, reason: string): Promise<boolean> {
-		try {
-			await this.deps.control.post(this.deps.spend, `/v1/jobs/${jobId}/refuse`, { reason: reason.slice(0, 300) });
-			return false;
-		} catch (error) {
-			return error instanceof ControlError && error.code === 'delivery_attested';
+	private async refuse(jobId: string, reason: string, retryDelays: number[] = REFUSE_RETRY_DELAYS_MS): Promise<boolean> {
+		for (const delay of [0, ...retryDelays]) {
+			if (delay) {
+				await new Promise((resolve) => setTimeout(resolve, delay).unref?.());
+			}
+			try {
+				await this.deps.control.post(this.deps.spend, `/v1/jobs/${jobId}/refuse`, { reason: reason.slice(0, 300) });
+				return false;
+			} catch (error) {
+				/* The relay's delivery record has not landed yet: it decides the dispute, so wait for it. */
+				if (error instanceof ControlError && error.code === 'delivery_pending') {
+					continue;
+				}
+				return error instanceof ControlError && error.code === 'delivery_attested';
+			}
 		}
+		return false;
 	}
 
 	/** Problems with a receipt, or null. With `delivery`, it must also bill exactly the text received. */

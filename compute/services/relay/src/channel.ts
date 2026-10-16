@@ -8,6 +8,7 @@
 
 import { chunkText, maxOutputTokensFor, sha256Hex, type JobEnvelope, type ProviderFrame, type RelayFrame } from '@keeta-compute/protocol';
 import { sseData, sseEvent } from './sse.ts';
+import { postDelivery } from './delivery.ts';
 
 const FIRST_FRAME_TIMEOUT_MS = 120_000;
 const IDLE_FRAME_TIMEOUT_MS = 120_000;
@@ -20,7 +21,8 @@ interface Pending {
 	jobId: string;
 	/** App jobs only: the text forwarded so far, hashed for the delivery record. */
 	delivered: string | null;
-	attested: boolean;
+	/** The one delivery record post for this job, once started. */
+	attesting: Promise<void> | null;
 }
 
 interface ChannelEnv {
@@ -113,7 +115,7 @@ export class ProviderChannel {
 			closed: false,
 			jobId: envelope.ticket.ticket.jobId,
 			delivered: envelope.ticket.ticket.paymentMode === 'postpay' ? '' : null,
-			attested: false
+			attesting: null
 		};
 		this.pending.set(id, entry);
 		signal.addEventListener('abort', () => {
@@ -178,18 +180,22 @@ export class ProviderChannel {
 		this.state.waitUntil(this.attest(entry));
 	}
 
-	/** Report the hash of the text forwarded for an app job to the control plane (once). */
-	private async attest(entry: Pending): Promise<void> {
-		if (entry.delivered === null || entry.attested) {
-			return;
+	/** Report the hash of the text forwarded for an app job to the control plane, once, retrying until it is accepted. */
+	private attest(entry: Pending): Promise<void> {
+		if (entry.delivered === null) {
+			return Promise.resolve();
 		}
-		entry.attested = true;
-		const body = JSON.stringify({ outputHash: await sha256Hex(entry.delivered), maxOutputTokens: maxOutputTokensFor(entry.delivered) });
-		await fetch(`${this.env.CONTROL_URL}/v1/relay/jobs/${encodeURIComponent(entry.jobId)}/delivery`, {
-			method: 'POST',
-			headers: { 'content-type': 'application/json', 'x-router-secret': this.env.ROUTER_SECRET },
-			body
-		}).catch(() => undefined);
+		const delivered = entry.delivered;
+		entry.attesting ??= (async () => {
+			await postDelivery({
+				controlUrl: this.env.CONTROL_URL,
+				routerSecret: this.env.ROUTER_SECRET,
+				jobId: entry.jobId,
+				outputHash: await sha256Hex(delivered),
+				maxOutputTokens: maxOutputTokensFor(delivered)
+			});
+		})();
+		return entry.attesting;
 	}
 
 	private failAll(code: string, message: string) {
