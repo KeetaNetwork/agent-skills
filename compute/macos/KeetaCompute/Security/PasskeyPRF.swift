@@ -28,7 +28,7 @@ enum PasskeyPRF {
     /// Ask for PRF output with the wallet salt on an assertion.
     static func requestOutput(on request: ASAuthorizationPlatformPublicKeyCredentialAssertionRequest, salt: Data) {
         let values = ASAuthorizationPublicKeyCredentialPRFAssertionInput.InputValues(saltInput1: salt, saltInput2: nil)
-        request.prf = ASAuthorizationPublicKeyCredentialPRFAssertionInput(inputValues: values, perCredentialInputValues: nil)
+        request.prf = .inputValues(values)
     }
 
     /// nil when the authenticator did not report PRF support at all.
