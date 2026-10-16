@@ -192,9 +192,12 @@ export class ControlService {
 		}
 		const access = body.access ? assertAccess(body.access) : undefined;
 		const load = body.load as { active?: unknown; capacity?: unknown } | undefined;
-		const active = Number.isInteger(load?.active) ? Math.max(0, Number(load?.active)) : 0;
+		const reported = Number.isInteger(load?.active) ? Math.max(0, Number(load?.active)) : 0;
 		const capacity = Number.isInteger(load?.capacity) ? Math.min(64, Math.max(1, Number(load?.capacity))) : 1;
 		const now = this.now();
+		/* Count jobs ticketed to this node that have not started yet, so a heartbeat never frees their slots. */
+		const ticketed = (await this.store.listJobsByNode(nodeKey, 100)).filter((j) => j.status === 'scheduled' && j.createdAt > now - TICKET_TTL_MS).length;
+		const active = Math.max(reported, ticketed);
 
 		const record = await this.store.updateProvider(nodeKey, (current) => {
 			const eligible = this.isEligible(current);
@@ -482,6 +485,25 @@ export class ControlService {
 			load: { ...record.load, active: Math.max(0, record.load.active - 1) },
 			stats: { ...record.stats, failed: record.stats.failed + 1 }
 		}));
+		return { job: redactJob(updated) };
+	}
+
+	/** Buyer gives back a ticket it will not use (spend limit, relay unreachable), freeing the provider's slot. */
+	async cancelJob(buyer: string, jobId: string) {
+		const job = await this.store.getJob(jobId);
+		if (!job) {
+			throw new NotFoundError('job not found');
+		}
+		if (job.buyer !== buyer) {
+			throw new ForbiddenError('job belongs to another buyer');
+		}
+		const updated = await this.store.updateJob(jobId, (current) => {
+			if (current.status !== 'scheduled') {
+				throw new ConflictError(`job is already ${current.status}`);
+			}
+			return { ...current, status: 'failed', completedAt: this.now(), error: 'cancelled by the buyer' };
+		});
+		await this.store.updateProvider(job.nodeKey, (record) => ({ ...record, load: { ...record.load, active: Math.max(0, record.load.active - 1) } }));
 		return { job: redactJob(updated) };
 	}
 

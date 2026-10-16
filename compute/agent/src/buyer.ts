@@ -100,9 +100,17 @@ export class Buyer {
 		});
 	}
 
-	close(): void {
-		this.server?.close();
+	/** Stops the local endpoint; resolves once the port is free again. */
+	close(): Promise<void> {
+		const server = this.server;
 		this.server = null;
+		if (!server) {
+			return Promise.resolve();
+		}
+		return new Promise((resolve) => {
+			server.close(() => resolve());
+			server.closeAllConnections();
+		});
 	}
 
 	private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -182,6 +190,22 @@ export class Buyer {
 			maxPrice: policy.maxPrice,
 			...(policy.allowedProviders.length ? { allowedProviders: policy.allowedProviders } : {})
 		});
+		const t = ticket.ticket;
+		try {
+			return await this.run(body, res, signal, ticket, maxInputTokens, maxOutputTokens);
+		} catch (error) {
+			/* Hand back a ticket that never reached the provider, so its slot is not held until expiry. */
+			if (!res.headersSent) {
+				await control.post(spend, `/v1/jobs/${t.jobId}/cancel`, {}).catch(() => undefined);
+			}
+			throw error;
+		}
+	}
+
+	private async run(body: ChatCompletionRequest, res: ServerResponse, signal: AbortSignal, ticket: SignedTicket, maxInputTokens: number, maxOutputTokens: number): Promise<void> {
+		const { store, spend } = this.deps;
+		const policy = store.state.buyer;
+		const network = store.state.network;
 		const t = ticket.ticket;
 		const maxCost = maxJobCost(t.price, { maxInputTokens, maxOutputTokens });
 		const spentToday = BigInt(store.state.spentByDay[today()] ?? '0');

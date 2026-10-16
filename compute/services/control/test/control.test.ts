@@ -205,6 +205,28 @@ test('scheduler respects max price, context length, capacity and staleness', asy
 	assert.equal((await h.call(buyer, 'POST', '/v1/jobs', { network: 'test', model: 'qwen3-8b', maxInputTokens: 10, maxOutputTokens: 10 })).status, 503, 'stale provider');
 });
 
+test('a heartbeat keeps ticketed slots held, and a buyer cancel or provider fail frees them', async () => {
+	const h = harness();
+	const { node } = await registerMac(h);
+	const beat = () => h.call(node, 'POST', '/v1/providers/heartbeat', { status: 'online', offers: [offer('qwen3-8b')], load: { active: 0, capacity: 1 } });
+	await beat();
+	const buyer = newSigner();
+	const job = () => h.call(buyer, 'POST', '/v1/jobs', { network: 'test', model: 'qwen3-8b', maxInputTokens: 10, maxOutputTokens: 10 });
+	const first = await job();
+	assert.equal(first.status, 200);
+	await beat();
+	assert.equal((await job()).status, 503, 'the ticketed job still holds the only slot after a heartbeat');
+	const jobId = (first.body as { job: { jobId: string } }).job.jobId;
+	assert.equal((await h.call(newSigner(), 'POST', `/v1/jobs/${jobId}/cancel`, {})).status, 403, 'only the buyer can cancel');
+	assert.equal((await h.call(buyer, 'POST', `/v1/jobs/${jobId}/cancel`, {})).status, 200);
+	assert.equal((await h.call(buyer, 'POST', `/v1/jobs/${jobId}/cancel`, {})).status, 409);
+	const second = await job();
+	assert.equal(second.status, 200, 'the cancelled slot is free again');
+	const secondId = (second.body as { job: { jobId: string } }).job.jobId;
+	assert.equal((await h.call(node, 'POST', `/v1/jobs/${secondId}/fail`, { error: 'busy' })).status, 200);
+	assert.equal((await job()).status, 200, 'a job the provider rejected frees its slot');
+});
+
 test('machines under 32 GB register but are never scheduled', async () => {
 	const h = harness();
 	const { node } = await registerMac(h, 16);

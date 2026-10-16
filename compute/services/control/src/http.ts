@@ -62,6 +62,7 @@ export function createApi(service: ControlService, deps: { store: Store; verify:
 	route('GET', '/v1/jobs', 'signed', async ({ caller }) => service.buyerJobs(caller));
 	route('POST', '/v1/jobs/:jobId/receipt', 'signed', async ({ caller, params, body }) => service.submitReceipt(caller, params.jobId!, body));
 	route('POST', '/v1/jobs/:jobId/fail', 'signed', async ({ caller, params, body }) => service.failJob(caller, params.jobId!, body));
+	route('POST', '/v1/jobs/:jobId/cancel', 'signed', async ({ caller, params }) => service.cancelJob(caller, params.jobId!));
 	route('POST', '/v1/jobs/:jobId/payment', 'signed', async ({ caller, params, body }) => service.submitPayment(caller, params.jobId!, body));
 
 	route('POST', '/v1/router/quote', 'router', async ({ body }) => service.routerQuote(body));

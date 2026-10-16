@@ -174,6 +174,8 @@ actor AgentRPCClient {
                 process.terminate()
             }
         }
+        // Retire this process's generation so its exit handler and any pending restart do nothing.
+        generation += 1
         await teardown(error: AgentClientError.notRunning)
         await setState(.stopped)
     }

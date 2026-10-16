@@ -356,6 +356,19 @@ test('a buyer runs a job on a Mac provider and a paired Linux helper, and pays e
 	assert.equal(firstSend.amount, 3n);
 	assert.equal((await buyer.rpc['buyer.status']!({})).unpaid, 0);
 
+	/* A request over the per-request limit is refused and its ticket handed back. */
+	await buyer.rpc['buyer.setPolicy']!({ perRequestMax: '1' });
+	const tooDear = await fetch(`${buyerStatus.endpoint}/chat/completions`, {
+		method: 'POST',
+		headers: { authorization: `Bearer ${buyerStatus.token}`, 'content-type': 'application/json' },
+		body: JSON.stringify({ model: MODEL, messages: [{ role: 'user', content: 'Say hello' }], max_tokens: 4000 })
+	});
+	assert.equal(tooDear.status, 402);
+	const [cancelled] = await control.store.listJobsByBuyer(spendKey, 1);
+	assert.equal(cancelled!.status, 'failed');
+	assert.equal((await control.store.getProvider(macKey))!.load.active, 0, 'the refused job does not hold the provider');
+	await buyer.rpc['buyer.setPolicy']!({ perRequestMax: '250000' });
+
 	/* Linux helper: pair by code, approve on the Mac, serve the same model. */
 	const helperDir = tmp('helper');
 	const weightsDir = tmp('weights');

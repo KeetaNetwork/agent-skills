@@ -142,7 +142,7 @@ export class AgentApp {
 
 	private async startNetwork(): Promise<void> {
 		this.provider?.stop();
-		this.buyer?.close();
+		await this.buyer?.close();
 		if (this.walletTimer) {
 			clearInterval(this.walletTimer);
 		}
@@ -218,7 +218,7 @@ export class AgentApp {
 
 	shutdown(): void {
 		this.provider?.stop();
-		this.buyer?.close();
+		void this.buyer?.close();
 		this.runtime?.stopAll();
 		if (this.walletTimer) {
 			clearInterval(this.walletTimer);

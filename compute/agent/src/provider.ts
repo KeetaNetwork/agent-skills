@@ -387,6 +387,10 @@ export class Provider {
 		if ('error' in checked) {
 			this.deps.log('warn', `rejected job ${ticket?.jobId ?? '?'}: ${checked.error}`);
 			this.send({ type: 'error', id, code: checked.code, message: checked.error });
+			if (ticket?.jobId && ticket.nodeKey === this.deps.node.publicKey) {
+				/* Free the slot the scheduler reserved for this ticket. */
+				await this.deps.control.post(this.deps.node, `/v1/jobs/${ticket.jobId}/fail`, { error: checked.error }).catch(() => undefined);
+			}
 			return;
 		}
 		const { model } = checked;
