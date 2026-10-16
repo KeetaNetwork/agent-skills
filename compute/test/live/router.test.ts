@@ -65,7 +65,10 @@ test('an x402 client pays the router in its stablecoin and gets the completion w
 	const signer = toClientKeetaSigner(payer);
 	let quoted = '';
 	try {
-		const client = new x402Client().register(KEETA_TESTNET_CAIP2, new ExactKeetaScheme(signer));
+		/* The router's test stablecoin is not in @x402's default assets, so a client opts in to it, as the router docs show. */
+		const client = new x402Client()
+			.register(KEETA_TESTNET_CAIP2, new ExactKeetaScheme(signer))
+			.setSpendControls({ allowedAssets: [{ network: KEETA_TESTNET_CAIP2, asset: ASSET.address, maxAmountPerPayment: PAYER_FUNDS.toString() }] });
 		/* Watch the wire: the 402 quote, and the payment header the client sends back. */
 		const watched: typeof fetch = async (input, init) => {
 			const request = new Request(input, init);

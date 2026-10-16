@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as KeetaAnchor from '@keetanetwork/anchor';
 import { SwapLimitError, pickQuote, swapLimit, type SwapOrder } from '../src/index.ts';
-import { fxClient } from '../src/fx.ts';
+import { fxClient, fxConversion } from '../src/fx.ts';
 
 const quotes = (...amounts: bigint[]) => amounts.map((convertedAmount, i) => ({ id: i, quote: { convertedAmount } }));
 const order = (affinity: 'from' | 'to', limit: bigint): SwapOrder => ({ fx: 'keeta_fx', from: 'keeta_a', to: 'keeta_b', affinity, amount: 1_000_000n, limit });
@@ -40,4 +40,15 @@ test('an estimate needs no wallet: the FX client is built with a throwaway key, 
 	const swap = fxClient('test', wallet as never, fx);
 	assert.equal(swap.user.account.publicKeyString.get(), wallet.publicKeyString.get(), 'swaps are signed by the wallet');
 	await Promise.all([estimate, another, swap].map(({ user }) => user.destroy()));
+});
+
+test('a swap names its tokens as token accounts, so the SDK does not look them up by symbol in the FX resolver', () => {
+	const usdc = 'keeta_aosjk5tgpgxr3qazd2abxyhj4srqua5c3xgz4lmgxuyrrwzryiqng4vacgwai';
+	const credit = 'keeta_anavye25hwino3mse5urcpx2gj452dnh6jdjryhco4j23afd3kegwvmvsfiki';
+	const conversion = fxConversion({ from: usdc, to: credit, amount: 5n, affinity: 'to' });
+	for (const [token, address] of [[conversion.from, usdc], [conversion.to, credit]] as const) {
+		assert.ok(KeetaAnchor.KeetaNet.lib.Account.isInstance(token) && token.isToken(), 'an account the SDK takes as is');
+		assert.equal(token.publicKeyString.get(), address);
+	}
+	assert.deepEqual([conversion.amount, conversion.affinity], [5n, 'to']);
 });

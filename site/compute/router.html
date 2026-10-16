@@ -155,11 +155,16 @@ import { ExactKeetaScheme, KEETA_TESTNET_CAIP2, toClientKeetaSigner } from "@x40
 const account = KeetaNet.lib.Account.fromSeed(process.env.KEETA_SEED!, 0);
 const signer = toClientKeetaSigner(account); // opens a UserClient; destroy it when done
 const model = "qwen3-8b";
+// The router's test-network USDC (6 decimals). @x402 only allows its own default assets unless you opt in.
+const TEST_USDC = "keeta_aosjk5tgpgxr3qazd2abxyhj4srqua5c3xgz4lmgxuyrrwzryiqng4vacgwai";
 
 try {
   const client = new x402Client()
     .register(KEETA_TESTNET_CAIP2, new ExactKeetaScheme(signer))
-    .setSpendControls({ maxAmountPerPayment: "$0.05" }) // cap per request
+    .setSpendControls({
+      maxAmountPerPayment: "$0.05", // cap per request on @x402's default assets
+      allowedAssets: [{ network: KEETA_TESTNET_CAIP2, asset: TEST_USDC, maxAmountPerPayment: "50000" }], // 0.05 USDC
+    })
     .onBeforePaymentCreation(async ({ selectedRequirements: req }) =&gt; {
       const extra = req.extra as { model?: string; assetSymbol?: string } | undefined;
       const stablecoin = extra?.assetSymbol === "KUSD" || extra?.assetSymbol === "USDC";
@@ -189,6 +194,7 @@ try {
 }</code></pre>
 <ul>
 <li>The spend cap and the <code>onBeforePaymentCreation</code> check run in your client. The chain does not enforce them.</li>
+<li>Without the <code>allowedAssets</code> entry, <code>@x402/fetch</code> refuses the 402 with "All payment requirements were rejected by spendControls": the router's test stablecoin is not one of the library's default assets. List KUSD the same way once the router quotes in it.</li>
 <li>Pay sequentially from each account. Keeta account chains are ordered, so one account cannot sign two payments at once. Queue requests, or spread them over several funded accounts when you need parallel requests.</li>
 <li>Fund the paying account with the stablecoin the 402 asks for: KUSD, or USDC where KUSD is not live yet. On the main network use <code>KEETA_MAINNET_CAIP2</code> and main-network stablecoins.</li>
 </ul>

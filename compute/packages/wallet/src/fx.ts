@@ -104,6 +104,17 @@ export function fxClient(network: NetworkName, account: Account | null, fx: stri
 	return { user, exchange };
 }
 
+/**
+ * A swap request as the anchor SDK takes it. Tokens go as token accounts: a
+ * bare address would be looked up by symbol in the FX account's resolver
+ * metadata, which lists neither the stablecoins nor the credit token.
+ * Exported for tests.
+ */
+export function fxConversion(request: Pick<SwapRequest, 'from' | 'to' | 'amount' | 'affinity'>) {
+	const token = (address: string) => KeetaAnchor.KeetaNet.lib.Account.fromPublicKeyString(address as never);
+	return { from: token(request.from), to: token(request.to), amount: request.amount, affinity: request.affinity };
+}
+
 export class AnchorCreditExchange implements CreditExchange {
 	constructor(private readonly network: NetworkName) {}
 
@@ -112,7 +123,7 @@ export class AnchorCreditExchange implements CreditExchange {
 	}
 
 	private conversion(request: SwapRequest) {
-		return { from: request.from as never, to: request.to as never, amount: request.amount, affinity: request.affinity };
+		return fxConversion(request);
 	}
 
 	async estimate(request: SwapRequest): Promise<bigint> {
