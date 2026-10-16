@@ -104,6 +104,11 @@ export class FirestoreStore implements Store {
 		return snap.docs.map((doc) => doc.data() as JobRecord).filter((job) => job.paymentMode === 'postpay');
 	}
 
+	async listOpenPostpay(buyer: string) {
+		const snap = await this.jobs().where('buyer', '==', buyer).where('status', 'in', ['scheduled', 'completed']).limit(200).get();
+		return snap.docs.map((doc) => doc.data() as JobRecord).filter((job) => job.paymentMode === 'postpay');
+	}
+
 	async listJobsByStatus(status: JobStatus, createdBefore: number, limit: number) {
 		const snap = await this.jobs().where('status', '==', status).where('createdAt', '<', createdBefore).orderBy('createdAt', 'asc').limit(limit).get();
 		return snap.docs.map((doc) => doc.data() as JobRecord);

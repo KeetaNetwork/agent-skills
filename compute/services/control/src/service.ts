@@ -69,6 +69,9 @@ export class PaymentRequiredError extends Error {
 
 export type PaymentVerifier = (args: { network: NetworkName; blockHash: string; from: string; to: string; asset: string; minAmount: bigint; reference: string }) => Promise<'confirmed' | 'pending' | 'rejected'>;
 
+/** Reads an account's on-ledger balance of `asset`, in base units. Throws if the ledger can't be reached. */
+export type BalanceReader = (args: { network: NetworkName; account: string; asset: string }) => Promise<bigint>;
+
 export interface ControlConfig {
 	store: Store;
 	/** Keeta account that signs job tickets. Providers pin its public key. */
@@ -80,6 +83,12 @@ export interface ControlConfig {
 	relayUrl: string;
 	networks: NetworkName[];
 	verifyPayment: PaymentVerifier;
+	/**
+	 * When set, pay-later buyers must hold enough of the settlement asset to
+	 * cover every job they still owe for plus the new job's maximum cost, so a
+	 * fresh key with no funds can't run jobs it never pays for.
+	 */
+	balanceOf?: BalanceReader;
 	now?: () => number;
 	/** Testnet escape hatch so small Macs can provide during development. */
 	allowSmallProviders?: boolean;
@@ -282,8 +291,11 @@ export class ControlService {
 		excludeProviders?: string[];
 		paymentMode: JobRecord['paymentMode'];
 		publicOnly: boolean;
+		/** Most the job may cost; offers whose maximum cost is higher are skipped. */
+		budget?: bigint;
 	}): Promise<{ job: JobRecord; ticket: SignedTicket; provider: StoredProvider }> {
 		const now = this.now();
+		let overBudget = 0;
 		const candidates = (await this.store.listLiveProviders(args.network, now - PROVIDER_STALE_MS, args.modelId))
 			.filter((provider) => provider.status === 'online' && provider.load.active < provider.load.capacity)
 			.filter((provider) => !args.excludeProviders?.includes(provider.nodeKey))
@@ -303,10 +315,17 @@ export class ControlService {
 				if (args.maxPrice && (BigInt(offer.price.inputPerMillion) > BigInt(args.maxPrice.inputPerMillion) || BigInt(offer.price.outputPerMillion) > BigInt(args.maxPrice.outputPerMillion))) {
 					return [];
 				}
+				if (args.budget !== undefined && maxJobCost(offer.price, args) > args.budget) {
+					overBudget++;
+					return [];
+				}
 				return [{ provider, offer }];
 			});
 
 		if (candidates.length === 0) {
+			if (overBudget > 0) {
+				throw new PaymentRequiredError(`the buyer account does not hold enough ${NETWORKS[args.network].settlementAsset.symbol} to cover this job's maximum cost`);
+			}
 			throw new UnavailableError(`no provider is available for ${args.modelId} right now`);
 		}
 
@@ -372,6 +391,7 @@ export class ControlService {
 		if (unpaid.length > 0) {
 			throw new PaymentRequiredError(`${unpaid.length} completed job(s) are unpaid; settle them before starting new ones`);
 		}
+		const budget = await this.buyerBudget(network, buyer);
 		const result = await this.schedule({
 			network,
 			buyer,
@@ -382,9 +402,26 @@ export class ControlService {
 			...(Array.isArray(body.allowedProviders) ? { allowedProviders: body.allowedProviders.map((k, i) => assertKeetaAddress(k, `allowedProviders[${i}]`)) } : {}),
 			...(Array.isArray(body.excludeProviders) ? { excludeProviders: body.excludeProviders.map((k, i) => assertKeetaAddress(k, `excludeProviders[${i}]`)) } : {}),
 			paymentMode: 'postpay',
-			publicOnly: false
+			publicOnly: false,
+			...(budget !== null ? { budget } : {})
 		});
 		return { job: redactJob(result.job), ticket: result.ticket, relayUrl: this.config.relayUrl };
+	}
+
+	/** What a pay-later buyer can still commit: its ledger balance less what it already owes. Null when not enforced. */
+	private async buyerBudget(network: NetworkName, buyer: string): Promise<bigint | null> {
+		if (!this.config.balanceOf) {
+			return null;
+		}
+		const [balance, open] = await Promise.all([
+			this.config.balanceOf({ network, account: buyer, asset: NETWORKS[network].settlementAsset.address }).catch((error: Error) => {
+				console.warn('balance lookup failed', error.message);
+				throw new UnavailableError('could not read the buyer balance from the ledger; try again');
+			}),
+			this.store.listOpenPostpay(buyer)
+		]);
+		const owed = open.reduce((sum, job) => sum + (job.status === 'completed' && job.amountDue ? BigInt(job.amountDue) : maxJobCost(job.price, job)), 0n);
+		return balance - owed;
 	}
 
 	/** Public router (x402): the buyer prepays the provider directly before the job runs. */

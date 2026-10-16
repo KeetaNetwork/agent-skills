@@ -28,6 +28,8 @@ export interface Store {
 	listJobsByNode(nodeKey: string, limit: number): Promise<JobRecord[]>;
 	/** Completed (receipted) postpay jobs still unpaid, completed before `before`. */
 	listUnpaid(buyer: string, before: number): Promise<JobRecord[]>;
+	/** Postpay jobs the buyer still owes for: scheduled (not yet receipted) or completed and unpaid. */
+	listOpenPostpay(buyer: string): Promise<JobRecord[]>;
 	listJobsByStatus(status: JobStatus, createdBefore: number, limit: number): Promise<JobRecord[]>;
 
 	getPairing(pairingId: string): Promise<PairingRecord | null>;
@@ -121,6 +123,10 @@ export class MemoryStore implements Store {
 		return [...this.jobs.values()]
 			.filter((j) => j.buyer === buyer && j.status === 'completed' && j.paymentMode === 'postpay' && (j.completedAt ?? 0) < before)
 			.map(clone);
+	}
+
+	async listOpenPostpay(buyer: string) {
+		return [...this.jobs.values()].filter((j) => j.buyer === buyer && j.paymentMode === 'postpay' && (j.status === 'scheduled' || j.status === 'completed')).map(clone);
 	}
 
 	async listJobsByStatus(status: JobStatus, createdBefore: number, limit: number) {

@@ -289,7 +289,8 @@ test('a buyer runs a job on a Mac provider and a paired Linux helper, and pays e
 				return 'pending';
 			}
 			return send.from === args.from && send.to === args.to && send.asset === 'usdc' && send.amount >= args.minAmount && send.reference === args.reference ? 'confirmed' : 'rejected';
-		}
+		},
+		balanceOf: async () => (await ledger.balances()).usdc
 	});
 	cleanups.push(() => control.server.close());
 

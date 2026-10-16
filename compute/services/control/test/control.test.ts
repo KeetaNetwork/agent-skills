@@ -5,6 +5,7 @@ import {
 	UNPAID_GRACE_MS,
 	generatePairingCode,
 	jobCost,
+	maxJobCost,
 	operatorLinkMessage,
 	pairingApprovalMessage,
 	pairingCodeHash,
@@ -19,14 +20,14 @@ import {
 } from '@keeta-compute/protocol';
 import { Account, accountSigner, verifyKeetaSignature } from '@keeta-compute/protocol/keeta';
 import { createApi, type ApiRequest } from '../src/http.ts';
-import { ControlService, type PaymentVerifier } from '../src/service.ts';
+import { ControlService, type BalanceReader, type PaymentVerifier } from '../src/service.ts';
 import { MemoryStore } from '../src/store.ts';
 
 const GB = 1024 ** 3;
 const newSigner = (): Signer => accountSigner(Account.fromSeed(Account.generateRandomSeed({ asString: true }), 0));
 const hardware = (gb: number, os: 'macos' | 'linux' = 'macos'): HardwareProfile => ({ os, osVersion: '15.4', chip: 'Apple M4 Max', memoryBytes: gb * GB, freeDiskBytes: 500 * GB });
 
-function harness(options: { verifyPayment?: PaymentVerifier } = {}) {
+function harness(options: { verifyPayment?: PaymentVerifier; balanceOf?: BalanceReader } = {}) {
 	let clock = 1_800_000_000_000;
 	const store = new MemoryStore();
 	const coordinator = newSigner();
@@ -39,6 +40,7 @@ function harness(options: { verifyPayment?: PaymentVerifier } = {}) {
 		relayUrl: 'http://relay.local',
 		networks: ['test'],
 		verifyPayment: options.verifyPayment ?? (async () => 'confirmed'),
+		...(options.balanceOf ? { balanceOf: options.balanceOf } : {}),
 		now: () => clock
 	});
 	const handle = createApi(service, { store, verify: verifyKeetaSignature, routerSecret: 'router-secret', now: () => clock });
@@ -175,6 +177,41 @@ test('unpaid receipts block a buyer after the grace period', async () => {
 	await h.call(node, 'POST', '/v1/providers/heartbeat', { status: 'online', offers: [offer('qwen3-8b')], load: { active: 0, capacity: 4 } });
 	const blocked = await h.call(buyer, 'POST', '/v1/jobs', { network: 'test', model: 'qwen3-8b', maxInputTokens: 10, maxOutputTokens: 10 });
 	assert.equal(blocked.status, 402);
+});
+
+test('pay-later buyers need ledger funds for every job they still owe for', async () => {
+	const balances = new Map<string, bigint>();
+	let ledgerUp = true;
+	const h = harness({
+		balanceOf: async ({ account, asset }) => {
+			assert.equal(asset, NETWORKS.test.settlementAsset.address);
+			if (!ledgerUp) {
+				throw new Error('ledger down');
+			}
+			return balances.get(account) ?? 0n;
+		}
+	});
+	const { node } = await registerMac(h);
+	await h.call(node, 'POST', '/v1/providers/heartbeat', { status: 'online', offers: [offer('qwen3-8b')], load: { active: 0, capacity: 4 } });
+	const limits = { maxInputTokens: 1000, maxOutputTokens: 1000 };
+	const cost = maxJobCost(offer('qwen3-8b').price, limits);
+	const job = { network: 'test', model: 'qwen3-8b', ...limits };
+
+	const fresh = newSigner();
+	const unfunded = await h.call(fresh, 'POST', '/v1/jobs', job);
+	assert.equal(unfunded.status, 402, 'a new key with no funds gets nothing');
+
+	const buyer = newSigner();
+	balances.set(buyer.publicKey, cost * 2n);
+	assert.equal((await h.call(buyer, 'POST', '/v1/jobs', job)).status, 200);
+	assert.equal((await h.call(buyer, 'POST', '/v1/jobs', job)).status, 200);
+	assert.equal((await h.call(buyer, 'POST', '/v1/jobs', job)).status, 402, 'open jobs count against the balance');
+
+	ledgerUp = false;
+	balances.set(buyer.publicKey, cost * 10n);
+	assert.equal((await h.call(buyer, 'POST', '/v1/jobs', job)).status, 503, 'fails closed when the ledger is unreachable');
+	ledgerUp = true;
+	assert.equal((await h.call(buyer, 'POST', '/v1/jobs', job)).status, 200);
 });
 
 test('allowlisted offers only serve listed buyers and never router traffic', async () => {

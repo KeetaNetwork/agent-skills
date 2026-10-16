@@ -9,12 +9,15 @@ import { createServer, type Server } from 'node:http';
 import { verifyKeetaSignature } from '@keeta-compute/protocol/keeta';
 import { serviceFromEnv, type EnvConfig } from './config.ts';
 import { createApi } from './http.ts';
-import type { ControlService, PaymentVerifier } from './service.ts';
+import type { BalanceReader, ControlService, PaymentVerifier } from './service.ts';
 import { MemoryStore } from './store.ts';
 
-export function startServer(options: { port: number; env: EnvConfig; verifyPayment?: PaymentVerifier }): Promise<{ server: Server; service: ControlService; store: MemoryStore; url: string }> {
+export function startServer(options: { port: number; env: EnvConfig; verifyPayment?: PaymentVerifier; balanceOf?: BalanceReader }): Promise<{ server: Server; service: ControlService; store: MemoryStore; url: string }> {
 	const store = new MemoryStore();
-	const service = serviceFromEnv(store, options.env, options.verifyPayment);
+	const service = serviceFromEnv(store, options.env, {
+		...(options.verifyPayment ? { verifyPayment: options.verifyPayment } : {}),
+		...(options.balanceOf ? { balanceOf: options.balanceOf } : {})
+	});
 	const handle = createApi(service, { store, verify: verifyKeetaSignature, routerSecret: options.env.ROUTER_SECRET });
 	const server = createServer(async (req, res) => {
 		const chunks: Buffer[] = [];

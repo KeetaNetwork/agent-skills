@@ -6,7 +6,7 @@
 import * as KeetaNet from '@keetanetwork/keetanet-client';
 import type { NetworkName } from '@keeta-compute/protocol';
 import { Account, accountSigner, checkPaymentBlock, verifyKeetaSignature } from '@keeta-compute/protocol/keeta';
-import { ControlService, type PaymentVerifier } from './service.ts';
+import { ControlService, type BalanceReader, type PaymentVerifier } from './service.ts';
 import type { Store } from './store.ts';
 
 export interface EnvConfig {
@@ -18,19 +18,26 @@ export interface EnvConfig {
 	/** Comma-separated; defaults to "test". Main must be enabled explicitly. */
 	NETWORKS?: string;
 	ALLOW_SMALL_PROVIDERS?: string;
+	/** Pay-later buyers must hold funds for their open jobs. On unless set to "false" (local development). */
+	REQUIRE_BUYER_BALANCE?: string;
+}
+
+const ledgerClients = new Map<NetworkName, InstanceType<typeof KeetaNet.Client>>();
+
+function ledgerClient(network: NetworkName) {
+	let client = ledgerClients.get(network);
+	if (!client) {
+		client = KeetaNet.Client.fromNetwork(network);
+		ledgerClients.set(network, client);
+	}
+	return client;
 }
 
 /** Looks up payment blocks on the Keeta ledger. */
 export function ledgerPaymentVerifier(): PaymentVerifier {
-	const clients = new Map<NetworkName, InstanceType<typeof KeetaNet.Client>>();
 	return async (args) => {
-		let client = clients.get(args.network);
-		if (!client) {
-			client = KeetaNet.Client.fromNetwork(args.network);
-			clients.set(args.network, client);
-		}
 		try {
-			const result = await checkPaymentBlock(client, args);
+			const result = await checkPaymentBlock(ledgerClient(args.network), args);
 			if (result.status === 'confirmed') {
 				return 'confirmed';
 			}
@@ -42,7 +49,12 @@ export function ledgerPaymentVerifier(): PaymentVerifier {
 	};
 }
 
-export function serviceFromEnv(store: Store, env: EnvConfig, verifyPayment: PaymentVerifier = ledgerPaymentVerifier()): ControlService {
+/** Reads buyer balances from the Keeta ledger. */
+export function ledgerBalanceReader(): BalanceReader {
+	return (args) => ledgerClient(args.network).getBalance(args.account, args.asset);
+}
+
+export function serviceFromEnv(store: Store, env: EnvConfig, ledger: { verifyPayment?: PaymentVerifier; balanceOf?: BalanceReader } = {}): ControlService {
 	if (!env.COORDINATOR_SEED || !env.RELAY_SECRET || !env.ROUTER_SECRET) {
 		throw new Error('COORDINATOR_SEED, RELAY_SECRET and ROUTER_SECRET must be set');
 	}
@@ -58,7 +70,8 @@ export function serviceFromEnv(store: Store, env: EnvConfig, verifyPayment: Paym
 		routerSecret: env.ROUTER_SECRET,
 		relayUrl: env.RELAY_URL ?? 'https://relay.keeta.ai',
 		networks: networks.length ? networks : ['test'],
-		verifyPayment,
+		verifyPayment: ledger.verifyPayment ?? ledgerPaymentVerifier(),
+		...(env.REQUIRE_BUYER_BALANCE === 'false' ? {} : { balanceOf: ledger.balanceOf ?? ledgerBalanceReader() }),
 		allowSmallProviders: env.ALLOW_SMALL_PROVIDERS === 'true'
 	});
 }
