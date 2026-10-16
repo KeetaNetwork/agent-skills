@@ -2,10 +2,11 @@
  * One Durable Object per provider node. The provider keeps an outbound
  * WebSocket open to it (works behind NAT and sleep/wake), and buyers' job
  * requests are forwarded over that socket. Prompts and tokens pass through
- * memory only; nothing is stored.
+ * memory only; nothing is stored. For app jobs the relay reports a hash of
+ * the text it forwarded, which settles a dispute over the provider's receipt.
  */
 
-import type { JobEnvelope, ProviderFrame, RelayFrame } from '@keeta-compute/protocol';
+import { chunkText, maxOutputTokensFor, sha256Hex, type JobEnvelope, type ProviderFrame, type RelayFrame } from '@keeta-compute/protocol';
 import { sseData, sseEvent } from './sse.ts';
 
 const FIRST_FRAME_TIMEOUT_MS = 120_000;
@@ -16,6 +17,15 @@ interface Pending {
 	writer: WritableStreamDefaultWriter<Uint8Array>;
 	timer: ReturnType<typeof setTimeout>;
 	closed: boolean;
+	jobId: string;
+	/** App jobs only: the text forwarded so far, hashed for the delivery record. */
+	delivered: string | null;
+	attested: boolean;
+}
+
+interface ChannelEnv {
+	CONTROL_URL: string;
+	ROUTER_SECRET: string;
 }
 
 export class ProviderChannel {
@@ -24,8 +34,8 @@ export class ProviderChannel {
 	private pinger: ReturnType<typeof setInterval> | null = null;
 
 	constructor(
-		private readonly _state: DurableObjectState,
-		private readonly _env: unknown
+		private readonly state: DurableObjectState,
+		private readonly env: ChannelEnv
 	) {}
 
 	async fetch(request: Request): Promise<Response> {
@@ -97,7 +107,14 @@ export class ProviderChannel {
 		const id = crypto.randomUUID();
 		const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
 		const writer = writable.getWriter();
-		const entry: Pending = { writer, timer: setTimeout(() => this.finish(id, 'timeout', 'the provider did not respond in time'), FIRST_FRAME_TIMEOUT_MS), closed: false };
+		const entry: Pending = {
+			writer,
+			timer: setTimeout(() => this.finish(id, 'timeout', 'the provider did not respond in time'), FIRST_FRAME_TIMEOUT_MS),
+			closed: false,
+			jobId: envelope.ticket.ticket.jobId,
+			delivered: envelope.ticket.ticket.paymentMode === 'postpay' ? '' : null,
+			attested: false
+		};
 		this.pending.set(id, entry);
 		signal.addEventListener('abort', () => {
 			this.send({ type: 'cancel', id });
@@ -126,9 +143,15 @@ export class ProviderChannel {
 		clearTimeout(entry.timer);
 		if (frame.type === 'chunk') {
 			entry.timer = setTimeout(() => this.finish(frame.id, 'timeout', 'the provider stopped responding'), IDLE_FRAME_TIMEOUT_MS);
+			if (entry.delivered !== null) {
+				entry.delivered += chunkText(frame.data);
+			}
 			void entry.writer.write(sseData(frame.data)).catch(() => this.close(frame.id));
 		} else if (frame.type === 'receipt') {
-			void entry.writer.write(sseEvent('keeta.receipt', frame.receipt)).finally(() => this.close(frame.id));
+			/* Record the delivery before the buyer sees the receipt, so a dispute over it is decided by this record. */
+			void this.attest(entry)
+				.then(() => entry.writer.write(sseEvent('keeta.receipt', frame.receipt)))
+				.finally(() => this.close(frame.id));
 		} else if (frame.type === 'error') {
 			this.finish(frame.id, frame.code, frame.message);
 		}
@@ -151,6 +174,22 @@ export class ProviderChannel {
 		clearTimeout(entry.timer);
 		this.pending.delete(id);
 		void entry.writer.close().catch(() => undefined);
+		/* A buyer hang-up or a provider error still bills what was forwarded, so record it too. */
+		this.state.waitUntil(this.attest(entry));
+	}
+
+	/** Report the hash of the text forwarded for an app job to the control plane (once). */
+	private async attest(entry: Pending): Promise<void> {
+		if (entry.delivered === null || entry.attested) {
+			return;
+		}
+		entry.attested = true;
+		const body = JSON.stringify({ outputHash: await sha256Hex(entry.delivered), maxOutputTokens: maxOutputTokensFor(entry.delivered) });
+		await fetch(`${this.env.CONTROL_URL}/v1/relay/jobs/${encodeURIComponent(entry.jobId)}/delivery`, {
+			method: 'POST',
+			headers: { 'content-type': 'application/json', 'x-router-secret': this.env.ROUTER_SECRET },
+			body
+		}).catch(() => undefined);
 	}
 
 	private failAll(code: string, message: string) {

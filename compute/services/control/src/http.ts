@@ -66,6 +66,7 @@ export function createApi(service: ControlService, deps: { store: Store; verify:
 	route('POST', '/v1/jobs/:jobId/refuse', 'signed', async ({ caller, params, body }) => service.refuseJob(caller, params.jobId!, body));
 	route('POST', '/v1/jobs/:jobId/payment', 'signed', async ({ caller, params, body }) => service.submitPayment(caller, params.jobId!, body));
 
+	route('POST', '/v1/relay/jobs/:jobId/delivery', 'router', async ({ params, body }) => service.recordDelivery(params.jobId!, body));
 	route('POST', '/v1/router/quote', 'router', async ({ body }) => service.routerQuote(body));
 	route('GET', '/v1/router/jobs/:jobId', 'router', async ({ params }) => service.routerJob(params.jobId!));
 	route('POST', '/v1/router/jobs/:jobId/claim', 'router', async ({ params }) => service.routerClaim(params.jobId!));
@@ -148,7 +149,8 @@ export function createApi(service: ControlService, deps: { store: Store; verify:
 			if (status === 503 && retry) {
 				headers['retry-after'] = String(retry);
 			}
-			return { status, headers, body: { error: { code: errorCode(status), message } } };
+			const code = status !== 500 && typeof (error as { code?: unknown }).code === 'string' ? (error as { code: string }).code : errorCode(status);
+			return { status, headers, body: { error: { code, message } } };
 		}
 	};
 }

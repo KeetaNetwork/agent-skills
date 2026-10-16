@@ -294,18 +294,22 @@ export class Buyer {
 			void this.refuse(t.jobId, 'the provider sent no receipt');
 			return;
 		}
-		this.accept(ticket, receipt, maxCost, await deliveryOf(delivered), summary);
+		await this.accept(ticket, receipt, maxCost, await deliveryOf(delivered), summary);
 	}
 
 	/** Check a receipt against the ticket and the text received, then queue its payment. */
-	private accept(ticket: SignedTicket, receipt: SignedReceipt, maxCost: bigint, delivery: Delivery, summary: JobSummary): void {
+	private async accept(ticket: SignedTicket, receipt: SignedReceipt, maxCost: bigint, delivery: Delivery, summary: JobSummary): Promise<void> {
 		const t = ticket.ticket;
 		const problem = this.checkReceipt(ticket, receipt, maxCost, delivery);
 		if (problem) {
-			this.deps.log('warn', `not paying job ${t.jobId}: ${problem}`);
-			this.deps.onJob({ ...summary, status: 'failed', error: problem, at: Date.now() });
-			void this.refuse(t.jobId, problem);
-			return;
+			/* The relay's record of what it forwarded wins over this buyer's copy (text in flight at a hang-up). */
+			const attested = await this.refuse(t.jobId, problem);
+			if (!attested || this.checkReceipt(ticket, receipt, maxCost, null)) {
+				this.deps.log('warn', `not paying job ${t.jobId}: ${problem}`);
+				this.deps.onJob({ ...summary, status: 'failed', error: problem, at: Date.now() });
+				return;
+			}
+			this.deps.log('info', `paying job ${t.jobId}: the relay attests delivering the billed text`);
 		}
 		const unpaid: UnpaidReceipt = { jobId: t.jobId, network: t.network, payTo: t.payTo, amount: receipt.receipt.amount, asset: t.asset, receipt, attempts: 0 };
 		this.deps.store.update((s) => s.unpaid.push(unpaid));
@@ -341,7 +345,7 @@ export class Buyer {
 				}
 				const summary: JobSummary = { jobId: late.jobId, role: 'buyer', modelId: late.ticket.ticket.modelId, counterparty: late.ticket.ticket.payTo, inputTokens: 0, outputTokens: 0, amount: '0', status: 'failed', at: Date.now() };
 				if (job?.receipt) {
-					this.accept(late.ticket, job.receipt, BigInt(late.maxCost), late.delivery, summary);
+					await this.accept(late.ticket, job.receipt, BigInt(late.maxCost), late.delivery, summary);
 				} else if (settled || stale) {
 					this.deps.onJob({ ...summary, error: 'the provider sent no receipt' });
 					void this.refuse(late.jobId, 'the provider sent no receipt');
@@ -350,12 +354,22 @@ export class Buyer {
 		}
 	}
 
-	/** Tell the control plane this buyer will not pay a job: frees an unused ticket, or disputes its receipt. */
-	private async refuse(jobId: string, reason: string): Promise<void> {
-		await this.deps.control.post(this.deps.spend, `/v1/jobs/${jobId}/refuse`, { reason: reason.slice(0, 300) }).catch(() => undefined);
+	/**
+	 * Tell the control plane this buyer will not pay a job: frees an unused
+	 * ticket, or disputes its receipt. True when the control plane refuses the
+	 * dispute because the relay attests delivering exactly the billed text.
+	 */
+	private async refuse(jobId: string, reason: string): Promise<boolean> {
+		try {
+			await this.deps.control.post(this.deps.spend, `/v1/jobs/${jobId}/refuse`, { reason: reason.slice(0, 300) });
+			return false;
+		} catch (error) {
+			return error instanceof ControlError && error.code === 'delivery_attested';
+		}
 	}
 
-	checkReceipt(ticket: SignedTicket, signed: SignedReceipt, maxCost: bigint, delivery: Delivery): string | null {
+	/** Problems with a receipt, or null. With `delivery`, it must also bill exactly the text received. */
+	checkReceipt(ticket: SignedTicket, signed: SignedReceipt, maxCost: bigint, delivery: Delivery | null): string | null {
 		const t = ticket.ticket;
 		const r = signed.receipt;
 		if (!this.deps.verify(t.nodeKey, receiptMessage(r), signed.signature)) {
@@ -368,10 +382,10 @@ export class Buyer {
 			return 'receipt exceeds the token limits';
 		}
 		/* Bind the bill to what arrived: the same text, and no more tokens than that text can hold. */
-		if (r.outputHash !== delivery.outputHash) {
+		if (delivery && r.outputHash !== delivery.outputHash) {
 			return 'receipt output does not match the text received';
 		}
-		if (r.outputTokens > delivery.maxOutputTokens) {
+		if (delivery && r.outputTokens > delivery.maxOutputTokens) {
 			return 'receipt bills more output tokens than the text received';
 		}
 		const amount = jobCost(t.price, { inputTokens: r.inputTokens, outputTokens: r.outputTokens });
