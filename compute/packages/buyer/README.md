@@ -4,13 +4,13 @@ The buyer side of a Keeta Compute node: a local OpenAI-compatible endpoint (`POS
 
 For each request `Buyer`:
 
-1. asks the control plane for a quote: the job's maximum cost in credits, from a provider whose cost fits under the Mac's per-request and remaining daily limits (sent as `maxCost`), for the requested output limit and an input limit of the prompt's exact token count plus a small margin (counted with the model's pinned tokenizer through `@keeta-compute/tokens`, or the prompt's size when the model has none);
+1. asks the control plane for a quote: the credits to escrow (the job's maximum cost, and at least the no-show fee), from a provider whose cost fits under the Mac's per-request and remaining daily limits (sent as `maxCost`), for the requested output limit and an input limit of the prompt's exact token count plus a small margin (counted with the model's pinned tokenizer through `@keeta-compute/tokens`, or the prompt's size when the model has none);
 2. checks the quote against the request and the local per-request and daily limits;
-3. sends that maximum from the agent budget to keeta.ai's settlement account with the job id as the reference, saves the block, and reports it until the control plane issues the ticket;
+3. sends that amount from the agent budget to keeta.ai's settlement account with the job id as the reference, saves the block, and reports it until the control plane issues the ticket (or, if no provider has a free slot by then, refunds it);
 4. streams the answer from the provider through the relay;
 5. checks the provider's signed receipt against the ticket and the text it received.
 
-Settlement happens on the ledger: the provider is paid what it billed and the rest of the escrow comes back. `followUp` reports saved escrows again after a restart and settles jobs whose receipt arrived late.
+Settlement happens on the ledger: the provider is paid what it billed and the rest of the escrow comes back. A ticket not used promptly (not at the relay within 10 seconds, or cancelled before any text) also pays the provider the no-show fee. `followUp` cancels the quote of an escrow its request gave up on before reporting the block again (so it is refunded rather than ticketed), and reads how jobs settled: what was billed, or the no-show fee, counts against the daily limit once.
 
 It reads and writes the node's saved state through `BuyerStore` (`src/store.ts`); the agent's `StateStore` implements it.
 

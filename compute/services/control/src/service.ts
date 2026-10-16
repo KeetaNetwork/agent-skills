@@ -15,6 +15,8 @@ import {
 	CREDIT_SYMBOL,
 	HEARTBEAT_INTERVAL_MS,
 	MIN_PROVIDER_MEMORY_BYTES,
+	NO_SHOW_FEE,
+	NO_SHOW_WINDOW_MS,
 	PAIRING_TTL_MS,
 	PROVIDER_STALE_MS,
 	QUOTE_TTL_MS,
@@ -28,6 +30,7 @@ import {
 	assertPrice,
 	assetListing,
 	defaultAsset,
+	escrowAmount,
 	findCatalogModel,
 	hardwareTier,
 	jobCost,
@@ -110,6 +113,14 @@ export class QuoteExpiredError extends ConflictError {
 	readonly code = 'quote_expired';
 }
 
+/** When the escrow arrived, no provider that fits the job had a free slot; it is refunded. */
+export class NoProviderError extends ConflictError {
+	readonly code = 'no_provider';
+}
+
+/** The error an expired job records when its escrow found no free provider. */
+const NO_PROVIDER = 'every provider that fits this job filled up before its escrow arrived';
+
 export interface FallbackConfig {
 	/** keeta.ai's own account; fallback payments go here, since no provider serves the job. */
 	payTo: string;
@@ -180,19 +191,10 @@ export interface ControlConfig {
 
 const RELAY_TOKEN_TTL_MS = 10 * 60_000;
 const MAX_INPUT_TOKENS = 262_144;
-/** Quotes one buyer may have waiting for escrow at once; each holds a provider slot until it expires. */
+/** Quotes one buyer may have waiting for escrow at once. */
 const MAX_OPEN_QUOTES = 4;
-/** Provider slots one buyer may hold at once: its quotes waiting for escrow and its tickets not yet run. */
-const MAX_HELD_SLOTS = 8;
-/**
- * Holds a buyer may leave unused (a quote cancelled or left to expire, a
- * ticket handed back or left to lapse with nothing delivered) within
- * UNUSED_HOLD_WINDOW_MS; past that it gets no quotes until the oldest ages
- * out. A hold costs nothing, so without this one small balance could quote a
- * provider, cancel, and quote it again, keeping it busy for everyone else.
- */
-const UNUSED_HOLD_LIMIT = 3;
-const UNUSED_HOLD_WINDOW_MS = 10 * 60_000;
+/** Jobs one buyer may have in flight at once: its quotes waiting for escrow and its tickets not yet run. */
+const MAX_IN_FLIGHT = 8;
 /** A payout attempt that has not recorded its block this long after it started may be retried (after checking the ledger). */
 const PAYOUT_RETRY_MS = 5 * 60_000;
 
@@ -331,7 +333,7 @@ export class ControlService {
 		const reported = Number.isInteger(load?.active) ? Math.max(0, Number(load?.active)) : 0;
 		const capacity = Number.isInteger(load?.capacity) ? Math.min(64, Math.max(1, Number(load?.capacity))) : 1;
 		const now = this.now();
-		/* Count quotes and tickets for this node that have not started yet, so a heartbeat never frees their slots. */
+		/* Count tickets for this node that have not started yet, so a heartbeat never frees their slots. */
 		const ticketed = (await this.store.listJobsByNode(nodeKey, 100)).filter((j) => holdsSlotAt(j, now)).length;
 		const active = Math.max(reported, ticketed);
 
@@ -430,7 +432,7 @@ export class ControlService {
 		maxInputTokens: number;
 		maxOutputTokens: number;
 		maxPrice?: Price;
-		/** The most the buyer will pay for the job, in credit base units: offers whose maximum cost is higher are skipped. */
+		/** The most the buyer will pay for the job, in credit base units: offers whose escrow would be higher are skipped. */
 		maxCost?: bigint;
 		allowedProviders?: string[];
 		excludeProviders?: string[];
@@ -472,7 +474,7 @@ export class ControlService {
 				}
 				return [{ provider, offer }];
 			});
-		const affordable = args.maxCost === undefined ? candidates : candidates.filter(({ offer }) => maxJobCost(offer.price, args) <= args.maxCost!);
+		const affordable = args.maxCost === undefined ? candidates : candidates.filter(({ offer }) => escrowAmount(offer.price, args) <= args.maxCost!);
 		if (affordable.length === 0) {
 			if (candidates.length > 0) {
 				throw new CostCeilingError(`every provider for ${args.modelId} would charge more than ${args.maxCost} credit base units for this job; lower max_tokens or raise the limit`);
@@ -515,10 +517,12 @@ export class ControlService {
 	/* -------------------------------------------------------------- app jobs */
 
 	/**
-	 * An app job (plan §6.3): reserve a provider and quote the job's maximum
-	 * cost in credits. No ticket yet: the buyer escrows the quote with the
-	 * settlement account and reports the block (submitEscrow), and the
-	 * ticket is issued once the ledger shows it.
+	 * An app job (plan §6.3): pick a provider and quote the job's escrow in
+	 * credits. The quote holds no slot: the buyer escrows it with the
+	 * settlement account and reports the block (submitEscrow), and the ticket
+	 * takes a slot once the ledger shows it. Holding a provider always has
+	 * credits behind it, and a ticket that never reaches the relay pays the
+	 * provider NO_SHOW_FEE.
 	 */
 	async createJob(buyer: string, body: Record<string, unknown>) {
 		const network = this.assertNetwork(body.network);
@@ -526,20 +530,22 @@ export class ControlService {
 		const modelId = assertModelId(body.model);
 		const maxInputTokens = assertTokenCount(body.maxInputTokens, 'maxInputTokens', MAX_INPUT_TOKENS);
 		const maxOutputTokens = assertTokenCount(body.maxOutputTokens, 'maxOutputTokens', 32_768);
+		const maxPrice = body.maxPrice ? assertPrice(body.maxPrice, 'maxPrice') : undefined;
+		const allowedProviders = Array.isArray(body.allowedProviders) && body.allowedProviders.length ? body.allowedProviders.map((k, i) => assertKeetaAddress(k, `allowedProviders[${i}]`)) : undefined;
 		const { provider, offer } = await this.schedule({
 			network,
 			buyer,
 			modelId,
 			maxInputTokens,
 			maxOutputTokens,
-			...(body.maxPrice ? { maxPrice: assertPrice(body.maxPrice, 'maxPrice') } : {}),
+			...(maxPrice ? { maxPrice } : {}),
 			...(body.maxCost !== undefined ? { maxCost: assertBaseUnits(body.maxCost, 'maxCost') } : {}),
-			...(Array.isArray(body.allowedProviders) ? { allowedProviders: body.allowedProviders.map((k, i) => assertKeetaAddress(k, `allowedProviders[${i}]`)) } : {}),
+			...(allowedProviders ? { allowedProviders } : {}),
 			...(Array.isArray(body.excludeProviders) ? { excludeProviders: body.excludeProviders.map((k, i) => assertKeetaAddress(k, `excludeProviders[${i}]`)) } : {}),
 			publicOnly: false
 		});
 		const limits = { maxInputTokens, maxOutputTokens };
-		const needed = maxJobCost(offer.price, limits);
+		const needed = escrowAmount(offer.price, limits);
 		let held: bigint | undefined;
 		if (this.config.creditBalanceOf) {
 			held = await this.config.creditBalanceOf({ network, account: buyer, token: credits.token }).catch((error: Error) => {
@@ -563,49 +569,41 @@ export class ControlService {
 			paymentMode: 'escrow',
 			asset: credits.token,
 			quoteExpiresAt: now + QUOTE_TTL_MS,
+			...(maxPrice ? { maxPrice } : {}),
+			...(allowedProviders ? { allowedProviders } : {}),
 			status: 'quoted',
 			createdAt: now
 		};
 		/*
-		 * Atomic per buyer, so parallel requests cannot hold more providers than
-		 * the caps, a buyer that keeps leaving holds unused stops getting them,
-		 * and quotes waiting for escrow must fit in the balance together: one
-		 * balance cannot back several holds.
+		 * Atomic per buyer, so parallel requests cannot pass the caps, and
+		 * quotes waiting for escrow must fit in the balance together: one
+		 * balance cannot back several quotes.
 		 */
-		await this.store.putJobIf(job, now - UNUSED_HOLD_WINDOW_MS, (openQuotes, recent) => {
+		await this.store.putJobIf(job, now - QUOTE_TTL_MS - TICKET_TTL_MS, (openQuotes, recent) => {
 			const waiting = openQuotes.filter((j) => (j.quoteExpiresAt ?? 0) > now);
 			if (waiting.length >= MAX_OPEN_QUOTES) {
 				throw new TooManyRequestsError(`at most ${MAX_OPEN_QUOTES} quotes may wait for escrow at once; escrow or cancel one first`);
 			}
-			const ticketed = recent.filter((j) => j.status === 'scheduled' && holdsSlotAt(j, now));
-			if (waiting.length + ticketed.length >= MAX_HELD_SLOTS) {
-				throw new TooManyRequestsError(`at most ${MAX_HELD_SLOTS} jobs may hold providers at once; wait for one to finish`);
+			const ticketed = recent.filter((j) => holdsSlotAt(j, now));
+			if (waiting.length + ticketed.length >= MAX_IN_FLIGHT) {
+				throw new TooManyRequestsError(`at most ${MAX_IN_FLIGHT} jobs may be in flight at once; wait for one to finish`);
 			}
-			const unused = recent.filter((j) => unusedHold(j, now));
-			if (unused.length >= UNUSED_HOLD_LIMIT) {
-				const retryAt = Math.min(...unused.map((j) => j.createdAt)) + UNUSED_HOLD_WINDOW_MS;
-				throw new TooManyRequestsError(
-					`${unused.length} recent quotes or tickets went unused; new quotes resume in ${Math.ceil((retryAt - now) / 1000)} seconds`,
-					Math.max(1, Math.ceil((retryAt - now) / 1000))
-				);
-			}
-			const committed = waiting.reduce((sum, j) => sum + maxJobCost(j.price, j), 0n);
+			const committed = waiting.reduce((sum, j) => sum + escrowAmount(j.price, j), 0n);
 			if (held !== undefined && committed + needed > held) {
 				throw new PaymentRequiredError(`your quotes waiting for escrow can cost up to ${committed} credit base units, this one up to ${needed} more, and the account holds ${held}; escrow or cancel a quote, or buy credits`);
 			}
 		});
-		/* The quote holds the provider's slot while the buyer escrows, through the run, until the receipt. */
-		await this.store.updateProvider(provider.nodeKey, (record) => ({ ...record, load: { ...record.load, active: record.load.active + 1 } }));
 		return { job: redactJob(job), quote: quoteFor(job, credits), relayUrl: this.config.relayUrl };
 	}
 
 	/**
 	 * The buyer reports the block escrowing a quoted job. Once the ledger shows
-	 * that block, signed by the buyer, sending the quote's maximum cost in
+	 * that block, signed by the buyer, sending the quote's escrow amount in
 	 * credits to the settlement account with the job id as its reference, the
-	 * ticket is issued. Only the block's hash is stored. The same block can be
-	 * reported again and returns the ticket again; an escrow that arrives
-	 * after its quote expired is refunded.
+	 * ticket is issued and takes a provider slot (placeTicket). Only the
+	 * block's hash is stored. The same block can be reported again and
+	 * returns the ticket again; an escrow that arrives after its quote
+	 * expired, or finds no provider with a free slot, is refunded.
 	 */
 	async submitEscrow(buyer: string, jobId: string, body: Record<string, unknown>) {
 		const blockHash = assertBlockHash(body.blockHash);
@@ -629,7 +627,7 @@ export class ControlService {
 			from: buyer,
 			to: credits.settlement,
 			asset: job.asset,
-			minAmount: maxJobCost(job.price, job),
+			minAmount: escrowAmount(job.price, job),
 			reference: jobId
 		});
 		if (check.status === 'rejected') {
@@ -639,21 +637,24 @@ export class ControlService {
 			return { job: redactJob(job), pending: true };
 		}
 		const now = this.now();
-		let freed = false;
+		const live = (current: JobRecord) => current.status === 'quoted' && now <= (current.quoteExpiresAt ?? 0);
+		const placed = live(job) ? await this.placeTicket(job, now) : null;
+		let unused: string | null = null;
 		const updated = await this.store.updateJob(jobId, (current) => {
-			freed = false; /* a store may retry this update */
+			unused = null; /* a store may retry this update */
 			if (current.escrow) {
+				unused = placed?.nodeKey ?? null;
 				return current;
 			}
 			const escrow = { blockHash, at: now };
-			if (current.status === 'quoted' && now <= (current.quoteExpiresAt ?? 0)) {
-				return { ...current, escrow, status: 'scheduled', ticketIssuedAt: now };
+			if (live(current) && placed) {
+				return { ...current, ...placed, escrow, status: 'scheduled', ticketIssuedAt: now };
 			}
-			freed = holdsSlot(current);
-			return { ...current, escrow, status: 'expired', completedAt: now, error: 'the escrow arrived after the quote expired' };
+			unused = placed?.nodeKey ?? null;
+			return { ...current, escrow, status: 'expired', completedAt: now, error: live(current) ? NO_PROVIDER : 'the escrow arrived after the quote expired' };
 		});
-		if (freed) {
-			await this.releaseSlot(updated.nodeKey);
+		if (unused) {
+			await this.releaseSlot(unused);
 		}
 		if (updated.status === 'expired') {
 			this.settleInBackground(jobId);
@@ -669,9 +670,60 @@ export class ControlService {
 			return { job: redactJob(job), ticket: await this.signTicket(job), relayUrl: this.config.relayUrl };
 		}
 		if (job.status === 'expired' && !job.ticketIssuedAt) {
+			if (job.error === NO_PROVIDER) {
+				throw new NoProviderError(`${NO_PROVIDER}; the escrow is refunded, so ask again`);
+			}
 			throw new QuoteExpiredError('the quote expired before its escrow arrived; the escrow is refunded');
 		}
 		throw new ConflictError(`job is already ${job.status}`);
+	}
+
+	/**
+	 * Take a slot for a ticket: on the quoted provider or, when it filled up
+	 * or went offline since the quote (quotes hold no slots), on another that
+	 * fits the same request and whose escrow is no larger. Null when none has
+	 * a free slot.
+	 */
+	private async placeTicket(job: JobRecord, now: number): Promise<Pick<JobRecord, 'nodeKey' | 'payTo' | 'price'> | null> {
+		if (await this.takeSlot(job.nodeKey, now)) {
+			return { nodeKey: job.nodeKey, payTo: job.payTo, price: job.price };
+		}
+		const tried = [job.nodeKey];
+		for (let attempt = 0; attempt < 3; attempt++) {
+			const next = await this.schedule({
+				network: job.network,
+				buyer: job.buyer,
+				modelId: job.modelId,
+				maxInputTokens: job.maxInputTokens,
+				maxOutputTokens: job.maxOutputTokens,
+				...(job.maxPrice ? { maxPrice: job.maxPrice } : {}),
+				...(job.allowedProviders ? { allowedProviders: job.allowedProviders } : {}),
+				maxCost: escrowAmount(job.price, job),
+				excludeProviders: tried,
+				publicOnly: false
+			}).catch((error: unknown) => {
+				if (error instanceof UnavailableError || error instanceof CostCeilingError) {
+					return null;
+				}
+				throw error;
+			});
+			if (!next) {
+				return null;
+			}
+			if (await this.takeSlot(next.provider.nodeKey, now)) {
+				return { nodeKey: next.provider.nodeKey, payTo: next.provider.payTo, price: next.offer.price };
+			}
+			tried.push(next.provider.nodeKey);
+		}
+		return null;
+	}
+
+	/** Take one of a provider's slots, if it is online with one free. */
+	private async takeSlot(nodeKey: string, now: number): Promise<boolean> {
+		const taken = await this.store.updateProvider(nodeKey, (record) =>
+			record.status === 'online' && record.lastHeartbeat >= now - PROVIDER_STALE_MS && record.load.active < record.load.capacity ? { ...record, load: { ...record.load, active: record.load.active + 1 } } : null
+		);
+		return taken !== null;
 	}
 
 	/* ---------------------------------------------------------------- router */
@@ -860,10 +912,11 @@ export class ControlService {
 
 	/**
 	 * The buyer gives back a quote or ticket it will not use (spend limit, no
-	 * credits, relay unreachable, a broken stream), freeing the provider. An
-	 * unpaid quote just expires. An escrowed ticket stays open until it
-	 * settles, so a provider that already streamed is still paid for what the
-	 * relay forwarded, and the rest comes back to the buyer.
+	 * credits, relay unreachable, a broken stream). A quote just expires, and
+	 * an escrow reported for it afterwards is refunded in full. A ticket frees
+	 * its provider but stays open until it settles, so a provider that already
+	 * streamed is still paid for what the relay forwarded, and the rest comes
+	 * back to the buyer (less the no-show fee if it never reached the relay).
 	 */
 	async cancelJob(buyer: string, jobId: string) {
 		const job = await this.store.getJob(jobId);
@@ -875,18 +928,9 @@ export class ControlService {
 		}
 		/* Cancelling a quote twice, or one that already expired, is harmless. */
 		if (job.status === 'quoted' || (job.status === 'expired' && !job.ticketIssuedAt)) {
-			let freed = false;
-			const updated = await this.store.updateJob(jobId, (current) => {
-				freed = false;
-				if (current.status !== 'quoted' || current.escrow) {
-					return current;
-				}
-				freed = holdsSlot(current);
-				return { ...current, status: 'expired', completedAt: this.now(), error: 'cancelled by the buyer' };
-			});
-			if (freed) {
-				await this.releaseSlot(updated.nodeKey);
-			}
+			const updated = await this.store.updateJob(jobId, (current) =>
+				current.status !== 'quoted' || current.escrow ? current : { ...current, status: 'expired', completedAt: this.now(), error: 'cancelled by the buyer' }
+			);
 			return { job: redactJob(updated) };
 		}
 		if (job.status !== 'scheduled') {
@@ -920,24 +964,49 @@ export class ControlService {
 		return updated;
 	}
 
-	/** The relay records what it forwarded to the buyer of an app job; the first record stands. */
+	/**
+	 * The relay records what it forwarded to the buyer of an app job, when the
+	 * buyer brought the ticket and, if it hung up before any text, when; the
+	 * first record stands.
+	 */
 	async recordDelivery(jobId: string, body: Record<string, unknown>) {
 		const outputHash = typeof body.outputHash === 'string' && /^[0-9a-f]{64}$/.test(body.outputHash) ? body.outputHash : null;
 		const maxOutputTokens = Number.isInteger(body.maxOutputTokens) && (body.maxOutputTokens as number) >= 0 ? (body.maxOutputTokens as number) : null;
 		if (!outputHash || maxOutputTokens === null) {
 			throw new ValidationError('outputHash and maxOutputTokens are required');
 		}
+		const time = (field: string) => {
+			const value = body[field];
+			if (value === undefined) {
+				return {};
+			}
+			if (!Number.isSafeInteger(value) || (value as number) < 0) {
+				throw new ValidationError(`${field} must be a time in milliseconds`);
+			}
+			return { [field]: value as number };
+		};
+		const timing = { ...time('presentedAt'), ...time('abandonedAt') };
 		const job = await this.store.updateJob(jobId, (current) => {
 			if (current.paymentMode !== 'escrow' || current.delivery) {
 				return current;
 			}
-			return { ...current, delivery: { outputHash, maxOutputTokens, at: this.now() } };
+			return { ...current, delivery: { outputHash, maxOutputTokens, at: this.now(), ...timing } };
 		});
 		/* The receipt may already be here; settle without holding up the relay, which passes the receipt on after this. */
 		if (job.receipt && !job.settlement) {
 			this.settleInBackground(jobId);
 		}
 		return { recorded: job.delivery?.outputHash === outputHash };
+	}
+
+	/**
+	 * The relay could not forward an app job because its provider was not
+	 * connected when the buyer brought the ticket. The buyer showed up, so the
+	 * ticket owes no no-show fee; it settles with the rest at the lapse.
+	 */
+	async recordProviderOffline(jobId: string) {
+		const job = await this.store.updateJob(jobId, (current) => (current.paymentMode !== 'escrow' || current.providerOfflineAt ? current : { ...current, providerOfflineAt: this.now() }));
+		return { recorded: job.providerOfflineAt !== undefined };
 	}
 
 	/* -------------------------------------------------------------- settlement */
@@ -967,7 +1036,7 @@ export class ControlService {
 			if (!outcome) {
 				return current;
 			}
-			decided = { reason: outcome.reason, decidedAt: now };
+			decided = { reason: outcome.reason, decidedAt: now, ...(outcome.noShow ? { noShow: true } : {}) };
 			return { ...current, status: outcome.status, completedAt: current.completedAt ?? now, settlement: decided, payoutDue: true };
 		});
 		if (decided?.reason === 'mismatch' || decided?.reason === 'no-delivery') {
@@ -1030,9 +1099,10 @@ export class ControlService {
 
 	/**
 	 * The payout's sends, from the ledger: the escrow block's amount for this
-	 * job, split by the settlement reason. Delivered: the receipt's amount
-	 * (never more than the escrow) to the provider and the rest to the buyer;
-	 * anything else: all of it back to the buyer.
+	 * job, split by the settlement. Delivered: the receipt's amount to the
+	 * provider and the rest to the buyer; anything else: all of it back to the
+	 * buyer. A ticket not used promptly (`noShow`) adds NO_SHOW_FEE to the
+	 * provider's share, which never exceeds the escrow.
 	 */
 	private async payoutSends(job: JobRecord): Promise<Array<{ to: string; amount: bigint }>> {
 		const check = await this.config.verifyPayment({
@@ -1048,8 +1118,8 @@ export class ControlService {
 			throw new Error(`the escrow block cannot be read from the ledger right now (${check.status})`);
 		}
 		const escrowed = check.amount;
-		const billed = job.settlement!.reason === 'delivered' ? BigInt(job.receipt!.receipt.amount) : 0n;
-		const provider = billed < escrowed ? billed : escrowed;
+		const owed = (job.settlement!.reason === 'delivered' ? BigInt(job.receipt!.receipt.amount) : 0n) + (job.settlement!.noShow ? NO_SHOW_FEE : 0n);
+		const provider = owed < escrowed ? owed : escrowed;
 		return [
 			{ to: job.payTo, amount: provider },
 			{ to: job.buyer, amount: escrowed - provider }
@@ -1072,18 +1142,9 @@ export class ControlService {
 		let settled = 0;
 		let paidOut = 0;
 		for (const job of await this.store.listJobsByStatus('quoted', now - QUOTE_TTL_MS, 200)) {
-			let freed = false;
-			const updated = await this.store.updateJob(job.jobId, (current) => {
-				freed = false;
-				if (current.status !== 'quoted' || current.escrow || (current.quoteExpiresAt ?? 0) > now) {
-					return current;
-				}
-				freed = holdsSlot(current);
-				return { ...current, status: 'expired', completedAt: now };
-			});
-			if (freed) {
-				await this.releaseSlot(updated.nodeKey);
-			}
+			const updated = await this.store.updateJob(job.jobId, (current) =>
+				current.status !== 'quoted' || current.escrow || (current.quoteExpiresAt ?? 0) > now ? current : { ...current, status: 'expired', completedAt: now }
+			);
 			expired += updated.status === 'expired' ? 1 : 0;
 		}
 		const ticketLapse = now - TICKET_TTL_MS - 5 * 60_000;
@@ -1261,7 +1322,7 @@ function quoteFor(job: JobRecord, credits: NetworkCredits): EscrowQuote {
 	return {
 		jobId: job.jobId,
 		network: job.network,
-		maxCost: maxJobCost(job.price, job).toString(),
+		maxCost: escrowAmount(job.price, job).toString(),
 		token: credits.token,
 		decimals: credits.decimals,
 		settlement: credits.settlement,
@@ -1353,29 +1414,14 @@ function deliveryMatches(job: JobRecord): boolean {
 	return Boolean(job.delivery && billed && billed.outputHash === job.delivery.outputHash && billed.outputTokens <= job.delivery.maxOutputTokens);
 }
 
-/** Whether an app job holds a slot in its provider's load: from its quote until its receipt, failure, handback or expiry. */
+/** Whether an app job holds a slot in its provider's load: from its ticket (issued on escrow) until its receipt, failure, handback or expiry. */
 function holdsSlot(job: JobRecord): boolean {
-	return job.paymentMode === 'escrow' && (job.status === 'quoted' || job.status === 'scheduled') && !job.handedBackAt;
+	return job.paymentMode === 'escrow' && job.status === 'scheduled' && !job.handedBackAt;
 }
 
-/** Whether a job holds its slot at `now`: a quote until it expires, a ticket until it can no longer start. */
+/** Whether a job holds its slot at `now`: a ticket until it can no longer start. */
 function holdsSlotAt(job: JobRecord, now: number): boolean {
-	return holdsSlot(job) && (job.status === 'quoted' ? (job.quoteExpiresAt ?? 0) > now : (job.ticketIssuedAt ?? job.createdAt) > now - TICKET_TTL_MS);
-}
-
-/**
- * Whether an app job held a provider's slot and gave it up without running:
- * a quote cancelled or expired, or a ticket handed back or lapsed, with no
- * receipt and nothing delivered. A provider failure is not the buyer's.
- */
-function unusedHold(job: JobRecord, now: number): boolean {
-	if (job.paymentMode !== 'escrow' || job.receipt || job.delivery) {
-		return false;
-	}
-	if (job.status === 'expired') {
-		return true;
-	}
-	return (job.status === 'quoted' || (job.status === 'scheduled' && Boolean(job.handedBackAt))) && !holdsSlotAt(job, now);
+	return holdsSlot(job) && (job.ticketIssuedAt ?? job.createdAt) > now - TICKET_TTL_MS;
 }
 
 /**
@@ -1383,11 +1429,17 @@ function unusedHold(job: JobRecord, now: number): boolean {
  * delivery record decides: a receipt billing exactly the text the relay
  * forwarded is paid, the rest of the escrow refunded. A mismatch, a provider
  * failure, a receipt whose record has not come DELIVERY_GRACE_MS after it,
- * a record with no receipt at the lapse, or a ticket never used refunds the
- * buyer in full.
+ * a record (or the relay finding the provider offline) with no receipt at
+ * the lapse, or an escrow that never got a ticket refunds the buyer in full.
+ *
+ * A ticket holds its provider's slot, so one not used promptly owes the
+ * provider NO_SHOW_FEE: one the relay never saw (a no-show), one the buyer
+ * hung up on before any text came back (also a no-show), and one brought to
+ * the relay late (the fee on top of what the job billed).
  */
-function decideSettlement(job: JobRecord, now: number): { status: JobStatus; reason: SettlementReason } | null {
+function decideSettlement(job: JobRecord, now: number): { status: JobStatus; reason: SettlementReason; noShow?: boolean } | null {
 	const refund = (status: JobStatus, reason: SettlementReason) => ({ status, reason });
+	const noShow = { status: 'expired', reason: 'no-show', noShow: true } as const;
 	if (job.status === 'expired') {
 		return refund('expired', 'expired');
 	}
@@ -1395,17 +1447,28 @@ function decideSettlement(job: JobRecord, now: number): { status: JobStatus; rea
 		return refund('failed', 'failed');
 	}
 	const billed = job.receipt?.receipt;
-	if (billed && job.delivery) {
-		return deliveryMatches(job) ? { status: 'paid', reason: 'delivered' } : refund('disputed', 'mismatch');
+	const issued = job.ticketIssuedAt ?? job.createdAt;
+	const delivery = job.delivery;
+	if (billed && delivery) {
+		const late = delivery.presentedAt !== undefined && delivery.presentedAt > issued + NO_SHOW_WINDOW_MS;
+		return deliveryMatches(job) ? { status: 'paid', reason: 'delivered', ...(late ? { noShow: true } : {}) } : refund('disputed', 'mismatch');
 	}
 	if (billed) {
 		/* The receipt can land before the relay's record, which the relay retries: wait for it, for a bounded time. */
 		return now < (job.completedAt ?? now) + DELIVERY_GRACE_MS ? null : refund('disputed', 'no-delivery');
 	}
-	if (now < (job.ticketIssuedAt ?? job.createdAt) + SETTLE_LAPSE_MS) {
+	if (now < issued + SETTLE_LAPSE_MS) {
 		return null;
 	}
-	return job.delivery ? refund('failed', 'no-receipt') : refund('expired', 'expired');
+	if (job.providerOfflineAt) {
+		return refund('failed', 'no-receipt');
+	}
+	if (!delivery) {
+		return noShow;
+	}
+	/* Hanging up before the provider sent anything, and soon after arriving, is the buyer's choice; waiting longer is the provider stalling. */
+	const quit = delivery.abandonedAt !== undefined && delivery.presentedAt !== undefined && delivery.abandonedAt - delivery.presentedAt < NO_SHOW_WINDOW_MS;
+	return quit ? noShow : refund('failed', 'no-receipt');
 }
 
 function assertBlockHash(value: unknown): string {

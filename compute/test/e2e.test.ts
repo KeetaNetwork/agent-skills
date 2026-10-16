@@ -22,7 +22,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ONE_CREDIT, availableAssets, chunkText, maxJobCost, maxOutputTokensFor, promptTokenBound, randomId, sha256Hex, sseData, sseEvent, toHex, type ChatCompletionRequest, type HardwareProfile, type JobEnvelope, type ProviderFrame } from '@keeta-compute/protocol';
+import { ONE_CREDIT, availableAssets, chunkText, escrowAmount, maxOutputTokensFor, promptTokenBound, randomId, sha256Hex, sseData, sseEvent, toHex, type ChatCompletionRequest, type HardwareProfile, type JobEnvelope, type ProviderFrame } from '@keeta-compute/protocol';
 import { Account } from '@keeta-compute/protocol/keeta';
 import { startServer } from '../services/control/src/server.ts';
 import { checkEnvelope, checkProviderToken } from '../services/relay/src/relay.ts';
@@ -362,10 +362,10 @@ test('a buyer buys credits with a stablecoin, escrows each job at ticket time, a
 	assert.equal(paidFirst.settlement!.reason, 'delivered');
 	assert.equal(paidFirst.nodeKey, macKey);
 	assert.equal(paidFirst.payTo, operator);
-	/* At ticket time the budget escrowed the job's maximum cost in credits with the settlement account. */
+	/* At ticket time the budget escrowed the job's maximum cost (at least the no-show fee) in credits with the settlement account. */
 	const escrows = ledger.sendsFor(first.jobId, spendKey);
 	assert.equal(escrows.length, 1);
-	assert.deepEqual([escrows[0]!.to, escrows[0]!.token, escrows[0]!.amount, escrows[0]!.block], [SETTLEMENT, CREDITS, maxJobCost(paidFirst.price, paidFirst), paidFirst.escrow!.blockHash]);
+	assert.deepEqual([escrows[0]!.to, escrows[0]!.token, escrows[0]!.amount, escrows[0]!.block], [SETTLEMENT, CREDITS, escrowAmount(paidFirst.price, paidFirst), paidFirst.escrow!.blockHash]);
 	/* The relay's record matched the receipt: one block pays the provider 3 base units (12 in at 0.10/M + 3 out at 0.40/M, rounded up) and returns the rest. */
 	const firstPayout = ledger.sendsFor(first.jobId, SETTLEMENT);
 	assert.deepEqual(firstPayout.map((s) => [s.to, s.amount, s.block]), [

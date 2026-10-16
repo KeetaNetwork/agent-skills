@@ -13,10 +13,12 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import {
 	CREDIT_DECIMALS,
 	CREDIT_SYMBOL,
+	NO_SHOW_FEE,
 	ValidationError,
 	aggregateCompletion,
 	assertChatRequest,
 	chunkText,
+	escrowAmount,
 	formatAmount,
 	jobAuthMessage,
 	jobCost,
@@ -197,7 +199,8 @@ export class Buyer {
 				return json(res, error.status, { error: { code: error.code, message: error.message, type: error.code } });
 			}
 			if (error instanceof ControlError) {
-				const status = error.status === 503 || error.status === 429 || error.status === 402 ? error.status : 502;
+				/* No provider had room when the escrow arrived: refunded, and worth asking again. */
+				const status = error.status === 503 || error.status === 429 || error.status === 402 ? error.status : error.code === 'no_provider' ? 503 : 502;
 				return json(res, status, { error: { code: error.code, message: error.message, type: error.code } });
 			}
 			this.deps.log('error', `buyer request failed: ${(error as Error).message}`);
@@ -287,7 +290,7 @@ export class Buyer {
 	private checkQuote(job: JobRecord, quote: EscrowQuote, limits: { maxInputTokens: number; maxOutputTokens: number }): void {
 		const policy = this.deps.store.state.buyer;
 		const maxCost = BigInt(quote.maxCost);
-		if (job.jobId !== quote.jobId || job.asset !== quote.token || maxCost !== maxJobCost(job.price, limits)) {
+		if (job.jobId !== quote.jobId || job.asset !== quote.token || maxCost !== escrowAmount(job.price, limits)) {
 			throw new HttpError(502, 'invalid_quote', 'the control plane quoted a job other than the one requested');
 		}
 		const credits = (amount: bigint | string) => `${formatAmount(BigInt(amount), quote.decimals)} ${CREDIT_SYMBOL}`;
@@ -385,17 +388,27 @@ export class Buyer {
 		const request: ChatCompletionRequest = { ...body, stream: true, stream_options: { include_usage: true } };
 		const envelope: JobEnvelope = { ticket, request, buyerSig: await spend.sign(await jobAuthMessage(t.jobId, request)) };
 		const fetchImpl = this.deps.fetchImpl ?? fetch;
+		/* Recorded before the relay is tried, so followUp() reads how the escrow settled even if the job never runs. */
+		const summary: JobSummary = { jobId: t.jobId, role: 'buyer', modelId: t.modelId, counterparty: t.payTo, inputTokens: 0, outputTokens: 0, amount: '0', status: 'running', at: Date.now() };
+		this.deps.onJob(summary);
+		const notRun = (error: string) => this.deps.onJob({ ...summary, error: `${error}; settling the escrow`, at: Date.now() });
 		const upstream = await fetchImpl(`${store.state.relayUrl}/v1/jobs/${t.jobId}/run`, {
 			method: 'POST',
 			headers: { 'content-type': 'application/json' },
 			body: JSON.stringify(envelope),
 			signal
+		}).catch((error: Error) => {
+			if (signal.aborted) {
+				notRun('the caller hung up');
+				throw error;
+			}
+			notRun('the relay could not be reached');
+			throw new HttpError(502, 'relay_unreachable', `the relay could not be reached (${error.message}); the escrow is settled later`);
 		});
 		if (!upstream.ok || !upstream.body) {
-			throw new HttpError(502, 'provider_unavailable', 'the provider could not take the job; its escrow is refunded');
+			notRun('the provider could not take the job');
+			throw new HttpError(502, 'provider_unavailable', 'the provider could not take the job; its escrow comes back when it settles');
 		}
-		const summary: JobSummary = { jobId: t.jobId, role: 'buyer', modelId: t.modelId, counterparty: t.payTo, inputTokens: 0, outputTokens: 0, amount: '0', status: 'running', at: Date.now() };
-		this.deps.onJob(summary);
 
 		let receipt: SignedReceipt | undefined;
 		/* The text this buyer received, rebuilt exactly as the provider hashes it into the receipt. */
@@ -561,8 +574,11 @@ export class Buyer {
 				continue;
 			}
 			try {
+				/* Its request gave up: give the quote back first, so the escrow is refunded in full rather than buying a ticket nobody runs. */
+				await this.cancel(pending.jobId);
 				const ticket = await this.reportEscrow(pending, [0]);
 				if (ticket) {
+					/* An earlier report already got the ticket: hand it back. */
 					await this.cancel(pending.jobId);
 				}
 				reported++;
@@ -592,11 +608,18 @@ export class Buyer {
 			}
 			settled++;
 			const billed = job.receipt?.receipt;
+			/* A ticket not used promptly also paid the provider the no-show fee (counted here; the receipt only counts the bill). */
+			const fee = job.settlement.noShow ? NO_SHOW_FEE : 0n;
+			if (fee) {
+				store.addToDay('spentByDay', fee, job.ticketIssuedAt);
+			}
 			if (job.settlement.reason === 'delivered' && billed) {
 				if (summary.status === 'running') {
 					store.addToDay('spentByDay', BigInt(billed.amount), billed.finishedAt);
 				}
-				this.deps.onJob({ ...summary, inputTokens: billed.inputTokens, outputTokens: billed.outputTokens, amount: billed.amount, status: 'paid', at: Date.now() });
+				this.deps.onJob({ ...summary, inputTokens: billed.inputTokens, outputTokens: billed.outputTokens, amount: (BigInt(billed.amount) + fee).toString(), status: 'paid', at: Date.now() });
+			} else if (fee) {
+				this.deps.onJob({ ...summary, amount: fee.toString(), status: 'failed', error: 'the provider kept the no-show fee: the ticket did not reach the relay in time, or the request was cancelled before any text', at: Date.now() });
 			} else {
 				this.deps.onJob({ ...summary, amount: '0', status: 'failed', error: `refunded (${job.settlement.reason})`, at: Date.now() });
 			}

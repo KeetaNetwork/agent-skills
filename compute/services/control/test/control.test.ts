@@ -11,6 +11,9 @@ import {
 	assetListing,
 	defaultAsset,
 	generatePairingCode,
+	NO_SHOW_FEE,
+	NO_SHOW_WINDOW_MS,
+	escrowAmount,
 	jobCost,
 	maxJobCost,
 	operatorLinkMessage,
@@ -249,7 +252,8 @@ function receiptFor(t: JobTicket, buyer: string, options: { inputTokens?: number
 }
 
 const fileReceipt = async (h: Harness, node: Signer, receipt: Receipt) => h.call(node, 'POST', `/v1/jobs/${receipt.jobId}/receipt`, { receipt: { receipt, signature: await node.sign(receiptMessage(receipt)) } });
-const deliver = (h: Harness, jobId: string, outputHash: string, maxOutputTokens = 20) => h.call(null, 'POST', `/v1/relay/jobs/${jobId}/delivery`, { outputHash, maxOutputTokens }, ROUTER);
+const deliver = (h: Harness, jobId: string, outputHash: string, maxOutputTokens = 20, timing: Record<string, unknown> = {}) =>
+	h.call(null, 'POST', `/v1/relay/jobs/${jobId}/delivery`, { outputHash, maxOutputTokens, ...timing }, ROUTER);
 
 /** Settlement runs in the background after a receipt, failure or delivery record; wait for its payout block. */
 async function paidOut(h: Harness, jobId: string): Promise<JobRecord> {
@@ -299,7 +303,7 @@ test('an app job: quoted in credits, escrowed on the ledger before the ticket, p
 	const models = await h.call(null, 'GET', '/v1/models?network=test');
 	assert.deepEqual((models.body as { models: { id: string }[] }).models.map((m) => m.id), ['qwen3-8b']);
 
-	/* The quote: the most the job can cost, in credits, to escrow with the settlement account. No ticket yet. */
+	/* The quote: the most the job can cost (at least the no-show fee), in credits, to escrow with the settlement account. No ticket yet. */
 	const buyer = newBuyer();
 	const created = await quote(h, buyer, { maxInputTokens: 200, maxOutputTokens: 100 });
 	const q = created.quote;
@@ -308,7 +312,7 @@ test('an app job: quoted in credits, escrowed on the ledger before the ticket, p
 	assert.deepEqual(q, {
 		jobId: created.job.jobId,
 		network: 'test',
-		maxCost: maxJobCost(offer('qwen3-8b').price, { maxInputTokens: 200, maxOutputTokens: 100 }).toString(),
+		maxCost: escrowAmount(offer('qwen3-8b').price, { maxInputTokens: 200, maxOutputTokens: 100 }).toString(),
 		token: CREDITS,
 		decimals: CREDIT_DECIMALS,
 		settlement: h.settlement.account,
@@ -383,7 +387,7 @@ test('an app job: quoted in credits, escrowed on the ledger before the ticket, p
 	assert.equal(h.payouts.published, 1);
 });
 
-test('the escrow comes back in full on a mismatch, a provider failure, a missing receipt or record, or an unused ticket', async () => {
+test('the escrow comes back in full on a mismatch, a provider failure or a missing receipt or record, and less the no-show fee for a ticket never brought to the relay', async () => {
 	const h = harness();
 	const { node, operator } = await registerMac(h);
 	const online = () => h.call(node, 'POST', '/v1/providers/heartbeat', { status: 'online', offers: [offer('qwen3-8b')], load: { active: 0, capacity: 8 } });
@@ -436,10 +440,15 @@ test('the escrow comes back in full on a mismatch, a provider failure, a missing
 	await deliver(h, noRecord.jobId, 'a'.repeat(64));
 	assert.equal(h.ledger.payouts(h.settlement.account, noRecord.jobId).blocks.length, 1, 'a record after the refund changes nothing');
 
-	/* At the lapse: a delivery record with no receipt, and a ticket never used. */
+	/* At the lapse: a delivery record with no receipt, a ticket the relay could not forward (the provider was offline), and a ticket never brought to the relay. */
 	const noReceipt = await escrowedJob(h, buyer);
 	await deliver(h, noReceipt.jobId, 'a'.repeat(64));
-	const unused = await escrowedJob(h, buyer);
+	const offline = await escrowedJob(h, buyer);
+	assert.equal((await h.call(null, 'POST', `/v1/relay/jobs/${offline.jobId}/provider-offline`, {})).status, 401, 'only the relay records it');
+	assert.equal(((await h.call(null, 'POST', `/v1/relay/jobs/${offline.jobId}/provider-offline`, {}, ROUTER)).body as { recorded: boolean }).recorded, true);
+	assert.equal((await h.call(buyer.signer, 'POST', `/v1/jobs/${offline.jobId}/cancel`, {})).status, 200);
+	/* Escrowed with a little extra, so the refund past the fee shows. */
+	const unused = await escrowedJob(h, buyer, { extra: 500n });
 	h.advance(SETTLE_LAPSE_MS - 1);
 	await h.service.sweep();
 	assert.equal(h.ledger.payouts(h.settlement.account, noReceipt.jobId).blocks.length, 0, 'nothing settles before the lapse');
@@ -448,13 +457,57 @@ test('the escrow comes back in full on a mismatch, a provider failure, a missing
 	assert.ok(freed!.handedBackAt, 'but frees its provider once the ticket is stale');
 	h.advance(2);
 	const failedBefore = (await h.store.getProvider(node.publicKey))!.stats.failed;
-	assert.deepEqual(await h.service.sweep(), { expired: 0, settled: 2, paidOut: 0 });
+	assert.deepEqual(await h.service.sweep(), { expired: 0, settled: 3, paidOut: 0 });
 	assert.equal((await refunded(noReceipt.jobId, noReceipt.escrowed)).settlement!.reason, 'no-receipt');
-	const lapsed = await refunded(unused.jobId, unused.escrowed);
+	assert.equal((await refunded(offline.jobId, offline.escrowed)).settlement!.reason, 'no-receipt', 'the buyer showed up, so it pays no fee');
+	assert.equal((await h.store.getProvider(node.publicKey))!.stats.failed, failedBefore + 2, 'a delivery with no receipt, or an offline provider, counts as a failure');
+	/* The ticket held the provider's slot and the buyer never brought it to the relay: the provider keeps the no-show fee. */
+	const lapsed = (await h.store.getJob(unused.jobId))!;
 	assert.equal(lapsed.status, 'expired');
-	assert.equal(lapsed.settlement!.reason, 'expired');
-	assert.equal((await h.store.getProvider(node.publicKey))!.stats.failed, failedBefore + 1, 'a delivery with no receipt counts as a failure');
-	assert.equal(operator.publicKey in h.ledger.payouts(h.settlement.account, unused.jobId).to, false);
+	assert.equal(lapsed.settlement!.reason, 'no-show');
+	assert.deepEqual(h.ledger.payouts(h.settlement.account, unused.jobId).to, { [operator.publicKey]: NO_SHOW_FEE, [buyer.address]: unused.escrowed - NO_SHOW_FEE });
+});
+
+test('a ticket not used promptly pays its provider the no-show fee: brought to the relay late, or hung up on before any text', async () => {
+	const h = harness();
+	const { node, operator } = await registerMac(h);
+	await h.call(node, 'POST', '/v1/providers/heartbeat', { status: 'online', offers: [offer('qwen3-8b')], load: { active: 0, capacity: 8 } });
+	const buyer = newBuyer();
+	const payouts = (jobId: string) => h.ledger.payouts(h.settlement.account, jobId).to;
+	const nothing = 'e'.repeat(64);
+
+	/* Brought to the relay on time: the bill only. Brought late: it runs and bills, and the provider also gets the fee. */
+	const prompt = await escrowedJob(h, buyer, { extra: 5_000n });
+	const promptReceipt = receiptFor(prompt.ticket, buyer.address);
+	await fileReceipt(h, node, promptReceipt);
+	await deliver(h, prompt.jobId, 'a'.repeat(64), 20, { presentedAt: h.now() + 500 });
+	assert.equal((await paidOut(h, prompt.jobId)).settlement!.noShow, undefined);
+	assert.deepEqual(payouts(prompt.jobId), { [operator.publicKey]: BigInt(promptReceipt.amount), [buyer.address]: prompt.escrowed - BigInt(promptReceipt.amount) });
+	const late = await escrowedJob(h, buyer, { extra: 5_000n });
+	const lateReceipt = receiptFor(late.ticket, buyer.address);
+	await fileReceipt(h, node, lateReceipt);
+	await deliver(h, late.jobId, 'a'.repeat(64), 20, { presentedAt: h.now() + NO_SHOW_WINDOW_MS + 1 });
+	const lateSettled = await paidOut(h, late.jobId);
+	assert.deepEqual([lateSettled.status, lateSettled.settlement!.reason, lateSettled.settlement!.noShow], ['paid', 'delivered', true]);
+	const lateOwed = BigInt(lateReceipt.amount) + NO_SHOW_FEE;
+	assert.deepEqual(payouts(late.jobId), { [operator.publicKey]: lateOwed, [buyer.address]: late.escrowed - lateOwed });
+
+	/* Hung up before any text: soon after arriving it is a no-show; after waiting out the window, the provider stalled and the buyer gets it all back. */
+	const quit = await escrowedJob(h, buyer, { extra: 5_000n });
+	const waited = await escrowedJob(h, buyer);
+	const arrived = h.now() + 500;
+	await deliver(h, quit.jobId, nothing, 16, { presentedAt: arrived, abandonedAt: arrived + 1_500 });
+	await deliver(h, waited.jobId, nothing, 16, { presentedAt: arrived, abandonedAt: arrived + NO_SHOW_WINDOW_MS + 1 });
+	assert.equal((await deliver(h, 'job_any', nothing, 16, { presentedAt: 'soon' })).status, 400, 'times are milliseconds');
+	h.advance(SETTLE_LAPSE_MS + 1);
+	const failedBefore = (await h.store.getProvider(node.publicKey))!.stats.failed;
+	await h.service.sweep();
+	const quitSettled = (await h.store.getJob(quit.jobId))!;
+	assert.deepEqual([quitSettled.status, quitSettled.settlement!.reason, quitSettled.settlement!.noShow], ['expired', 'no-show', true]);
+	assert.deepEqual(payouts(quit.jobId), { [operator.publicKey]: NO_SHOW_FEE, [buyer.address]: quit.escrowed - NO_SHOW_FEE });
+	assert.equal((await h.store.getJob(waited.jobId))!.settlement!.reason, 'no-receipt');
+	assert.deepEqual(payouts(waited.jobId), { [buyer.address]: waited.escrowed });
+	assert.equal((await h.store.getProvider(node.publicKey))!.stats.failed, failedBefore + 1, 'only the stall counts against the provider');
 });
 
 test('a payout is idempotent on the ledger: an attempt that published but never recorded is found, not paid twice', async () => {
@@ -552,35 +605,62 @@ test('quotes: an escrow after expiry is refunded, quotes nobody escrows expire, 
 	assert.equal((await quote(h, newBuyer())).job.status, 'quoted', 'the cap is per buyer');
 });
 
-test('a buyer that keeps leaving providers held unused stops getting quotes, holds at most eight, and can cap what a quote may cost', async () => {
+test('a quote holds no slot: the ticket takes one on escrow, on another provider if the quoted one filled up, else the escrow is refunded', async () => {
+	const h = harness();
+	const a = await registerMac(h);
+	const b = await registerMac(h);
+	const dear = await registerMac(h);
+	const dearPrice = { inputPerMillion: '100000000', outputPerMillion: '200000000' };
+	const heartbeat = (mac: { node: Signer }, capacity: number, price?: Offer['price']) =>
+		h.call(mac.node, 'POST', '/v1/providers/heartbeat', { status: 'online', offers: [offer('qwen3-8b', price ? { price } : {})], load: { active: 0, capacity } });
+	const escrow = async (buyer: Buyer, q: EscrowQuote) => {
+		const blockHash = await h.ledger.publish(buyer.account, [{ to: q.settlement, amount: BigInt(q.maxCost), token: q.token, external: q.jobId }]);
+		return h.call(buyer.signer, 'POST', `/v1/jobs/${q.jobId}/escrow`, { blockHash });
+	};
+
+	/* Only A is online, with one slot: three buyers get quotes for it, since quotes hold nothing. */
+	await heartbeat(a, 1);
+	const [first, second, third] = [newBuyer(), newBuyer(), newBuyer()];
+	const quotes = [await quote(h, first), await quote(h, second), await quote(h, third)];
+	assert.deepEqual(quotes.map((q) => q.job.nodeKey), [a.node.publicKey, a.node.publicKey, a.node.publicKey]);
+	assert.equal((await h.store.getProvider(a.node.publicKey))!.load.active, 0, 'no slot is held by a quote');
+
+	/* B comes online at the same price, and a provider whose escrow would be larger than the quote's. */
+	await heartbeat(b, 1);
+	await heartbeat(dear, 1, dearPrice);
+	assert.ok(escrowAmount(dearPrice, LIMITS) > BigInt(quotes[0]!.quote.maxCost));
+
+	/* The first escrow takes A's slot. The second finds A full and moves to B, which fits the quote. */
+	const ticketed = await escrow(first, quotes[0]!.quote);
+	assert.equal((ticketed.body as { ticket: SignedTicket }).ticket.ticket.nodeKey, a.node.publicKey);
+	const moved = await escrow(second, quotes[1]!.quote);
+	assert.equal(moved.status, 200, JSON.stringify(moved.body));
+	const movedTicket = (moved.body as { ticket: SignedTicket }).ticket.ticket;
+	assert.deepEqual([movedTicket.nodeKey, movedTicket.payTo], [b.node.publicKey, b.operator.publicKey], 'the ticket names B and pays B');
+	assert.equal((await h.store.getJob(quotes[1]!.job.jobId))!.nodeKey, b.node.publicKey);
+
+	/* The third finds A and B full, and the only provider left would cost more than its escrow: refunded in full. */
+	const refused = await escrow(third, quotes[2]!.quote);
+	assert.equal(refused.status, 409, JSON.stringify(refused.body));
+	assert.equal((refused.body as { error: { code: string } }).error.code, 'no_provider');
+	const expired = await paidOut(h, quotes[2]!.job.jobId);
+	assert.equal(expired.status, 'expired');
+	assert.deepEqual(h.ledger.payouts(h.settlement.account, quotes[2]!.job.jobId).to, { [third.address]: BigInt(quotes[2]!.quote.maxCost) });
+	assert.equal((await h.store.getProvider(dear.node.publicKey))!.load.active, 0, 'the dearer provider was not taken');
+	assert.equal((await escrow(third, quotes[2]!.quote)).status, 409, 'an escrow block for the expired job is refused too');
+
+	/* Heartbeats keep the tickets' slots held; a new quote goes to the one provider with room. */
+	await heartbeat(a, 1);
+	await heartbeat(b, 1);
+	assert.equal((await quote(h, newBuyer())).job.nodeKey, dear.node.publicKey);
+});
+
+test('a buyer has at most eight jobs in flight, and can cap what a quote may cost', async () => {
 	const h = harness();
 	const { node } = await registerMac(h);
-	const heartbeat = (capacity: number) => h.call(node, 'POST', '/v1/providers/heartbeat', { status: 'online', offers: [offer('qwen3-8b')], load: { active: 0, capacity } });
-	await heartbeat(1);
+	await h.call(node, 'POST', '/v1/providers/heartbeat', { status: 'online', offers: [offer('qwen3-8b')], load: { active: 0, capacity: 16 } });
 	const ask = (buyer: Buyer, extra: Record<string, unknown> = {}) => h.call(buyer.signer, 'POST', '/v1/jobs', { network: 'test', model: 'qwen3-8b', ...LIMITS, ...extra });
-	const cancel = (buyer: Buyer, jobId: string) => h.call(buyer.signer, 'POST', `/v1/jobs/${jobId}/cancel`, {});
 
-	/* Quote, cancel, quote again: each round holds the provider's only slot for free, so only three go unused. */
-	const squatter = newBuyer();
-	for (let i = 0; i < 2; i++) {
-		assert.equal((await cancel(squatter, (await quote(h, squatter)).job.jobId)).status, 200, 'cancelling a quote frees the slot');
-		h.advance(1000);
-	}
-	await quote(h, squatter);
-	h.advance(QUOTE_TTL_MS + 1);
-	await h.service.sweep();
-	const refused = await ask(squatter);
-	assert.equal(refused.status, 429, JSON.stringify(refused.body));
-	assert.match(JSON.stringify(refused.body), /3 recent quotes or tickets went unused/);
-	assert.ok(Number(refused.headers?.['retry-after']) > 0, 'it says when quotes resume');
-	assert.equal((await quote(h, newBuyer())).job.status, 'quoted', 'the provider is free for everyone else');
-	h.advance(10 * 60_000 - QUOTE_TTL_MS);
-	await h.service.sweep();
-	await heartbeat(1);
-	assert.equal((await quote(h, squatter)).job.status, 'quoted', 'quotes resume once the unused ones age out');
-
-	/* Jobs that ran do not count against a buyer, and no buyer holds more than eight providers' slots at once. */
-	await heartbeat(16);
 	const busy = newBuyer();
 	for (let i = 0; i < 5; i++) {
 		await escrowedJob(h, busy);
@@ -590,18 +670,18 @@ test('a buyer that keeps leaving providers held unused stops getting quotes, hol
 	}
 	const ninth = await ask(busy);
 	assert.equal(ninth.status, 429);
-	assert.match(JSON.stringify(ninth.body), /at most 8 jobs may hold providers at once/);
+	assert.match(JSON.stringify(ninth.body), /at most 8 jobs may be in flight at once/);
 
 	/* A cost ceiling skips providers above it instead of quoting a job the buyer would refuse. */
 	const careful = newBuyer();
-	const needed = maxJobCost(offer('qwen3-8b').price, LIMITS);
+	const needed = escrowAmount(offer('qwen3-8b').price, LIMITS);
 	const tooDear = await ask(careful, { maxCost: (needed - 1n).toString() });
 	assert.equal(tooDear.status, 402);
 	assert.match(JSON.stringify(tooDear.body), /would charge more than/);
 	assert.deepEqual(await h.store.listJobsByBuyer(careful.address, 10), [], 'no quote was made');
 	assert.equal((await ask(careful, { maxCost: 'lots' })).status, 400);
 	assert.equal((await quote(h, careful, LIMITS)).job.status, 'quoted');
-	assert.equal(((await ask(newBuyer(), { maxCost: needed.toString() })).body as { job: JobRecord }).job.status, 'quoted', 'a ceiling at the cost is enough');
+	assert.equal(((await ask(newBuyer(), { maxCost: needed.toString() })).body as { job: JobRecord }).job.status, 'quoted', 'a ceiling at the escrow is enough');
 });
 
 test('a quote needs the buyer to hold the job\'s maximum cost in credits on the ledger, so empty keys cannot hold providers', async () => {
@@ -619,7 +699,7 @@ test('a quote needs the buyer to hold the job\'s maximum cost in credits on the 
 	});
 	const { node } = await registerMac(h);
 	await h.call(node, 'POST', '/v1/providers/heartbeat', { status: 'online', offers: [offer('qwen3-8b')], load: { active: 0, capacity: 1 } });
-	const needed = maxJobCost(offer('qwen3-8b').price, LIMITS);
+	const needed = escrowAmount(offer('qwen3-8b').price, LIMITS);
 	const ask = (buyer: Buyer) => h.call(buyer.signer, 'POST', '/v1/jobs', { network: 'test', model: 'qwen3-8b', ...LIMITS });
 
 	const empty = newBuyer();
@@ -635,7 +715,7 @@ test('a quote needs the buyer to hold the job\'s maximum cost in credits on the 
 	assert.equal(unread.status, 503, 'a ledger that cannot be read refuses the quote rather than skipping the check');
 	ledgerDown = false;
 
-	/* None of the refusals held the provider's only slot. */
+	/* The refusals left the provider's only slot free. */
 	const funded = newBuyer();
 	balances.set(funded.address, needed);
 	const created = await quote(h, funded);
@@ -649,7 +729,7 @@ test('quotes waiting for escrow must fit in the buyer\'s balance together, so on
 	const { node } = await registerMac(h);
 	const online = () => h.call(node, 'POST', '/v1/providers/heartbeat', { status: 'online', offers: [offer('qwen3-8b')], load: { active: 0, capacity: 16 } });
 	await online();
-	const needed = maxJobCost(offer('qwen3-8b').price, LIMITS);
+	const needed = escrowAmount(offer('qwen3-8b').price, LIMITS);
 	const ask = (buyer: Buyer) => h.call(buyer.signer, 'POST', '/v1/jobs', { network: 'test', model: 'qwen3-8b', ...LIMITS });
 	const held = async () => (await h.store.getProvider(node.publicKey))!.load.active;
 
@@ -659,7 +739,7 @@ test('quotes waiting for escrow must fit in the buyer\'s balance together, so on
 	const raced = await Promise.all([1, 2, 3, 4].map(() => ask(buyer)));
 	assert.deepEqual(raced.map((r) => r.status).sort(), [200, 402, 402, 402], JSON.stringify(raced.map((r) => r.body)));
 	assert.match(JSON.stringify(raced.find((r) => r.status === 402)!.body), /waiting for escrow/);
-	assert.equal(await held(), 1, 'the refused quotes hold no slot');
+	assert.equal(await held(), 0, 'quotes hold no slot');
 
 	/* Cancelling the quote frees its share of the balance; an expired one stops counting. */
 	const open = raced.find((r) => r.status === 200)!.body as { quote: EscrowQuote };
@@ -725,32 +805,31 @@ test('scheduler respects max price, context length, capacity and staleness', asy
 	assert.equal((await h.call(buyer, 'POST', '/v1/jobs', { network: 'test', model: 'qwen3-8b', maxInputTokens: 10, maxOutputTokens: 10, maxPrice: cheap })).status, 503);
 	assert.equal((await h.call(buyer, 'POST', '/v1/jobs', { network: 'test', model: 'qwen3-8b', maxInputTokens: 900, maxOutputTokens: 200 })).status, 503);
 	assert.equal((await h.call(buyer, 'POST', '/v1/jobs', { network: 'test', model: 'qwen3-8b', maxInputTokens: 10, maxOutputTokens: 10 })).status, 200);
-	assert.equal((await h.call(buyer, 'POST', '/v1/jobs', { network: 'test', model: 'qwen3-8b', maxInputTokens: 10, maxOutputTokens: 10 })).status, 503, 'capacity 1 is held by the quote');
+	await escrowedJob(h, newBuyer());
+	assert.equal((await h.call(buyer, 'POST', '/v1/jobs', { network: 'test', model: 'qwen3-8b', maxInputTokens: 10, maxOutputTokens: 10 })).status, 503, 'capacity 1 is held by the ticket');
 	h.advance(5 * 60_000);
 	await h.call(node, 'POST', '/v1/providers/heartbeat', { status: 'online', offers: [offer('qwen3-8b')], load: { active: 0, capacity: 1 } });
 	h.advance(5 * 60_000);
 	assert.equal((await h.call(buyer, 'POST', '/v1/jobs', { network: 'test', model: 'qwen3-8b', maxInputTokens: 10, maxOutputTokens: 10 })).status, 503, 'stale provider');
 });
 
-test('a heartbeat keeps quoted and ticketed slots held, and a buyer cancel or provider fail frees them', async () => {
+test('a heartbeat keeps ticketed slots held, and a buyer hand-back or provider fail frees them', async () => {
 	const h = harness();
 	const { node } = await registerMac(h);
 	const beat = () => h.call(node, 'POST', '/v1/providers/heartbeat', { status: 'online', offers: [offer('qwen3-8b')], load: { active: 0, capacity: 1 } });
 	await beat();
 	const buyer = newBuyer();
 	const job = () => h.call(buyer.signer, 'POST', '/v1/jobs', { network: 'test', model: 'qwen3-8b', ...LIMITS });
-	const first = await job();
-	assert.equal(first.status, 200);
+	const first = await escrowedJob(h, buyer);
 	await beat();
-	assert.equal((await job()).status, 503, 'the quote still holds the only slot after a heartbeat');
-	const jobId = (first.body as { job: { jobId: string } }).job.jobId;
-	assert.equal((await h.call(newSigner(), 'POST', `/v1/jobs/${jobId}/cancel`, {})).status, 403, 'only the buyer can cancel');
-	assert.equal((await h.call(buyer.signer, 'POST', `/v1/jobs/${jobId}/cancel`, {})).status, 200);
-	assert.equal((await h.call(buyer.signer, 'POST', `/v1/jobs/${jobId}/cancel`, {})).status, 200, 'cancelling twice is harmless');
+	assert.equal((await job()).status, 503, 'the ticket still holds the only slot after a heartbeat');
+	assert.equal((await h.call(newSigner(), 'POST', `/v1/jobs/${first.jobId}/cancel`, {})).status, 403, 'only the buyer can hand it back');
+	assert.equal((await h.call(buyer.signer, 'POST', `/v1/jobs/${first.jobId}/cancel`, {})).status, 200);
+	assert.equal((await h.call(buyer.signer, 'POST', `/v1/jobs/${first.jobId}/cancel`, {})).status, 200, 'handing back twice is harmless');
 	await beat();
 	const second = await escrowedJob(h, buyer);
 	await beat();
-	assert.equal((await job()).status, 503, 'the ticket holds the slot, and a repeated cancel freed only one');
+	assert.equal((await job()).status, 503, 'the new ticket holds the slot, and a repeated hand-back freed only one');
 	assert.equal((await h.call(node, 'POST', `/v1/jobs/${second.jobId}/fail`, { error: 'busy' })).status, 200);
 	assert.equal((await job()).status, 200, 'a job the provider rejected frees its slot');
 });

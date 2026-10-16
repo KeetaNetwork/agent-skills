@@ -3,12 +3,13 @@
  * WebSocket open to it (works behind NAT and sleep/wake), and buyers' job
  * requests are forwarded over that socket. Prompts and tokens pass through
  * memory only; nothing is stored. For app jobs the relay reports a hash of
- * the text it forwarded, which decides how the job's escrow is settled.
+ * the text it forwarded, which decides how the job's escrow is settled, or
+ * that the provider was offline when the buyer brought the ticket.
  */
 
 import { chunkText, maxOutputTokensFor, sha256Hex, type JobEnvelope, type ProviderFrame, type RelayFrame } from '@keeta-compute/protocol';
 import { sseData, sseEvent } from './sse.ts';
-import { postDelivery } from './delivery.ts';
+import { postDelivery, postProviderOffline } from './delivery.ts';
 
 const FIRST_FRAME_TIMEOUT_MS = 120_000;
 const IDLE_FRAME_TIMEOUT_MS = 120_000;
@@ -21,6 +22,9 @@ interface Pending {
 	jobId: string;
 	/** App jobs only: the text forwarded so far, hashed for the delivery record. */
 	delivered: string | null;
+	/** When the buyer brought the ticket, and when it hung up if nothing had been forwarded yet: the control plane charges a no-show fee for a ticket not used promptly. */
+	presentedAt: number;
+	abandonedAt?: number;
 	/** The one delivery record post for this job, once started. */
 	attesting: Promise<void> | null;
 }
@@ -104,6 +108,10 @@ export class ProviderChannel {
 
 	private run(envelope: JobEnvelope, signal: AbortSignal): Response {
 		if (!this.socket) {
+			/* The buyer showed up with its ticket, so it owes the provider no no-show fee. */
+			if (envelope.ticket.ticket.paymentMode === 'escrow') {
+				this.state.waitUntil(postProviderOffline({ controlUrl: this.env.CONTROL_URL, routerSecret: this.env.ROUTER_SECRET, jobId: envelope.ticket.ticket.jobId }).then(() => undefined));
+			}
 			return Response.json({ error: { code: 'provider_offline', message: 'the provider is not connected' } }, { status: 503, headers: { 'retry-after': '2' } });
 		}
 		const id = crypto.randomUUID();
@@ -115,10 +123,14 @@ export class ProviderChannel {
 			closed: false,
 			jobId: envelope.ticket.ticket.jobId,
 			delivered: envelope.ticket.ticket.paymentMode === 'escrow' ? '' : null,
+			presentedAt: Date.now(),
 			attesting: null
 		};
 		this.pending.set(id, entry);
 		signal.addEventListener('abort', () => {
+			if (!entry.closed && entry.delivered === '') {
+				entry.abandonedAt = Date.now();
+			}
 			this.send({ type: 'cancel', id });
 			this.close(id);
 		});
@@ -186,13 +198,16 @@ export class ProviderChannel {
 			return Promise.resolve();
 		}
 		const delivered = entry.delivered;
+		const { presentedAt, abandonedAt } = entry;
 		entry.attesting ??= (async () => {
 			await postDelivery({
 				controlUrl: this.env.CONTROL_URL,
 				routerSecret: this.env.ROUTER_SECRET,
 				jobId: entry.jobId,
 				outputHash: await sha256Hex(delivered),
-				maxOutputTokens: maxOutputTokensFor(delivered)
+				maxOutputTokens: maxOutputTokensFor(delivered),
+				presentedAt,
+				...(abandonedAt !== undefined ? { abandonedAt } : {})
 			});
 		})();
 		return entry.attesting;

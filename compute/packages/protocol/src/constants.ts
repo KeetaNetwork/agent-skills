@@ -36,13 +36,21 @@ export const HEARTBEAT_INTERVAL_MS = 30_000;
 /** How long a scheduled job's ticket is valid for the buyer to start it. */
 export const TICKET_TTL_MS = 60_000;
 
-/** How long an app job's quote holds its provider while the buyer escrows credits for it. */
+/** How long an app job's quote stands while the buyer escrows credits for it. It holds no provider slot. */
 export const QUOTE_TTL_MS = 60_000;
+
+/**
+ * An app ticket holds a slot on its provider, so it must be used promptly:
+ * brought to the relay within this long of being issued, and not hung up on
+ * within this long of arriving before any text comes back. Otherwise the
+ * provider keeps the no-show fee (NO_SHOW_FEE) from the escrow.
+ */
+export const NO_SHOW_WINDOW_MS = 10_000;
 
 /**
  * An escrowed app job still missing its receipt or the relay's delivery
  * record this long after its ticket was issued is settled without them: the
- * buyer is refunded in full.
+ * buyer is refunded in full, less the no-show fee when it owes one.
  */
 export const SETTLE_LAPSE_MS = 15 * 60_000;
 

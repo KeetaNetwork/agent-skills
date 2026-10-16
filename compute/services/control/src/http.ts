@@ -66,6 +66,7 @@ export function createApi(service: ControlService, deps: { store: Store; verify:
 	route('POST', '/v1/jobs/:jobId/cancel', 'signed', async ({ caller, params }) => service.cancelJob(caller, params.jobId!));
 
 	route('POST', '/v1/relay/jobs/:jobId/delivery', 'router', async ({ params, body }) => service.recordDelivery(params.jobId!, body));
+	route('POST', '/v1/relay/jobs/:jobId/provider-offline', 'router', async ({ params }) => service.recordProviderOffline(params.jobId!));
 	route('POST', '/v1/router/quote', 'router', async ({ body }) => service.routerQuote(body));
 	route('GET', '/v1/router/jobs/:jobId', 'router', async ({ params }) => service.routerJob(params.jobId!));
 	route('POST', '/v1/router/jobs/:jobId/claim', 'router', async ({ params }) => service.routerClaim(params.jobId!));

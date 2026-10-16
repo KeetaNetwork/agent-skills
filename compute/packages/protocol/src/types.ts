@@ -79,21 +79,24 @@ export type PaymentMode = 'escrow' | 'prepaid';
  * - `paid`: the provider was paid (app jobs: from the escrow, with the rest refunded).
  * - `failed`: the provider failed or never billed; the escrow is refunded.
  * - `disputed`: the receipt does not match what the relay forwarded (or the relay recorded nothing); the escrow is refunded.
- * - `expired`: never used; an escrow that arrived is refunded.
+ * - `expired`: never used; an escrow that arrived is refunded, less the no-show fee when its ticket never reached the relay.
  */
 export type JobStatus = 'quoted' | 'scheduled' | 'completed' | 'failed' | 'paid' | 'expired' | 'disputed';
 
 /** Why an escrowed job was settled the way it was. */
-export type SettlementReason = 'delivered' | 'mismatch' | 'no-delivery' | 'failed' | 'no-receipt' | 'expired';
+export type SettlementReason = 'delivered' | 'mismatch' | 'no-delivery' | 'failed' | 'no-receipt' | 'expired' | 'no-show';
 
 /**
  * How an escrowed app job settles, decided once, and the payout block. No
  * amounts: the payout splits the escrow block's amount (read from the
- * ledger) by the reason, paying the receipt's amount when delivered.
+ * ledger) by the reason, paying the receipt's amount when delivered and
+ * NO_SHOW_FEE for a no-show.
  */
 export interface Settlement {
 	reason: SettlementReason;
 	decidedAt: number;
+	/** The ticket was not used promptly (see NO_SHOW_WINDOW_MS): the provider also gets NO_SHOW_FEE. */
+	noShow?: boolean;
 	/** When the last payout attempt started; another waits until it is stale, then checks the ledger first. */
 	attemptAt?: number;
 	/** The settlement account's payout block, once published. */
@@ -128,18 +131,27 @@ export interface JobRecord {
 	/** For router jobs: the account that paid through x402. */
 	routerPayer?: string;
 	fallback?: FallbackRoute;
-	/** App jobs: the quote holds its provider until then. Its escrow is maxJobCost(price, limits) credits. */
+	/** App jobs: the quote stands until then; it holds no provider slot. Its escrow is escrowAmount(price, limits) credits. */
 	quoteExpiresAt?: number;
+	/** App jobs: the buyer's price ceiling and providers from the quote request, so a ticket can move to another provider that fits them. */
+	maxPrice?: Price;
+	allowedProviders?: string[];
 	/** App jobs: the buyer's block escrowing the quote with the settlement account, verified on the ledger. */
 	escrow?: { blockHash: string; at: number };
-	/** App jobs: when the ticket was issued (on escrow). */
+	/** App jobs: when the ticket was issued (on escrow), taking a slot on its provider. */
 	ticketIssuedAt?: number;
 	/** App jobs: how the escrow is split and the payout. */
 	settlement?: Settlement;
 	/** App jobs: a work-queue marker, set while a decided settlement has no payout block yet. */
 	payoutDue?: boolean;
-	/** For app jobs: what the relay forwarded to the buyer, which decides whether the receipt is paid. */
-	delivery?: { outputHash: string; maxOutputTokens: number; at: number };
+	/**
+	 * For app jobs: what the relay forwarded to the buyer, which decides
+	 * whether the receipt is paid, when the buyer brought the ticket, and when
+	 * it hung up if that was before any text was forwarded.
+	 */
+	delivery?: { outputHash: string; maxOutputTokens: number; at: number; presentedAt?: number; abandonedAt?: number };
+	/** For app jobs: when the buyer brought the ticket to the relay and the provider was not connected. The buyer showed up, so no no-show fee. */
+	providerOfflineAt?: number;
 	/** For fallback jobs: when the router started the one upstream run this quote allows. */
 	claimedAt?: number;
 	/**

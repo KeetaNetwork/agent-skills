@@ -257,7 +257,7 @@ public enum JobRole: String, Codable, Sendable {
     case provider, buyer
 }
 
-/// 'completed': receipt in; 'paid': settled from the escrow on the ledger; 'failed': refunded or not run.
+/// 'completed': receipt in; 'paid': settled from the escrow on the ledger; 'failed': refunded or not run (`amount` is the no-show fee when the ticket never reached the relay).
 public enum JobSummaryStatus: String, Codable, Sendable {
     case running, completed, paid, failed
 }

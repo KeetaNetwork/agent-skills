@@ -14,6 +14,8 @@ import {
 	isValidPairingCode,
 	jobCost,
 	maxJobCost,
+	escrowAmount,
+	NO_SHOW_FEE,
 	pairingCheckString,
 	pairingCodeHash,
 	parseAmount,
@@ -49,6 +51,8 @@ test('pricing is exact, rounds up and never charges zero for work', () => {
 	assert.equal(jobCost(price, { inputTokens: 0, outputTokens: 0 }), 0n);
 	assert.equal(jobCost({ inputPerMillion: '0', outputPerMillion: '0' }, { inputTokens: 10, outputTokens: 10 }), 1n);
 	assert.equal(maxJobCost(price, { maxInputTokens: 2000, maxOutputTokens: 1000 }), 600n);
+	assert.equal(escrowAmount(price, { maxInputTokens: 2000, maxOutputTokens: 1000 }), NO_SHOW_FEE, 'an escrow can always pay the no-show fee');
+	assert.equal(escrowAmount(price, { maxInputTokens: 20_000, maxOutputTokens: 10_000 }), 6_000n, 'above the fee, the escrow is the maximum cost');
 	assert.equal(formatAmount(1_234_567n, 6), '1.234567');
 	assert.equal(formatAmount(1_000_000n, 6), '1');
 	assert.equal(parseAmount('1.5', 6), 1_500_000n);

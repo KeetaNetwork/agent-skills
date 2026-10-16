@@ -79,6 +79,8 @@ export class Provider {
 	private eligible = true;
 	private state: ProviderState = 'offline';
 	private readonly active = new Map<string, AbortController>();
+	/** Running jobs the buyer hung up on (the relay's cancel), as opposed to this node stopping. */
+	private readonly hungUp = new Set<string>();
 	/** Job ids already run or running, until shortly after their tickets expire. */
 	private readonly claimed = new Map<string, number>();
 	private readonly pendingReceipts: SignedReceipt[] = [];
@@ -356,6 +358,9 @@ export class Provider {
 		if (frame.type === 'ping') {
 			this.send({ type: 'pong' });
 		} else if (frame.type === 'cancel') {
+			if (this.active.has(frame.id)) {
+				this.hungUp.add(frame.id);
+			}
 			this.active.get(frame.id)?.abort();
 		} else if (frame.type === 'job') {
 			await this.runJob(frame.id, frame.envelope);
@@ -550,7 +555,12 @@ export class Provider {
 				);
 				return;
 			}
-			const message = controller.signal.aborted ? 'cancelled by the buyer' : (error as Error).message;
+			if (this.hungUp.has(id)) {
+				/* The buyer hung up before any text: not this node's failure. The relay recorded when, and the escrow settles from that record. */
+				this.deps.onJob({ ...summary, status: 'failed', error: 'cancelled by the buyer', at: Date.now() });
+				return;
+			}
+			const message = controller.signal.aborted ? 'stopped on this node' : (error as Error).message;
 			this.send({ type: 'error', id, code: 'model_failed', message });
 			this.deps.onJob({ ...summary, status: 'failed', error: message, at: Date.now() });
 			try {
@@ -560,6 +570,7 @@ export class Provider {
 			}
 		} finally {
 			this.active.delete(id);
+			this.hungUp.delete(id);
 			this.deps.onChange();
 		}
 	}

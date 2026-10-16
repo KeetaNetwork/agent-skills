@@ -17,9 +17,9 @@ Payments settle on Keeta. Prompts and outputs never go on chain.
 2. The provider installs models that fit, sets a price in credits per million tokens for each, and offers them to everyone or only to listed buyer addresses.
 3. A buyer sends an OpenAI-style chat request: an agent through the app's local endpoint, or any client through the public router.
 4. The scheduler picks an online provider that has the model, accepts that buyer and fits the price, and quotes the most the job can cost.
-5. The app escrows that much in credits with keeta.ai's settlement account on the Keeta ledger, and gets a ticket for that one job.
+5. The app escrows that much in credits with keeta.ai's settlement account on the Keeta ledger, and gets a ticket for that one job, which reserves a slot on the provider.
 6. The provider runs the job, streams the tokens back through the relay, and signs a receipt. The relay records what it forwarded.
-7. When the receipt matches the relay's record, one Keeta transaction pays the provider what it billed and returns the rest to the buyer. Anything else returns the whole escrow. The result feeds the provider's reputation.
+7. When the receipt matches the relay's record, one Keeta transaction pays the provider what it billed and returns the rest to the buyer. A ticket not brought to the relay within 10 seconds, or cancelled before any text, pays the provider a 0.001-credit no-show fee. Anything else returns the whole escrow. The result feeds the provider's reputation.
 
 ## Trust and privacy
 

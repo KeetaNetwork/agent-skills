@@ -112,7 +112,7 @@ export interface JobSummary {
 	outputTokens: number;
 	/** Credit base units billed. */
 	amount: string;
-	/** 'completed': receipt in; 'paid': settled from the escrow on the ledger; 'failed': refunded or not run. */
+	/** 'completed': receipt in; 'paid': settled from the escrow on the ledger; 'failed': refunded or not run (`amount` is the no-show fee when the ticket never reached the relay). */
 	status: 'running' | 'completed' | 'paid' | 'failed';
 	at: number;
 	helper?: string;

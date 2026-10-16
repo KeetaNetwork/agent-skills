@@ -16,7 +16,7 @@ import { after, before, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { request as httpRequest } from 'node:http';
 import { Readable } from 'node:stream';
-import { ONE_CREDIT, promptTokenBound, requestedMaxTokens, jobAuthMessage, readRelayEvents, chunkText, sha256Hex, type ChatCompletionRequest, type EscrowQuote, type SignedReceipt, type SignedTicket, type Signer, type JobRecord } from '@keeta-compute/protocol';
+import { ONE_CREDIT, operatorLinkMessage, promptTokenBound, requestedMaxTokens, jobAuthMessage, readRelayEvents, chunkText, sha256Hex, type ChatCompletionRequest, type EscrowQuote, type SignedReceipt, type SignedTicket, type Signer, type JobRecord } from '@keeta-compute/protocol';
 import { Account, accountSigner } from '@keeta-compute/protocol/keeta';
 import { startServer } from '../services/control/src/server.ts';
 import { ControlClient } from '@keeta-compute/protocol/client';
@@ -191,6 +191,8 @@ test('an app job runs through the Worker to the provider, and the relay records 
 	const record = await job(jobId);
 	assert.equal(record.delivery?.outputHash, receipt.receipt.outputHash);
 	assert.ok(record.delivery!.maxOutputTokens >= receipt.receipt.outputTokens);
+	assert.ok(record.delivery!.presentedAt! >= record.ticketIssuedAt!, 'it says when the buyer brought the ticket');
+	assert.equal(record.delivery!.abandonedAt, undefined);
 
 	/* The record matches the receipt, so the escrow pays the provider its bill and the buyer the rest. */
 	const { settled, to } = await payout(jobId);
@@ -220,10 +222,38 @@ test('a buyer hanging up mid-answer cancels the job on the provider, and the rec
 	assert.ok(billed.outputTokens < 3, 'the provider stopped before the whole answer');
 	assert.ok([await sha256Hex('Hello'), await sha256Hex('Hello from')].includes(record.delivery!.outputHash), 'the relay records what it forwarded, not the whole answer');
 	assert.equal(billed.outputHash, record.delivery!.outputHash, 'the receipt bills exactly what the relay forwarded');
+	assert.equal(record.delivery!.abandonedAt, undefined, 'text had arrived, so the hang-up is not a no-show');
 
 	const { settled, to } = await payout(jobId);
 	assert.equal(settled.settlement!.reason, 'delivered');
 	assert.deepEqual(to, { [operator]: BigInt(billed.amount), [buyer.publicKey]: escrowed - BigInt(billed.amount) }, 'the provider is paid for what was forwarded, and the rest comes back');
+});
+
+test('a ticket brought to the Worker while its provider is offline is recorded, so the buyer owes no no-show fee', async () => {
+	/* A provider the control plane sees online that never connected to the Worker, serving a model no one else does. */
+	const node = accountSigner(Account.fromSeed(Account.generateRandomSeed({ asString: true }), 0));
+	const payTo = accountSigner(Account.fromSeed(Account.generateRandomSeed({ asString: true }), 0));
+	const issuedAt = Date.now();
+	const signature = await payTo.sign(operatorLinkMessage({ nodeKey: node.publicKey, payTo: payTo.publicKey, network: 'test', issuedAt }));
+	const hardware = { os: 'macos', osVersion: '15.4', chip: 'Apple M4 Max', memoryBytes: 64 * 1024 ** 3, freeDiskBytes: 500 * 1024 ** 3 };
+	await controlClient.post(node, '/v1/providers/register', { network: 'test', kind: 'mac', name: 'Asleep', hardware, payTo: payTo.publicKey, link: { issuedAt, signature } });
+	const asleep = 'asleep-model';
+	const offer = { modelId: asleep, weightsHash: 'b'.repeat(64), runtime: { kind: 'mlx', build: 'test' }, price: { inputPerMillion: '100000', outputPerMillion: '400000' }, access: { mode: 'public', allow: [] }, contextLength: 8192 };
+	await controlClient.post(node, '/v1/providers/heartbeat', { status: 'online', offers: [offer], load: { active: 0, capacity: 1 } });
+
+	const buyer = newBuyer();
+	const request: ChatCompletionRequest = { model: asleep, messages: [{ role: 'user', content: 'Say hello' }], max_tokens: 16 };
+	const { quote } = await controlClient.post<{ quote: EscrowQuote }>(buyer, '/v1/jobs', { network: 'test', model: asleep, maxInputTokens: promptTokenBound(request), maxOutputTokens: requestedMaxTokens(request) });
+	const blockHash = ledger.publish([{ from: buyer.publicKey, to: quote.settlement, amount: BigInt(quote.maxCost), token: quote.token, reference: quote.jobId }]);
+	const { ticket } = await controlClient.post<{ ticket: SignedTicket }>(buyer, `/v1/jobs/${quote.jobId}/escrow`, { blockHash });
+	const run = await fetch(`${worker.url}/v1/jobs/${quote.jobId}/run`, { method: 'POST', body: JSON.stringify({ ticket, request, buyerSig: await buyer.sign(await jobAuthMessage(quote.jobId, request)) }) });
+	assert.equal(run.status, 503);
+	assert.equal(((await run.json()) as { error: { code: string } }).error.code, 'provider_offline');
+	const record = await until('the Worker to record that the provider was offline', async () => {
+		const current = await job(quote.jobId);
+		return current.providerOfflineAt ? current : null;
+	}, 20_000);
+	assert.equal(record.delivery, undefined, 'nothing was forwarded');
 });
 
 test('the public router lists models and quotes while the payment service is down, and runs nothing it cannot check', async () => {

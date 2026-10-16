@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { jobCost, maxJobCost, receiptMessage, sha256Hex, sseData, sseEvent, utcDay, type Receipt, type SignedTicket } from '@keeta-compute/protocol';
+import { NO_SHOW_FEE, escrowAmount, jobCost, receiptMessage, sha256Hex, sseData, sseEvent, utcDay, type Receipt, type SignedTicket } from '@keeta-compute/protocol';
 import type { ControlClient } from '@keeta-compute/protocol/client';
 import { Account, accountSigner, verifyKeetaSignature } from '@keeta-compute/protocol/keeta';
 import { SerialQueue } from '@keeta-compute/wallet';
@@ -103,7 +103,7 @@ test('the buyer escrows a job once, and a follow-up never hands back a job whose
 			posts.push(path);
 			if (path === '/v1/jobs') {
 				const limits = { maxInputTokens: body.maxInputTokens!, maxOutputTokens: body.maxOutputTokens! };
-				quoted = { jobId: 'job_1', maxCost: maxJobCost(price, limits), limits };
+				quoted = { jobId: 'job_1', maxCost: escrowAmount(price, limits), limits };
 				const job = { jobId: 'job_1', asset: 'keeta_credits', price, ...limits };
 				return { job, quote: { jobId: 'job_1', network: 'test', maxCost: quoted.maxCost.toString(), token: 'keeta_credits', decimals: 6, settlement: 'keeta_settlement', expiresAt: Date.now() + 60_000 } };
 			}
@@ -211,7 +211,7 @@ test("a job's spend is counted once when a follow-up and the job's own receipt r
 				const limits = { maxInputTokens: body.maxInputTokens!, maxOutputTokens: body.maxOutputTokens! };
 				tickets.set(jobId, { jobId, modelId: 'qwen3-8b', payTo: 'keeta_provider', nodeKey: 'keeta_node', buyer: spend.publicKey, asset: 'keeta_credits', price, ...limits });
 				const job = { jobId, asset: 'keeta_credits', price, ...limits };
-				return { job, quote: { jobId, network: 'test', maxCost: maxJobCost(price, limits).toString(), token: 'keeta_credits', decimals: 6, settlement: 'keeta_settlement', expiresAt: Date.now() + 60_000 } };
+				return { job, quote: { jobId, network: 'test', maxCost: escrowAmount(price, limits).toString(), token: 'keeta_credits', decimals: 6, settlement: 'keeta_settlement', expiresAt: Date.now() + 60_000 } };
 			}
 			const escrowed = /^\/v1\/jobs\/(job_\d+)\/escrow$/.exec(path);
 			if (escrowed) {
@@ -300,4 +300,78 @@ test("a job's spend is counted once when a follow-up and the job's own receipt r
 	await new Promise((resolve) => setTimeout(resolve, 100));
 	assert.equal(statusOf('job_2'), 'paid', 'a late receipt does not reopen a settled job');
 	assert.equal(spent(), '6', 'the late receipt does not count the job again');
+});
+
+test('a ticket that never reaches the relay settles as a no-show the daily limit counts, and a leftover escrow is refunded rather than ticketed', async (t) => {
+	const spendAccount = Account.fromSeed(Account.generateRandomSeed({ asString: true }) as string, 0);
+	const spend = accountSigner(spendAccount);
+	const price = { inputPerMillion: '100000', outputPerMillion: '400000' };
+	const store = new MemoryBuyerStore();
+	const posts: string[] = [];
+	let settled: unknown[] = [];
+	const control = {
+		post: async (_signer: unknown, path: string, body: Record<string, number>) => {
+			posts.push(path);
+			if (path === '/v1/jobs') {
+				const limits = { maxInputTokens: body.maxInputTokens!, maxOutputTokens: body.maxOutputTokens! };
+				const job = { jobId: 'job_1', asset: 'keeta_credits', price, ...limits };
+				return { job, quote: { jobId: 'job_1', network: 'test', maxCost: escrowAmount(price, limits).toString(), token: 'keeta_credits', decimals: 6, settlement: 'keeta_settlement', expiresAt: Date.now() + 60_000 } };
+			}
+			if (path === '/v1/jobs/job_1/escrow') {
+				return { ticket: { ticket: { jobId: 'job_1', modelId: 'qwen3-8b', payTo: 'keeta_provider', nodeKey: 'keeta_node', price, maxInputTokens: 100, maxOutputTokens: 16 }, coordinatorSig: '', relayMac: '' } };
+			}
+			if (path === '/v1/jobs/job_old/escrow') {
+				return { pending: true };
+			}
+			return {};
+		},
+		get: async () => ({ jobs: settled })
+	} as unknown as ControlClient;
+	const buyer = new Buyer({
+		store,
+		control,
+		spend,
+		spendAccount,
+		ledger: { balances: async () => ({ kta: 0n, tokens: {} }), send: async () => 'B'.repeat(64), received: async () => [], requestTestFunds: async () => '' },
+		queue: new SerialQueue(),
+		verify: () => true,
+		log: () => undefined,
+		onJob: (job) =>
+			store.update((s) => {
+				const index = s.jobs.findIndex((j) => j.jobId === job.jobId);
+				if (index >= 0) {
+					s.jobs[index] = job;
+				} else {
+					s.jobs.unshift(job);
+				}
+			}),
+		/* The relay cannot be reached. */
+		fetchImpl: (async () => {
+			throw new TypeError('fetch failed');
+		}) as typeof fetch
+	});
+	await buyer.listen(0);
+	t.after(() => buyer.close());
+
+	const response = await fetch(`${buyer.endpoint}/chat/completions`, {
+		method: 'POST',
+		headers: { authorization: `Bearer ${store.state.buyer.token}`, 'content-type': 'application/json' },
+		body: JSON.stringify({ model: 'qwen3-8b', messages: [{ role: 'user', content: 'hi' }], max_tokens: 16 })
+	});
+	assert.equal(response.status, 502);
+	assert.equal(((await response.json()) as { error: { code: string } }).error.code, 'relay_unreachable');
+	assert.ok(posts.includes('/v1/jobs/job_1/cancel'), 'the ticket is handed back');
+	assert.match(store.state.jobs[0]!.error!, /relay could not be reached; settling the escrow/, 'the job is kept so its settlement is read later');
+
+	/* At the lapse the control plane pays the provider the no-show fee from the escrow and refunds the rest. */
+	settled = [{ jobId: 'job_1', ticketIssuedAt: Date.now(), settlement: { reason: 'no-show', noShow: true, decidedAt: Date.now(), blockHash: 'S'.repeat(64) } }];
+	/* An escrow whose request gave up before its ticket: the quote is given back before the block is reported again. */
+	store.update((s) => s.escrows.push({ jobId: 'job_old', network: 'test', blockHash: 'C'.repeat(64), at: Date.now() }));
+	posts.length = 0;
+	assert.deepEqual(await buyer.followUp(), { reported: 1, settled: 1 });
+	assert.deepEqual(posts, ['/v1/jobs/job_old/cancel', '/v1/jobs/job_old/escrow'], 'cancelled first, so a late confirmation is refunded in full');
+	assert.equal(store.state.jobs[0]!.status, 'failed');
+	assert.match(store.state.jobs[0]!.error!, /no-show fee/);
+	assert.equal(store.state.jobs[0]!.amount, NO_SHOW_FEE.toString());
+	assert.equal(store.state.spentByDay[utcDay()], NO_SHOW_FEE.toString(), 'the fee counts against the daily limit');
 });
