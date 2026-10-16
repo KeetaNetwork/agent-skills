@@ -69,23 +69,101 @@ export function staticRates(table: Readonly<Record<string, string>>): RateSource
 }
 
 /**
- * Rates read from an HTTPS endpoint answering `{"EUR": "1.08", ...}` (US
- * dollars per unit), refreshed every `refreshMs`. Quotes stop once the last
- * good read is older than `maxAgeMs`, rather than trade at a stale price.
+ * The range a live rate must fall in before it is quoted, US dollars per
+ * unit: about a third either side of the test rates. A read outside it (a
+ * unit inversion, a misplaced decimal point) is never quoted, however well
+ * formed. A currency that genuinely leaves its range stops quoting until
+ * this table is updated; a currency with no range is never quoted live.
  */
-export function httpRates(url: string, options: { refreshMs?: number; maxAgeMs?: number; fetchImpl?: typeof fetch; now?: () => number } = {}): RateSource & { refresh(): Promise<void>; stop(): void } {
+export const USD_RATE_BANDS: Readonly<Record<string, readonly [min: string, max: string]>> = {
+	USD: ['0.98', '1.02'],
+	EUR: ['0.72', '1.62'],
+	JPY: ['0.0045', '0.01'],
+	MXN: ['0.037', '0.083'],
+	CAD: ['0.49', '1.1'],
+	AED: ['0.18', '0.41'],
+	GBP: ['0.85', '1.9']
+};
+
+/** How far a live rate may move from the last one quoted, in basis points per read. */
+export const DEFAULT_MAX_MOVE_BPS = 200;
+
+/** a < b, for exact fractions. */
+const below = (a: Rate, b: Rate) => a.num * b.den < b.num * a.den;
+
+/** Whether `next` is within `bps` basis points of `last`. */
+function within(last: Rate, next: Rate, bps: number): boolean {
+	const diff = next.num * last.den - last.num * next.den;
+	return (diff < 0n ? -diff : diff) * BPS <= BigInt(bps) * last.num * next.den;
+}
+
+/**
+ * Rates read from an HTTPS endpoint answering `{"EUR": "1.08", ...}` (US
+ * dollars per unit), refreshed every `refreshMs`. The feed is checked, not
+ * trusted: a currency is quoted only at a rate inside its fixed range
+ * (USD_RATE_BANDS) that is also within `maxMoveBps` of the last rate quoted.
+ * The first rate needs two reads that agree. A read that jumps further
+ * pauses that currency until the feed comes back near the last rate, or an
+ * operator who has checked the source restarts the service. Quotes also
+ * stop once a currency's last good read is older than `maxAgeMs`, rather
+ * than trade at a stale price.
+ */
+export function httpRates(
+	url: string,
+	options: { refreshMs?: number; maxAgeMs?: number; maxMoveBps?: number; bands?: Readonly<Record<string, readonly [string, string]>>; fetchImpl?: typeof fetch; now?: () => number } = {}
+): RateSource & { refresh(): Promise<void>; stop(): void } {
 	const now = options.now ?? Date.now;
 	const maxAgeMs = options.maxAgeMs ?? 5 * 60_000;
-	let table: RateSource | null = null;
-	let readAt = 0;
+	const maxMoveBps = options.maxMoveBps ?? DEFAULT_MAX_MOVE_BPS;
+	const bands = new Map(Object.entries(options.bands ?? USD_RATE_BANDS).map(([currency, [min, max]]) => [currency.toUpperCase(), { min: parseRate(min), max: parseRate(max) }]));
+	/* Per currency: the rate quoted and when it was read; a first read waiting for a second; a jump that paused it. */
+	const quoted = new Map<string, { rate: Rate; readAt: number; paused: boolean }>();
+	const pending = new Map<string, Rate>();
+	const accept = (currency: string, text: string) => {
+		const band = bands.get(currency);
+		if (!band) {
+			return;
+		}
+		let rate: Rate;
+		try {
+			rate = parseRate(text);
+		} catch (error) {
+			console.warn(`rate for ${currency} ignored: ${(error as Error).message}`);
+			return;
+		}
+		if (below(rate, band.min) || below(band.max, rate)) {
+			console.warn(`rate for ${currency} ignored: ${text} is outside its range`);
+			return;
+		}
+		const last = quoted.get(currency);
+		if (last) {
+			if (within(last.rate, rate, maxMoveBps)) {
+				quoted.set(currency, { rate, readAt: now(), paused: false });
+			} else {
+				console.warn(`rate for ${currency} jumped to ${text}; ${currency} stops quoting until the source comes back near the last rate or the service is restarted`);
+				last.paused = true;
+			}
+			return;
+		}
+		const first = pending.get(currency);
+		if (first && within(first, rate, maxMoveBps)) {
+			pending.delete(currency);
+			quoted.set(currency, { rate, readAt: now(), paused: false });
+		} else {
+			pending.set(currency, rate);
+		}
+	};
 	const refresh = async () => {
 		const response = await (options.fetchImpl ?? fetch)(url, { headers: { accept: 'application/json' } });
 		if (!response.ok) {
 			throw new Error(`the rate source answered ${response.status}`);
 		}
 		const body = (await response.json()) as Record<string, unknown>;
-		table = staticRates(Object.fromEntries(Object.entries(body).filter((entry): entry is [string, string] => typeof entry[1] === 'string')));
-		readAt = now();
+		for (const [currency, value] of Object.entries(body)) {
+			if (typeof value === 'string') {
+				accept(currency.toUpperCase(), value);
+			}
+		}
 	};
 	const tick = () => void refresh().catch((error: Error) => console.warn(`rate refresh failed: ${error.message}`));
 	const timer = setInterval(tick, options.refreshMs ?? 60_000);
@@ -95,10 +173,11 @@ export function httpRates(url: string, options: { refreshMs?: number; maxAgeMs?:
 		refresh,
 		stop: () => clearInterval(timer),
 		usdPer(currency) {
-			if (!table || now() - readAt > maxAgeMs) {
-				throw new Error('rates are stale; not quoting until the rate source answers again');
+			const entry = quoted.get(currency.toUpperCase());
+			if (!entry || entry.paused || now() - entry.readAt > maxAgeMs) {
+				throw new Error(`no current rate for ${currency}; not quoting it until the rate source answers with a usable one`);
 			}
-			return table.usdPer(currency);
+			return entry.rate;
 		}
 	};
 }

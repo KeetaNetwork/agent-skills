@@ -10,7 +10,7 @@ import * as KeetaNet from '@keetanetwork/keetanet-client';
 import * as KeetaAnchor from '@keetanetwork/anchor';
 import { NETWORKS, availableAssets } from '@keeta-compute/protocol';
 import { fxConfigFromEnv } from '../src/config.ts';
-import { convert, parseRate, staticRates, TEST_USD_RATES } from '../src/rates.ts';
+import { convert, httpRates, parseRate, staticRates, TEST_USD_RATES } from '../src/rates.ts';
 import { createFxServer, fxAccount, quoteAmount, stopFxServer } from '../src/server.ts';
 
 const SEED = 'ab'.repeat(32);
@@ -67,6 +67,62 @@ test('pairs: only stablecoin to credits and back', () => {
 	const config = { credits: { token: CREDIT_TOKEN, decimals: 6 }, stablecoins: [{ symbol: 'KEUR', currency: 'EUR', address: USDC.address, decimals: 6 }], rates: staticRates(TEST_USD_RATES), spreadBps: 50 };
 	assert.equal(quoteAmount(config, { from: USDC.address, to: CREDIT_TOKEN, amount: '100000000', affinity: 'from' }), 107_460_000n);
 	assert.throws(() => quoteAmount(config, { from: USDC.address, to: USDC.address, amount: '1', affinity: 'from' }), /with Keeta Compute Credits only/);
+});
+
+test('live rates: a feed tick outside its range or far from the last rate is never quoted', async () => {
+	let feed: Record<string, unknown> = {};
+	let clock = 1_800_000_000_000;
+	const warn = console.warn;
+	console.warn = () => undefined;
+	const open = (first: Record<string, unknown>) => {
+		feed = first;
+		const rates = httpRates('https://rates.test', { refreshMs: 3_600_000, now: () => clock, fetchImpl: async () => Response.json(feed) });
+		return { rates, read: async (next: Record<string, unknown>) => ((feed = next), rates.refresh()) };
+	};
+	const settle = () => new Promise((resolve) => setImmediate(resolve));
+	const quotes = (rates: { usdPer(currency: string): { num: bigint; den: bigint } }, currency: string) => {
+		try {
+			const rate = rates.usdPer(currency);
+			return Number(rate.num) / Number(rate.den);
+		} catch {
+			return null;
+		}
+	};
+	try {
+		/* The first rate needs two reads that agree; a spike on the first read is not quoted. */
+		const { rates, read } = open({ EUR: '1.5', JPY: '0.0067', CHF: '1.1' });
+		await settle();
+		assert.equal(quotes(rates, 'JPY'), null, 'one read is not enough');
+		await read({ EUR: '1.08', JPY: '0.0067', CHF: '1.1' });
+		assert.equal(quotes(rates, 'JPY'), 0.0067);
+		assert.equal(quotes(rates, 'EUR'), null, 'the first two EUR reads disagree');
+		assert.equal(quotes(rates, 'CHF'), null, 'a currency with no range is never quoted');
+		await read({ EUR: '1.08', JPY: '0.0067' });
+		assert.equal(quotes(rates, 'EUR'), 1.08);
+
+		/* A unit inversion or a misplaced decimal point is outside the range: ignored, the last good rate stands until it is stale. */
+		await read({ EUR: '10.8', JPY: '149' });
+		assert.equal(quotes(rates, 'JPY'), 0.0067);
+		assert.equal(quotes(rates, 'EUR'), 1.08);
+		await read({ EUR: 'abc', JPY: 0.0067 });
+		assert.equal(quotes(rates, 'EUR'), 1.08, 'unreadable values change nothing');
+
+		/* A jump inside the range pauses the currency at once, until the feed comes back near the last rate. */
+		await read({ EUR: '1.2', JPY: '0.0068' });
+		assert.equal(quotes(rates, 'EUR'), null);
+		assert.equal(quotes(rates, 'JPY'), 0.0068, 'a small move is followed');
+		await read({ EUR: '1.2', JPY: '0.0068' });
+		assert.equal(quotes(rates, 'EUR'), null, 'the jump holding is not enough');
+		await read({ EUR: '1.085', JPY: '0.0068' });
+		assert.equal(quotes(rates, 'EUR'), 1.085);
+
+		/* Stale rates stop quoting. */
+		clock += 5 * 60_000 + 1;
+		assert.equal(quotes(rates, 'EUR'), null);
+		rates.stop();
+	} finally {
+		console.warn = warn;
+	}
 });
 
 let server: ReturnType<typeof createFxServer>;
