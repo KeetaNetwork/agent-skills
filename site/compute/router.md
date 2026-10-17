@@ -119,7 +119,7 @@ data: {"receipt": {...}, "signature": "..."}
 
 ## TypeScript buyer
 
-Uses the same packages as the [x402-payments skill](https://keeta.ai/skills/x402-payments/SKILL.md) (verified there with `@x402/*` 2.28.0 and `@keetanetwork/keetanet-client` 0.18.7).
+Uses the same packages as the [x402-payments skill](https://keeta.md/skills/x402-payments/SKILL.md) (verified there with `@x402/*` 2.28.0 and `@keetanetwork/keetanet-client` 0.18.7).
 
 ```bash
 npm install @keetanetwork/keetanet-client @x402/core @x402/keeta @x402/fetch

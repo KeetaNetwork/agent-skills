@@ -158,7 +158,7 @@ FOOTER = """    <footer class="site-footer">
             <span class="brand-divider" aria-hidden="true"></span>
             <span class="brand-product">Compute</span>
           </a>
-          <p>AI inference paid per request, and agent skills for moving money on Keeta Network.</p>
+          <p>AI inference paid per request on Keeta Network. Agent skills for moving money live at keeta.md.</p>
         </div>
         <nav class="footer-links" aria-label="Footer">
           <div>
@@ -176,14 +176,15 @@ FOOTER = """    <footer class="site-footer">
           </div>
           <div>
             <h2>For agents</h2>
-            <a href="/SKILL.md">SKILL.md</a>
             <a href="/llms.txt">llms.txt</a>
-            <a href="/llms-full.txt">llms-full.txt</a>
-            <a href="/.well-known/agent-skills/index.json">Skill index</a>
+            <a href="/compute/index.md">Compute as Markdown</a>
+            <a href="https://keeta.md/">Keeta skills (keeta.md)</a>
+            <a href="https://keeta.md/SKILL.md">SKILL.md</a>
           </div>
           <div>
             <h2>Open source</h2>
             <a href="https://github.com/KeetaNetwork/agent-skills">GitHub</a>
+            <a href="https://github.com/KeetaNetwork/keeta.md">Skills on GitHub</a>
             <a href="https://agentskills.io/">Agent Skills spec</a>
             <a href="https://github.com/KeetaNetwork/agent-skills/blob/main/LICENSE">Apache-2.0 license</a>
           </div>

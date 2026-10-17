@@ -1,4 +1,4 @@
-name: Validate skills
+name: CI
 
 on:
   push:
@@ -13,8 +13,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Validate skill structure and metadata
-        run: python3 .github/scripts/validate-skills.py
       - name: Check the Compute pages match their Markdown
         run: |
           python3 .github/scripts/render-compute-pages.py site/compute
@@ -25,31 +23,22 @@ jobs:
         run: |
           test -s _site/index.html && test -s _site/404.html && test -s _site/styles.css && test -s _site/app.js
           test -s _site/assets/og-image.png && test -s _site/assets/fonts/Geist-Regular.woff2
-          test -s _site/SKILL.md && test -s _site/skill.md && test -s _site/llms.txt && test -s _site/llms-full.txt
-          test -s _site/skills/keeta/SKILL.md && test -s _site/skills/keeta/references/anchors.md
-          test -s _site/.well-known/agent-skills/index.json
-          test -s _site/.well-known/skills/index.json
+          test -s _site/llms.txt && test -s _site/_headers && test -s _site/_redirects
           test -s _site/compute/compute.css
           for page in index app models router helper protocol; do
             test -s "_site/compute/$page.html" && test -s "_site/compute/$page.md" || { echo "missing compute page $page"; exit 1; }
           done
           grep -q 'llama-3.2-3b-instruct' _site/compute/models.md && grep -q 'llama-3.2-3b-instruct' _site/compute/models.html
           if grep -q 'keeta-compute:models-table' _site/compute/models.md _site/compute/models.html; then echo "models table not generated"; exit 1; fi
-          grep -q 'https://keeta.ai/compute/router.md' _site/llms.txt
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
+          grep -q 'https://keeta.ai/compute/router.md' _site/llms.txt && grep -q 'https://keeta.md/llms.txt' _site/llms.txt
       - name: Check the Pages output directory matches the build
         run: grep -qx 'pages_build_output_dir = "./_site"' wrangler.toml
-      - name: Install every skill from the built site with the skills CLI
-        env:
-          DISABLE_TELEMETRY: "1"
+      - name: Check the skills live only at keeta.md
         run: |
-          python3 -m http.server 8000 --bind 127.0.0.1 --directory _site &
-          sleep 1
-          npx --yes skills@1.7.0 add http://127.0.0.1:8000 --list | tee skills-list.txt
-          for skill in $(python3 -c "import json; print(' '.join(s['name'] for s in json.load(open('_site/.well-known/agent-skills/index.json'))['skills']))"); do
-            grep -q "$skill" skills-list.txt || { echo "skills CLI did not list $skill"; exit 1; }
+          # The skills moved to KeetaNetwork/keeta.md; old keeta.ai skill URLs redirect there.
+          if git ls-files | grep -qi 'skill\.md$'; then echo "SKILL.md files belong in KeetaNetwork/keeta.md"; exit 1; fi
+          for path in /SKILL.md /skills/ /llms-full.txt /.well-known/agent-skills/ /.well-known/skills/; do
+            grep -q "^$path.* https://keeta.md/.* 301$" site/_redirects || { echo "no redirect for $path"; exit 1; }
           done
 
   compute:

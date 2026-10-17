@@ -40,4 +40,4 @@ Payments settle on Keeta. Prompts and outputs never go on chain.
 
 Each page is also served as Markdown: add `.md` to its path, for example `https://keeta.ai/compute/router.md`.
 
-Keeta Compute builds on the [Keeta agent skills](https://keeta.ai/), which cover wallets, payments and [x402](https://keeta.ai/skills/x402-payments/SKILL.md).
+Keeta Compute builds on the [Keeta agent skills](https://keeta.md/), which cover wallets, payments and [x402](https://keeta.md/skills/x402-payments/SKILL.md).
