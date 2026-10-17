@@ -235,6 +235,7 @@ struct UseView: View {
                     draft = buyer?.policy
                     editingLimits = false
                 }
+                .buttonStyle(.keetaSecondary)
                 .keyboardShortcut(.cancelAction)
                 Spacer()
                 Button("Save") { saveLimits() }

@@ -75,17 +75,6 @@ enum Snapshots {
             hosting.cacheDisplay(in: hosting.bounds, to: rep)
             write(rep, to: directory.appendingPathComponent("\(name).png"))
         }
-        // The same view through Core Animation, in case AppKit's cache misses layer content.
-        if let layer = hosting.layer, let rep = bitmap(size: size, scale: 2), let context = NSGraphicsContext(bitmapImageRep: rep) {
-            let cg = context.cgContext
-            cg.scaleBy(x: 2, y: 2)
-            if !layer.contentsAreFlipped() {
-                cg.translateBy(x: 0, y: size.height)
-                cg.scaleBy(x: 1, y: -1)
-            }
-            layer.render(in: cg)
-            write(rep, to: directory.appendingPathComponent("\(name).layer.png"))
-        }
         window.orderOut(nil)
     }
 

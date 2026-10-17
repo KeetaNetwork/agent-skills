@@ -272,6 +272,7 @@ struct SendSheet: View {
             }
             HStack {
                 Button("Cancel", role: .cancel) { dismiss() }
+                    .buttonStyle(.keetaSecondary)
                     .keyboardShortcut(.cancelAction)
                 Spacer()
                 if sending { ProgressView().controlSize(.small) }
@@ -391,6 +392,7 @@ struct BudgetSheet: View {
             }
             HStack {
                 Button("Cancel", role: .cancel) { dismiss() }
+                    .buttonStyle(.keetaSecondary)
                     .keyboardShortcut(.cancelAction)
                 Spacer()
                 if working { ProgressView().controlSize(.small) }
@@ -517,6 +519,7 @@ struct CreditSwapSheet: View {
             }
             HStack {
                 Button("Cancel", role: .cancel) { dismiss() }
+                    .buttonStyle(.keetaSecondary)
                     .keyboardShortcut(.cancelAction)
                 Spacer()
                 if quoting || working { ProgressView().controlSize(.small) }

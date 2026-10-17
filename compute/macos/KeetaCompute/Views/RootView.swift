@@ -204,6 +204,7 @@ struct ConnectionBanner: View {
                 Spacer(minLength: 0)
                 if case .failed = model.connection {
                     Button("Try again") { Task { await model.restartAgent() } }
+                        .buttonStyle(.keetaCompact)
                 }
             }
             .padding(.horizontal, 16)

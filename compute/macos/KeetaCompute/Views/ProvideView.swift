@@ -178,6 +178,7 @@ struct ProvideView: View {
                     resetDraft()
                     editing = false
                 }
+                .buttonStyle(.keetaSecondary)
                 .keyboardShortcut(.cancelAction)
                 Spacer()
                 if saving { ProgressView().controlSize(.small) }

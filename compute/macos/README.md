@@ -22,6 +22,31 @@ The app is a thin SwiftUI shell. All network, payment and model work happens in
 a bundled helper, `keeta-compute-agent` (TypeScript compiled with bun), which
 the app starts and talks to over JSON-RPC.
 
+## Open in Xcode
+
+The Xcode project is generated from `project.yml`, so it is not in the
+repository. From `compute/macos`:
+
+```sh
+make open    # installs XcodeGen with Homebrew if needed, generates KeetaCompute.xcodeproj and opens it
+```
+
+Opening the folder or `Package.swift` in Xcode instead shows only
+`KeetaComputeKit`, the shared logic package, which has no UI. Run
+`make project` again after pulling changes to `project.yml` or new files.
+
+- **See the screens without running anything**: open
+  `KeetaCompute/Views/Previews.swift` and show the canvas (Editor > Canvas).
+  Every popover screen is there with sample data.
+- **Run it**: choose your team under the KeetaCompute target's Signing &
+  Capabilities (passkeys and the Secure Enclave key need a real signing
+  identity), then run the `KeetaCompute` scheme. There is no window or Dock
+  icon: click the Keeta mark in the menu bar. On a MacBook with a full menu
+  bar the icon can sit behind the camera notch; quit a few menu bar apps to
+  bring it into view. A Debug build made without bun has no bundled agent, so the
+  popover says it doesn't include the background service (see "The bundled
+  agent" below).
+
 ## Requirements
 
 - macOS 15.0 or later, Apple Silicon (arm64 only)
@@ -48,6 +73,7 @@ the app starts and talks to over JSON-RPC.
 ## Build and run
 
 ```sh
+make open                            # generate the project and open it in Xcode
 make project                         # xcodegen generate -> KeetaCompute.xcodeproj
 make build                           # Debug build (CONFIGURATION=Release for release)
 make build DEVELOPMENT_TEAM=ABCDE12345

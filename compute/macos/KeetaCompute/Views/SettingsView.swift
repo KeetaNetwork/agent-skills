@@ -137,7 +137,9 @@ struct SettingsView: View {
             }
             HStack {
                 Button("Show logs") { AppDelegate.shared?.showLogs() }
+                    .buttonStyle(.keetaCompact)
                 Button("Restart service") { Task { await model.restartAgent() } }
+                    .buttonStyle(.keetaCompact)
                     .help("Restart the background service")
             }
             LabeledContent("Version") {

@@ -95,7 +95,7 @@ struct HelperRow: View {
                     .font(.body.weight(.medium))
                 Text(helper.completed == 1 ? "job served" : "jobs served").font(.caption).foregroundStyle(.secondary)
                 Button("Remove…", role: .destructive, action: onRemove)
-                    .controlSize(.small)
+                    .buttonStyle(.keetaCompact)
             }
         }
         .padding(.vertical, 4)

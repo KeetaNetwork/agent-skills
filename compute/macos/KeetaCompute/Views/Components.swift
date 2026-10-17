@@ -167,25 +167,28 @@ struct CodeBlock: View {
     var copyValue: String? = nil
 
     var body: some View {
-        ZStack(alignment: .topTrailing) {
-            ScrollView(.horizontal) {
-                Text(code)
-                    .font(.system(.callout, design: .monospaced))
-                    .textSelection(.enabled)
-                    .padding(12)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .background(Color.keetaGray, in: RoundedRectangle(cornerRadius: 8))
+        // The copy button sits on its own row, so it never covers the code.
+        VStack(alignment: .trailing, spacing: 0) {
             Button {
                 Pasteboard.copy(copyValue ?? code)
             } label: {
-                Image(systemName: "doc.on.doc")
+                Label("Copy", systemImage: "doc.on.doc")
+                    .font(.caption.weight(.medium))
             }
             .buttonStyle(.borderless)
             .foregroundStyle(Color.keetaRed)
             .help("Copy")
-            .padding(8)
+            .padding([.top, .horizontal], 8)
+            ScrollView(.horizontal) {
+                Text(code)
+                    .font(.system(.callout, design: .monospaced))
+                    .textSelection(.enabled)
+                    .padding([.horizontal, .bottom], 12)
+                    .padding(.top, 2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
+        .background(Color.keetaGray, in: RoundedRectangle(cornerRadius: 8))
     }
 }
 
@@ -446,18 +449,20 @@ struct EmptyNote: View {
 // MARK: - Buttons
 
 /// The Keeta Agent app's buttons: a coral pill for the main action, an outlined pill otherwise.
+/// Compact pills fit inside a row.
 struct KeetaButtonStyle: ButtonStyle {
     enum Kind { case primary, secondary }
 
     var kind: Kind
+    var compact = false
     @Environment(\.isEnabled) private var isEnabled
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.body.weight(.semibold))
+            .font(compact ? .caption.weight(.semibold) : .body.weight(.semibold))
             .lineLimit(1)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 7)
+            .padding(.horizontal, compact ? 10 : 16)
+            .padding(.vertical, compact ? 4 : 7)
             .foregroundStyle(kind == .primary ? Color.keetaBlack : Color.keetaYellow)
             .background(Capsule().fill(kind == .primary ? Color.keetaRed : Color.clear))
             .overlay(Capsule().strokeBorder(kind == .primary ? Color.clear : Color.keetaGray50, lineWidth: 1))
@@ -469,6 +474,7 @@ struct KeetaButtonStyle: ButtonStyle {
 extension ButtonStyle where Self == KeetaButtonStyle {
     static var keetaPrimary: KeetaButtonStyle { KeetaButtonStyle(kind: .primary) }
     static var keetaSecondary: KeetaButtonStyle { KeetaButtonStyle(kind: .secondary) }
+    static var keetaCompact: KeetaButtonStyle { KeetaButtonStyle(kind: .secondary, compact: true) }
 }
 
 // MARK: - Panels

@@ -156,6 +156,7 @@ struct ModelRow: View {
     private var actions: some View {
         if let progress, progress.isActive {
             Button("Cancel") { Task { await model.cancelInstall(entry.id) } }
+                .buttonStyle(.keetaCompact)
         } else if let installed = entry.installed {
             HStack(spacing: 10) {
                 Toggle("Offer to the network", isOn: Binding(get: { installed.offer.offered }, set: { onOffer($0) }))
@@ -164,13 +165,13 @@ struct ModelRow: View {
                     .disabled(model.provider?.state == .notEligible)
                 Spacer()
                 Button("Settings…", action: onSettings)
-                    .controlSize(.small)
+                    .buttonStyle(.keetaCompact)
             }
         } else if entry.compatibility.fits {
             Button(progress?.phase == .failed ? "Retry" : "Install") {
                 Task { await model.install(entry.id) }
             }
-            .controlSize(.small)
+            .buttonStyle(.keetaCompact)
             .disabled(!model.connection.isRunning)
         }
     }
@@ -269,6 +270,7 @@ struct LicenseSheet: View {
                     .toggleStyle(.checkbox)
                 HStack {
                     Button("Cancel", role: .cancel) { dismiss() }
+                        .buttonStyle(.keetaSecondary)
                         .keyboardShortcut(.cancelAction)
                     Spacer()
                     Button("Offer to the network") {
@@ -373,6 +375,7 @@ struct OfferSettingsSheet: View {
                 .onAppear { load(installed) }
                 HStack {
                     Button("Cancel", role: .cancel) { dismiss() }
+                        .buttonStyle(.keetaSecondary)
                         .keyboardShortcut(.cancelAction)
                     Spacer()
                     Button("Save") { save(installed) }
@@ -457,6 +460,7 @@ struct CustomModelSheet: View {
             }
             HStack {
                 Button("Cancel", role: .cancel) { dismiss() }
+                    .buttonStyle(.keetaSecondary)
                     .keyboardShortcut(.cancelAction)
                 Spacer()
                 if working { ProgressView().controlSize(.small) }
