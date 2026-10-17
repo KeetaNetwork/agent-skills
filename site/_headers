@@ -25,3 +25,7 @@
 
 /assets/fonts/*
   Cache-Control: public, max-age=31536000, immutable
+
+# Passkeys: lists the Keeta Compute Mac app (team 2BG69HN56W) for webcredentials:keeta.ai.
+/.well-known/apple-app-site-association
+  Content-Type: application/json
