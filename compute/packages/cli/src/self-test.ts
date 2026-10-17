@@ -2,7 +2,8 @@
  * `keeta-compute-agent self-test`: runs, inside this binary, what the macOS app
  * needs first. It initializes the agent with a P-256 node key that signs
  * through a callback (the Secure Enclave path), signs and verifies with that
- * key, and derives an operator account from passkey output (the wallet path).
+ * key, and derives the operator account for a fixed passkey output, which must
+ * match the one earlier builds derived (the wallet path).
  * scripts/bundle-agent.sh runs it on every freshly compiled agent, so a runtime
  * that lacks something the agent needs fails the build, not the app (bun
  * before 1.3.14, for one, had no SHA3-256 HMAC, which Keeta key derivation uses).
@@ -21,6 +22,9 @@ import { accountSigner, verifyKeetaSignature } from '@keeta-compute/protocol/kee
 import { enclaveNodeAccount, operatorAccount } from '@keeta-compute/wallet';
 
 const CLOSED_PORT = 'http://127.0.0.1:9';
+
+/** Passkey output and the operator account every build so far derives from it (also pinned in packages/wallet/test/keys.test.ts). */
+const OPERATOR_VECTOR = { entropyHex: 'ab'.repeat(32), account: 'keeta_aabec3o6ut57nb3fqye676rvcz6gpwedwl4vdmtuoa3ijnnq6torws77l5pfmgq' };
 
 /** A software stand-in for the Secure Enclave node key: it signs the digest as-is and returns raw r||s with low S, as the app does. */
 function softwareNodeKey(): { publicKeyHex: string; signDigest: (digestHex: string) => Promise<string> } {
@@ -52,8 +56,12 @@ export async function selfTest(out: (line: string) => void): Promise<void> {
 		if (signer.publicKey !== state.nodeKey || !verifyKeetaSignature(signer.publicKey, message, await signer.sign(message))) {
 			throw new Error('the node key did not sign and verify');
 		}
-		const operator = await operatorAccount('00'.repeat(32));
-		out(`ok: node ${state.nodeKey}, operator ${operator.publicKeyString.get()}`);
+		// A wallet is its passkey: a build that derived another account would show people an empty wallet.
+		const operator = (await operatorAccount(OPERATOR_VECTOR.entropyHex)).publicKeyString.get();
+		if (operator !== OPERATOR_VECTOR.account) {
+			throw new Error(`the operator account for the test passkey is ${operator}, not ${OPERATOR_VECTOR.account}`);
+		}
+		out(`ok: node ${state.nodeKey}, operator ${operator}`);
 	} finally {
 		app.shutdown();
 		rmSync(dataDir, { recursive: true, force: true });

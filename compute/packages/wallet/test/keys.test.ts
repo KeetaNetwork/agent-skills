@@ -29,6 +29,11 @@ test('the operator account depends only on the passkey entropy', async () => {
 	assert.notEqual((await operatorAccount('cd'.repeat(32))).publicKeyString.get(), a.publicKeyString.get());
 });
 
+test('the operator account for a given passkey never changes between releases', async () => {
+	// Changing this moves every wallet to a new, empty account. The compiled agent checks the same pair (cli self-test).
+	assert.equal((await operatorAccount('ab'.repeat(32))).publicKeyString.get(), 'keeta_aabec3o6ut57nb3fqye676rvcz6gpwedwl4vdmtuoa3ijnnq6torws77l5pfmgq');
+});
+
 test('payments from one account run one at a time', async () => {
 	const queue = new SerialQueue();
 	const order: string[] = [];

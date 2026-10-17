@@ -123,7 +123,7 @@ packages/cli/dist/linux-x64/keeta-compute-agent self-test
 KEETA_COMPUTE_AGENT_BINARY=packages/cli/dist/linux-x64/keeta-compute-agent npm run test:agent-binary
 ```
 
-The binaries land in `packages/cli/dist/`. `self-test` initializes the agent as the app does, without the network; `test:agent-binary` drives a binary over stdin and stdout the way the app does.
+The binaries land in `packages/cli/dist/`. `self-test` initializes the agent as the app does, without the network, and checks that a fixed passkey output still gives the same wallet account; `test:agent-binary` drives a binary over stdin and stdout the way the app does.
 
 ## Live tests
 
