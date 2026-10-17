@@ -95,7 +95,7 @@ keeta-compute-agent run</code></pre>
 <li><code>provide --access allowlist --allow KEY,...</code> sets the default for every model (a node's lists hold up to 1000 addresses in total, counting this one and the models' own); <code>--max-jobs N</code> sets concurrency.</li>
 </ul>
 <h3 id="buy-inference">Buy inference</h3>
-<p>While <code>run</code> is running, agents on the machine can call <code>http://127.0.0.1:11435/v1</code> with the token from <code>keeta-compute-agent token</code>. Requests are paid in Keeta Compute Credits from the agent budget, a separate local key: each request escrows its most possible cost on the Keeta ledger, and what the provider does not bill comes back.</p>
+<p>While <code>run</code> is running, agents on the machine can call <code>http://127.0.0.1:11435/v1</code> with the token from <code>keeta-compute-agent token</code>. If another program is already listening on that port, <code>run</code> stops with an error rather than leave agents talking to it, so the service manager reports the failure and starts it again. Requests are paid in Keeta Compute Credits from the agent budget, a separate local key: each request escrows its most possible cost on the Keeta ledger, and what the provider does not bill comes back.</p>
 <p>Buy credits with a Keeta stablecoin held in the operator wallet (KUSD by default; also KEUR, KJPY, KMXN, KCAD, KAED, KGBP and USDC). They go straight to the agent budget:</p>
 <pre><code class="language-bash">keeta-compute-agent wallet buy-credits 5 --with KUSD
 keeta-compute-agent buy --per-request-max 0.25 --daily-max 5</code></pre>

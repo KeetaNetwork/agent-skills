@@ -1,3 +1,4 @@
+import { createServer, type AddressInfo } from 'node:net';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { NO_SHOW_FEE, escrowAmount, jobCost, promptTokenBound, receiptMessage, sha256Hex, sseData, sseEvent, utcDay, type Receipt, type SignedTicket } from '@keeta-compute/protocol';
@@ -90,6 +91,29 @@ test('the buyer refuses receipts that do not match the ticket', async () => {
 	assert.match(buyer.checkReceipt(ticket, { ...(await sign(base)), signature: (await sign({ ...base, inputTokens: 1 })).signature }, delivery)!, /signature/);
 	assert.match(buyer.checkReceipt(ticket, await sign(base), { ...delivery, outputHash: 'c'.repeat(64) })!, /text received/);
 	assert.match(buyer.checkReceipt(ticket, await sign(base), { ...delivery, maxOutputTokens: 79 })!, /more output tokens/, 'a short answer cannot bill the full cap');
+});
+
+test('the endpoint offers neither its address nor the token while another program holds its port', async (t) => {
+	const squatter = createServer();
+	await new Promise<void>((resolve) => squatter.listen(0, '127.0.0.1', resolve));
+	t.after(() => squatter.close());
+	const port = (squatter.address() as AddressInfo).port;
+	const account = Account.fromSeed(Account.generateRandomSeed({ asString: true }) as string, 0);
+	const buyer = new Buyer({
+		store: new MemoryBuyerStore(),
+		control: {} as ControlClient,
+		spend: accountSigner(account),
+		spendAccount: account,
+		ledger: { balances: async () => ({ kta: 0n, tokens: {} }), send: async () => '', received: async () => [], requestTestFunds: async () => '' },
+		queue: new SerialQueue(),
+		verify: verifyKeetaSignature,
+		log: () => undefined,
+		onJob: () => undefined
+	});
+	await assert.rejects(buyer.listen(port), /EADDRINUSE/);
+	const status = buyer.status;
+	assert.deepEqual([status.endpoint, status.token], ['', ''], 'tools pointed at the port would reach the other program');
+	assert.match(status.error!, new RegExp(`another program is listening on 127\\.0\\.0\\.1:${port}`));
 });
 
 test('the buyer escrows a job once, and a follow-up never hands back a job whose escrow it is still confirming', async (t) => {

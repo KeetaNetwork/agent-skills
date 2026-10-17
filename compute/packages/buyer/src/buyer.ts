@@ -100,6 +100,8 @@ const encoder = new TextEncoder();
 export class Buyer {
 	private server: Server | null = null;
 	private port = 0;
+	/** Why the endpoint is not listening, once opening it failed: status then offers neither its address nor the token. */
+	private unavailable: string | null = null;
 	/** Jobs whose escrow is being sent now: one escrow per job. */
 	private readonly escrowing = new Set<string>();
 	/** The follow-up in progress; overlapping calls share it. */
@@ -122,22 +124,37 @@ export class Buyer {
 		const s = this.deps.store.state;
 		const { token, ...policy } = s.buyer;
 		return {
-			endpoint: this.endpoint,
-			token,
+			/* Whatever holds the port would get the requests, prompts and token meant for this node. */
+			...(this.unavailable ? { endpoint: '', token: '', error: this.unavailable } : { endpoint: this.endpoint, token }),
 			policy,
 			spentToday: s.spentByDay[utcDay()] ?? '0',
 			recentJobs: s.jobs.filter((j) => j.role === 'buyer').slice(0, 50)
 		};
 	}
 
+	/**
+	 * Open the endpoint on 127.0.0.1. If that fails, most likely because
+	 * another program holds the port, the endpoint stays unavailable: tools
+	 * pointed at the port reach that program, so status reports the error
+	 * instead of the address and token.
+	 */
 	listen(port: number): Promise<void> {
 		return new Promise((resolve, reject) => {
 			const server = createServer((req, res) => void this.handle(req, res));
-			server.on('error', reject);
+			server.on('error', (error: NodeJS.ErrnoException) => {
+				if (this.server !== server) {
+					this.unavailable =
+						error.code === 'EADDRINUSE'
+							? `another program is listening on 127.0.0.1:${port}, so requests and the API token sent there reach it, not Keeta Compute; stop it, then start Keeta Compute again`
+							: `the local endpoint could not open on 127.0.0.1:${port}: ${error.message}`;
+				}
+				reject(error);
+			});
 			server.listen(port, '127.0.0.1', () => {
 				const address = server.address();
 				this.port = typeof address === 'object' && address ? address.port : port;
 				this.server = server;
+				this.unavailable = null;
 				resolve();
 			});
 		});

@@ -12,6 +12,8 @@ For each request `Buyer`:
 
 Settlement happens on the ledger: the provider is paid what it billed and the rest of the escrow comes back. A ticket not used promptly (not at the relay within 10 seconds, or cancelled before any text) also pays the provider the no-show fee. `followUp` cancels the quote of an escrow its request gave up on before reporting the block again (so it is refunded rather than ticketed), and reads how jobs settled: what the escrow paid the provider, or the no-show fee, counts against the daily limit once, on the day the job ran on this node. A job counted from a streamed receipt that billed less than the receipt the control plane paid is topped up to what was paid.
 
+If the endpoint cannot open its port (another program is listening there), `status` reports the error instead of the address and the token, since tools pointed at the port would reach that program; the Linux CLI's `run` stops with that error.
+
 It reads and writes the node's saved state through `BuyerStore` (`src/store.ts`); the agent's `StateStore` implements it.
 
 Depends on `@keeta-compute/protocol`, `@keeta-compute/tokens` and `@keeta-compute/wallet`.

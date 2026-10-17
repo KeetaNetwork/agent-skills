@@ -595,6 +595,11 @@ export async function run(args: { dataDir: string }, io: CliIO): Promise<AgentAp
 	const app = await openNode(args.dataDir, io, true);
 	const s = app.store.state;
 	const buyer = app.state().buyer!;
+	/* Stop rather than run while another program answers at the endpoint's address: a service manager then reports the failure and tries again. */
+	if (buyer.error) {
+		app.shutdown();
+		throw new Error(buyer.error);
+	}
 	if (!s.operatorLinks[s.network]) {
 		io.out('No wallet is linked yet, so this node will not provide; run `keeta-compute-agent init` first.');
 	}

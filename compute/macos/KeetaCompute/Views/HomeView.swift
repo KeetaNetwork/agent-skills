@@ -118,6 +118,10 @@ struct HomeView: View {
         Card("Use from your agents", systemImage: "terminal") {
             Text("Point any OpenAI-compatible tool at this address. Requests run on other Macs and are paid from your agent budget.")
                 .foregroundStyle(.secondary)
+            if let error = model.buyer?.error {
+                Label(error, systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.red)
+            }
             CopyField(value: model.localEndpoint)
             Button("Set up tools and limits") { selection = .use }
         }

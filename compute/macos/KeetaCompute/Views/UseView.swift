@@ -53,8 +53,13 @@ struct UseView: View {
 
     private var endpointCard: some View {
         Card("Local endpoint", systemImage: "network") {
-            Text("OpenAI-compatible. Only apps on this Mac can reach it.")
-                .foregroundStyle(.secondary)
+            if let error = buyer?.error {
+                Label(error, systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.red)
+            } else {
+                Text("OpenAI-compatible. Only apps on this Mac can reach it.")
+                    .foregroundStyle(.secondary)
+            }
             LabeledContent("Base URL") {
                 CopyField(value: model.localEndpoint)
             }

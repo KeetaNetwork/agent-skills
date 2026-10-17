@@ -81,6 +81,7 @@ http://127.0.0.1:11435/v1
 - `GET /v1/models` lists the models you can buy, with the lowest price on the network.
 - `POST /v1/chat/completions` takes the OpenAI request format. `stream: true` is supported.
 - Every request needs the bearer token shown in the app. Treat it like a password: any program holding it can spend your Agent budget.
+- If another program is already listening on port 11435, the app says so under Use and shows no token: requests sent to that port would reach that program. Quit it, then open Keeta Compute again.
 - Spend limits: set a maximum per request and per day, in credits. A request is refused before anything is escrowed if its most possible cost is over the per-request limit, or would take the day's spending over the daily limit. Requests still running count at their escrow until they are billed, so parallel requests cannot pass the daily limit together.
 - Set `max_tokens` on each request to bound its cost.
 

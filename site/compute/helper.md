@@ -54,7 +54,7 @@ keeta-compute-agent run
 
 ### Buy inference
 
-While `run` is running, agents on the machine can call `http://127.0.0.1:11435/v1` with the token from `keeta-compute-agent token`. Requests are paid in Keeta Compute Credits from the agent budget, a separate local key: each request escrows its most possible cost on the Keeta ledger, and what the provider does not bill comes back.
+While `run` is running, agents on the machine can call `http://127.0.0.1:11435/v1` with the token from `keeta-compute-agent token`. If another program is already listening on that port, `run` stops with an error rather than leave agents talking to it, so the service manager reports the failure and starts it again. Requests are paid in Keeta Compute Credits from the agent budget, a separate local key: each request escrows its most possible cost on the Keeta ledger, and what the provider does not bill comes back.
 
 Buy credits with a Keeta stablecoin held in the operator wallet (KUSD by default; also KEUR, KJPY, KMXN, KCAD, KAED, KGBP and USDC). They go straight to the agent budget:
 

@@ -305,8 +305,11 @@ public struct ProviderStatus: Codable, Sendable, Equatable {
 }
 
 public struct BuyerStatus: Codable, Sendable, Equatable {
+    /// Empty, like `token`, while `error` is set.
     public var endpoint: String
     public var token: String
+    /// Why the local endpoint is not listening (another program holds its port): tools must not be pointed at it.
+    public var error: String?
     public var policy: BuyerPolicy
     /// Credits charged today (what providers billed; escrow refunds are not counted).
     public var spentToday: String

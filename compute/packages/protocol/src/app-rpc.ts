@@ -136,8 +136,11 @@ export interface ProviderStatus {
 }
 
 export interface BuyerStatus {
+	/** Empty, like `token`, while `error` is set. */
 	endpoint: string;
 	token: string;
+	/** Why the local endpoint is not listening (another program holds its port): tools must not be pointed at it. */
+	error?: string;
 	policy: BuyerPolicy;
 	/** Credits charged today (what providers billed; escrow refunds are not counted). */
 	spentToday: string;
