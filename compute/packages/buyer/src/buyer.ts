@@ -441,7 +441,8 @@ export class Buyer {
 			} else {
 				const result = await aggregateCompletion(events, body.model);
 				if (result.error && !receipt) {
-					this.deps.onJob({ ...summary, status: 'failed', error: result.error, at: Date.now() });
+					/* Running until the follow-up reads how the escrow settled: the provider may still bill text that arrived before the error. */
+					this.deps.onJob({ ...summary, status: 'running', error: `${result.error}; settling the escrow`, at: Date.now() });
 					void this.cancel(t.jobId);
 					return json(res, 502, { error: { code: 'provider_failed', message: `${result.error}; the escrow is refunded` } });
 				}
@@ -461,7 +462,8 @@ export class Buyer {
 				this.deps.onJob({ ...summary, status: 'running', error: 'stream ended early; settling from the relay record', at: Date.now() });
 				return this.endAfterFailure(res, failure, signal);
 			}
-			this.deps.onJob({ ...summary, status: 'failed', error: 'no receipt', at: Date.now() });
+			/* The provider may still bill the prompt it read; the follow-up counts what the escrow paid, if anything. */
+			this.deps.onJob({ ...summary, status: 'running', error: 'no receipt; settling the escrow', at: Date.now() });
 			void this.cancel(t.jobId);
 			return;
 		}
@@ -485,7 +487,10 @@ export class Buyer {
 	 * Record a receipt. Nothing is paid here: the escrow already covers it,
 	 * and the control plane pays the provider only what the relay's delivery
 	 * record backs. A receipt that does not bill the text this buyer received
-	 * is logged; the relay's record decides it.
+	 * is logged; the relay's record decides it. One that breaks the ticket's
+	 * terms is not counted, and the job stays running: the provider can still
+	 * file a valid receipt with the control plane, so the follow-up counts
+	 * what the escrow paid.
 	 */
 	private record(ticket: SignedTicket, receipt: SignedReceipt, delivery: Delivery, summary: JobSummary): void {
 		const r = receipt.receipt;
@@ -496,8 +501,8 @@ export class Buyer {
 		}
 		const invalid = this.checkReceipt(ticket, receipt, null);
 		if (invalid) {
-			this.deps.log('warn', `job ${ticket.ticket.jobId}: ${invalid}; the control plane refunds the escrow`);
-			this.deps.onJob({ ...summary, status: 'failed', error: invalid, at: Date.now() });
+			this.deps.log('warn', `job ${ticket.ticket.jobId}: ${invalid}; the relay's delivery record decides the charge`);
+			this.deps.onJob({ ...summary, status: 'running', error: `${invalid}; settling the escrow`, at: Date.now() });
 			return;
 		}
 		const mismatch = this.checkReceipt(ticket, receipt, delivery);
@@ -518,6 +523,10 @@ export class Buyer {
 		}
 		if (r.jobId !== t.jobId || r.nodeKey !== t.nodeKey || r.payTo !== t.payTo || r.buyer !== t.buyer || r.modelId !== t.modelId || r.asset !== t.asset) {
 			return 'receipt does not match the ticket';
+		}
+		/* The provider signs its own counts: a negative one would price a negative amount and lower the day's spend. */
+		if (!Number.isSafeInteger(r.inputTokens) || !Number.isSafeInteger(r.outputTokens) || r.inputTokens < 0 || r.outputTokens < 0) {
+			return 'receipt token counts must be non-negative integers';
 		}
 		if (r.outputTokens > t.maxOutputTokens || r.inputTokens > t.maxInputTokens) {
 			return 'receipt exceeds the token limits';
@@ -552,7 +561,8 @@ export class Buyer {
 	 * is handed back, so it is refunded), and update recent jobs from how
 	 * they settled. Overlapping calls (the wallet timer, a hang-up, the app)
 	 * share one run, and a job's spend is counted either here or when its
-	 * request records the receipt, whichever comes first, never both.
+	 * request records the receipt, whichever comes first, never both; here it
+	 * is then brought up to what the escrow paid.
 	 */
 	followUp(): Promise<{ reported: number; settled: number }> {
 		if (!this.following) {
@@ -614,8 +624,16 @@ export class Buyer {
 				store.addToDay('spentByDay', fee, job.ticketIssuedAt);
 			}
 			if (job.settlement.reason === 'delivered' && billed) {
-				if (summary.status === 'running') {
-					store.addToDay('spentByDay', BigInt(billed.amount), billed.finishedAt);
+				/*
+				 * Count what the escrow paid, on the day this node recorded the job (the
+				 * receipt's times are the provider's own). The receipt the provider filed
+				 * with the control plane need not be the one it streamed here, so a job
+				 * already counted at a lower amount is topped up; spend never goes down.
+				 */
+				const paid = BigInt(billed.amount);
+				const counted = summary.status === 'completed' ? BigInt(summary.amount) : 0n;
+				if (paid > counted) {
+					store.addToDay('spentByDay', paid - counted, summary.at);
 				}
 				this.deps.onJob({ ...summary, inputTokens: billed.inputTokens, outputTokens: billed.outputTokens, amount: (BigInt(billed.amount) + fee).toString(), status: 'paid', at: Date.now() });
 			} else if (fee) {

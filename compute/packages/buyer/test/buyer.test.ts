@@ -83,6 +83,9 @@ test('the buyer refuses receipts that do not match the ticket', async () => {
 	assert.match(buyer.checkReceipt(ticket, await sign({ ...base, payTo: node.publicKey }), delivery)!, /does not match/);
 	assert.match(buyer.checkReceipt(ticket, await sign({ ...base, asset: 'keeta_other' }), delivery)!, /does not match/, 'billed in another token than the escrow');
 	assert.match(buyer.checkReceipt(ticket, await sign({ ...base, outputTokens: 101, amount: '41' }), delivery)!, /token limits/);
+	const negative = { inputTokens: -1_000_000_000, outputTokens: 80 };
+	assert.match(buyer.checkReceipt(ticket, await sign({ ...base, ...negative, amount: jobCost(price, negative).toString() }), delivery)!, /non-negative integers/, 'a negative count would bill a negative amount');
+	assert.match(buyer.checkReceipt(ticket, await sign({ ...base, outputTokens: 1.5 }), delivery)!, /non-negative integers/);
 	assert.match(buyer.checkReceipt(ticket, await sign({ ...base, amount: '999' }), delivery)!, /amount/);
 	assert.match(buyer.checkReceipt(ticket, { ...(await sign(base)), signature: (await sign({ ...base, inputTokens: 1 })).signature }, delivery)!, /signature/);
 	assert.match(buyer.checkReceipt(ticket, await sign(base), { ...delivery, outputHash: 'c'.repeat(64) })!, /text received/);
@@ -300,6 +303,131 @@ test("a job's spend is counted once when a follow-up and the job's own receipt r
 	await new Promise((resolve) => setTimeout(resolve, 100));
 	assert.equal(statusOf('job_2'), 'paid', 'a late receipt does not reopen a settled job');
 	assert.equal(spent(), '6', 'the late receipt does not count the job again');
+});
+
+test('the daily spend counts what each escrow paid, on the day the job ran here, whatever receipt the provider streamed', async (t) => {
+	const spendAccount = Account.fromSeed(Account.generateRandomSeed({ asString: true }) as string, 0);
+	const spend = accountSigner(spendAccount);
+	const price = { inputPerMillion: '100000', outputPerMillion: '400000' };
+	const store = new MemoryBuyerStore();
+	const outputHash = await sha256Hex('Hello');
+	const tickets = new Map<string, Record<string, unknown>>();
+	/* The usage each job's streamed receipt claims; the receipt the provider files with the control plane bills 12 in + 3 out (3 base units) and says it finished at the epoch. */
+	const streamed = new Map<string, { inputTokens: number; outputTokens: number }>();
+	let nextStreamed = { inputTokens: 12, outputTokens: 3 };
+	const receiptFor = (jobId: string, usage: { inputTokens: number; outputTokens: number }, finishedAt: number) => {
+		const ticket = tickets.get(jobId)!;
+		const receipt: Receipt = {
+			v: 1,
+			jobId,
+			network: 'test',
+			nodeKey: ticket.nodeKey as string,
+			payTo: ticket.payTo as string,
+			buyer: spend.publicKey,
+			modelId: 'qwen3-8b',
+			weightsHash: 'a'.repeat(64),
+			runtime: { kind: 'mlx', build: 'test' },
+			...usage,
+			price,
+			amount: jobCost(price, usage).toString(),
+			asset: 'keeta_credits',
+			startedAt: 0,
+			finishedAt,
+			outputHash,
+			finishReason: 'stop'
+		};
+		return { receipt, signature: '' };
+	};
+	const control = {
+		post: async (_signer: unknown, path: string, body: Record<string, number>) => {
+			if (path === '/v1/jobs') {
+				const jobId = `job_${tickets.size + 1}`;
+				const limits = { maxInputTokens: body.maxInputTokens!, maxOutputTokens: body.maxOutputTokens! };
+				tickets.set(jobId, { jobId, modelId: 'qwen3-8b', payTo: 'keeta_provider', nodeKey: 'keeta_node', buyer: spend.publicKey, asset: 'keeta_credits', price, ...limits });
+				streamed.set(jobId, nextStreamed);
+				return { job: { jobId, asset: 'keeta_credits', price, ...limits }, quote: { jobId, network: 'test', maxCost: escrowAmount(price, limits).toString(), token: 'keeta_credits', decimals: 6, settlement: 'keeta_settlement', expiresAt: Date.now() + 60_000 } };
+			}
+			const escrowed = /^\/v1\/jobs\/(job_\d+)\/escrow$/.exec(path);
+			if (escrowed) {
+				return { ticket: { ticket: tickets.get(escrowed[1]!), coordinatorSig: '', relayMac: '' } };
+			}
+			return {};
+		},
+		get: async () => ({
+			jobs: [...tickets.keys()].map((jobId) => ({ jobId, receipt: receiptFor(jobId, { inputTokens: 12, outputTokens: 3 }, 0), settlement: { blockHash: 'S'.repeat(64), reason: 'delivered' } }))
+		})
+	} as unknown as ControlClient;
+	const buyer = new Buyer({
+		store,
+		control,
+		spend,
+		spendAccount,
+		ledger: { balances: async () => ({ kta: 0n, tokens: {} }), send: async () => 'B'.repeat(64), received: async () => [], requestTestFunds: async () => '' },
+		queue: new SerialQueue(),
+		verify: () => true,
+		log: () => undefined,
+		onJob: (job) =>
+			store.update((s) => {
+				const index = s.jobs.findIndex((j) => j.jobId === job.jobId);
+				if (index >= 0) {
+					s.jobs[index] = job;
+				} else {
+					s.jobs.unshift(job);
+				}
+			}),
+		/* The provider streams "Hello" and a receipt claiming `streamed` usage, signed with its own key. */
+		fetchImpl: (async (url: string) => {
+			const jobId = /\/v1\/jobs\/(job_\d+)\/run$/.exec(url)![1]!;
+			const body = new ReadableStream<Uint8Array>({
+				start(controller) {
+					controller.enqueue(sseData({ id: 'c1', choices: [{ index: 0, delta: { content: 'Hello' }, finish_reason: 'stop' }] }));
+					controller.enqueue(sseEvent('keeta.receipt', receiptFor(jobId, streamed.get(jobId)!, Date.now())));
+					controller.close();
+				}
+			});
+			return new Response(body, { status: 200 });
+		}) as typeof fetch
+	});
+	await buyer.listen(0);
+	t.after(() => buyer.close());
+
+	const jobOf = (jobId: string) => store.state.jobs.find((j) => j.jobId === jobId);
+	const spent = () => store.state.spentByDay[utcDay()] ?? '0';
+	const recorded = async (jobId: string) => {
+		for (let i = 0; i < 400 && jobOf(jobId)?.status === 'running' && !jobOf(jobId)?.error; i++) {
+			await new Promise((resolve) => setTimeout(resolve, 5));
+		}
+	};
+	const request = async () => {
+		const response = await fetch(`${buyer.endpoint}/chat/completions`, {
+			method: 'POST',
+			headers: { authorization: `Bearer ${store.state.buyer.token}`, 'content-type': 'application/json' },
+			body: JSON.stringify({ model: 'qwen3-8b', messages: [{ role: 'user', content: 'hi' }], max_tokens: 16 })
+		});
+		assert.equal(response.status, 200);
+		return response.headers.get('x-keeta-job')!;
+	};
+
+	/* A streamed receipt with a negative count prices a negative amount: it is not counted, and the job waits for its settlement. */
+	nextStreamed = { inputTokens: -1_000_000_000, outputTokens: 3 };
+	const negative = await request();
+	await recorded(negative);
+	assert.equal(spent(), '0', 'the day\'s spend never goes down');
+	assert.equal(jobOf(negative)?.status, 'running');
+	assert.match(jobOf(negative)!.error!, /non-negative integers/);
+
+	/* A streamed receipt billing less than the one the control plane pays is counted, then topped up to what was paid. */
+	nextStreamed = { inputTokens: 0, outputTokens: 0 };
+	const cheap = await request();
+	await recorded(cheap);
+	assert.equal(jobOf(cheap)?.status, 'completed');
+	assert.equal(spent(), '0');
+
+	/* The control plane paid each provider 3 base units from the escrow, on a receipt that says it finished in 1970: both count today. */
+	assert.deepEqual(await buyer.followUp(), { reported: 0, settled: 2 });
+	assert.deepEqual([jobOf(negative)?.status, jobOf(cheap)?.status], ['paid', 'paid']);
+	assert.equal(spent(), '6');
+	assert.deepEqual(Object.keys(store.state.spentByDay), [utcDay()], 'nothing is filed under the provider\'s own dates');
 });
 
 test('a ticket that never reaches the relay settles as a no-show the daily limit counts, and a leftover escrow is refunded rather than ticketed', async (t) => {

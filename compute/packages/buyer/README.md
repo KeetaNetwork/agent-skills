@@ -8,9 +8,9 @@ For each request `Buyer`:
 2. checks the quote against the request and the local per-request and daily limits;
 3. sends that amount from the agent budget to keeta.ai's settlement account with the job id as the reference, saves the block, and reports it until the control plane issues the ticket (or, if no provider has a free slot by then, refunds it);
 4. streams the answer from the provider through the relay;
-5. checks the provider's signed receipt against the ticket and the text it received.
+5. checks the provider's signed receipt against the ticket and the text it received, and counts what it bills against the daily limit (a receipt that breaks the ticket's terms, such as one with a negative token count, is not counted).
 
-Settlement happens on the ledger: the provider is paid what it billed and the rest of the escrow comes back. A ticket not used promptly (not at the relay within 10 seconds, or cancelled before any text) also pays the provider the no-show fee. `followUp` cancels the quote of an escrow its request gave up on before reporting the block again (so it is refunded rather than ticketed), and reads how jobs settled: what was billed, or the no-show fee, counts against the daily limit once.
+Settlement happens on the ledger: the provider is paid what it billed and the rest of the escrow comes back. A ticket not used promptly (not at the relay within 10 seconds, or cancelled before any text) also pays the provider the no-show fee. `followUp` cancels the quote of an escrow its request gave up on before reporting the block again (so it is refunded rather than ticketed), and reads how jobs settled: what the escrow paid the provider, or the no-show fee, counts against the daily limit once, on the day the job ran on this node. A job counted from a streamed receipt that billed less than the receipt the control plane paid is topped up to what was paid.
 
 It reads and writes the node's saved state through `BuyerStore` (`src/store.ts`); the agent's `StateStore` implements it.
 
