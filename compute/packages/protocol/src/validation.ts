@@ -200,3 +200,16 @@ export function promptTokenBound(request: ChatCompletionRequest): number {
 	const schema = request.response_format ? bytes(request.response_format) : 0;
 	return bytes(request.messages) + (tools ? 2 * bytes(request.tools) + bytes(request.tool_choice) + 512 : 0) + schema + 16 * request.messages.length + 128;
 }
+
+/**
+ * The largest promptTokenBound a ticket for `maxInputTokens` may carry.
+ * Counting a prompt's tokens takes time in proportion to its size, so a
+ * provider refuses a larger request before counting it, and the work a
+ * refused request costs is set by what its ticket priced. No tokenizer packs
+ * more than a few bytes of a real prompt into a token, so only a request far
+ * larger than its ticket is refused; the slack covers tools that a model's
+ * chat template leaves out of the prompt.
+ */
+export function maxPromptBoundFor(maxInputTokens: number): number {
+	return 16 * maxInputTokens + 65_536;
+}

@@ -15,6 +15,7 @@ import {
 	jobAuthMessage,
 	jobCost,
 	maxOutputTokensFor,
+	maxPromptBoundFor,
 	promptTokenBound,
 	receiptMessage,
 	sha256Hex,
@@ -420,6 +421,18 @@ export class Provider {
 		} catch (error) {
 			return { code: 'invalid_request', error: (error as Error).message };
 		}
+		/*
+		 * Counting renders and encodes the whole prompt on the thread every job,
+		 * heartbeat and relay ping share, in time set by its size: a node with no
+		 * free slot, or a prompt far larger than its ticket, is refused first.
+		 */
+		if (this.state !== 'online' || this.active.size >= state.provider.maxConcurrentJobs) {
+			return { code: 'busy', error: 'provider is not taking jobs right now' };
+		}
+		const bound = promptTokenBound(envelope.request);
+		if (bound > maxPromptBoundFor(ticket.maxInputTokens)) {
+			return { code: 'invalid_request', error: 'the prompt is larger than the ticket allows' };
+		}
 		/* With a pinned tokenizer the node counts the prompt exactly, the way the buyer priced it; otherwise it sizes it by its bytes. */
 		let promptTokens: number | null;
 		try {
@@ -427,11 +440,8 @@ export class Provider {
 		} catch (error) {
 			return { code: 'model_failed', error: `could not load the ${ticket.modelId} tokenizer to count the prompt: ${(error as Error).message}` };
 		}
-		if ((promptTokens ?? promptTokenBound(envelope.request)) > ticket.maxInputTokens) {
+		if ((promptTokens ?? bound) > ticket.maxInputTokens) {
 			return { code: 'invalid_request', error: 'the prompt is larger than the ticket allows' };
-		}
-		if (this.state !== 'online' || this.active.size >= state.provider.maxConcurrentJobs) {
-			return { code: 'busy', error: 'provider is not taking jobs right now' };
 		}
 		return { model, promptTokens };
 	}

@@ -121,7 +121,7 @@ sha256hex(body)</code></pre>
 <p>Before paying, the settlement account looks for a block of its own that references the job, so a job is never paid out twice.</p></li>
 <li><strong>Reputation.</strong> Completed, failed and disputed jobs update the provider's record, which the scheduler reads.</li>
 </ol>
-<p>Structured output is compiled before the first token, so requests are bounded: <code>response_format</code> JSON schemas (and tool parameters when a tool call is forced) must be at most 8 KB, nest at most 8 levels and avoid <code>anyOf</code>, <code>oneOf</code>, <code>allOf</code>, <code>not</code>, <code>$ref</code>, <code>pattern</code> and conditionals; <code>stop</code> takes at most 4 sequences of 256 bytes.</p>
+<p>Structured output is compiled before the first token, so requests are bounded: <code>response_format</code> JSON schemas (and tool parameters when a tool call is forced) must be at most 8 KB, nest at most 8 levels and avoid <code>anyOf</code>, <code>oneOf</code>, <code>allOf</code>, <code>not</code>, <code>$ref</code>, <code>pattern</code> and conditionals; <code>stop</code> takes at most 4 sequences of 256 bytes. Counting a prompt's tokens takes time in proportion to its size, so a provider refuses a request whose size bound (the one tickets use without a pinned tokenizer) is more than 16 times its ticket's input limit plus 65,536, before counting it.</p>
 <h2 id="tickets">Tickets</h2>
 <table>
 <thead><tr><th>Field</th><th>Meaning</th></tr></thead>

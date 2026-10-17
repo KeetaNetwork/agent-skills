@@ -74,7 +74,7 @@ Balances are only ever read from the ledger. The network's job records keep the 
    Before paying, the settlement account looks for a block of its own that references the job, so a job is never paid out twice.
 10. **Reputation.** Completed, failed and disputed jobs update the provider's record, which the scheduler reads.
 
-Structured output is compiled before the first token, so requests are bounded: `response_format` JSON schemas (and tool parameters when a tool call is forced) must be at most 8 KB, nest at most 8 levels and avoid `anyOf`, `oneOf`, `allOf`, `not`, `$ref`, `pattern` and conditionals; `stop` takes at most 4 sequences of 256 bytes.
+Structured output is compiled before the first token, so requests are bounded: `response_format` JSON schemas (and tool parameters when a tool call is forced) must be at most 8 KB, nest at most 8 levels and avoid `anyOf`, `oneOf`, `allOf`, `not`, `$ref`, `pattern` and conditionals; `stop` takes at most 4 sequences of 256 bytes. Counting a prompt's tokens takes time in proportion to its size, so a provider refuses a request whose size bound (the one tickets use without a pinned tokenizer) is more than 16 times its ticket's input limit plus 65,536, before counting it.
 
 ## Tickets
 

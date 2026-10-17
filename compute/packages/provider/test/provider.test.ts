@@ -9,6 +9,8 @@ import { join } from 'node:path';
 import { CATALOG, defaultAsset, type HardwareProfile, type JobEnvelope, type ProviderFrame } from '@keeta-compute/protocol';
 import type { ControlClient } from '@keeta-compute/protocol/client';
 import type { MlxRuntime } from '@keeta-compute/runtime-mlx';
+import { PromptCounter, promptTokenLimit, type PromptCount } from '@keeta-compute/tokens';
+import { byteTokenizerFiles } from '@keeta-compute/tokens/testing';
 import { ModelManager, Provider, downloadRepo, hashDirectory, weightsHashFrom, type ProviderState, type ProviderStore } from '../src/index.ts';
 
 function tempDir(t: { after: (fn: () => void) => void }): string {
@@ -240,4 +242,78 @@ test('a router job is accepted and holds its slot, and runs only once the router
 	assert.deepEqual(framesFor('run_2'), ['accepted']);
 	assert.equal(runs, 1);
 	assert.equal(internals.active.size, 0);
+});
+
+test('a prompt far larger than its ticket, or a job with no free slot, is refused before the prompt is counted', async (t) => {
+	const store = memoryStore();
+	store.state.provider = { ...store.state.provider, enabled: true };
+	const models = new ModelManager(store, tempDir(t), null, () => undefined);
+	const price = { inputPerMillion: '50000', outputPerMillion: '200000' };
+	models.addExternal({ modelId: 'my-model', name: 'Mine', backend: { baseUrl: 'http://127.0.0.1:1/v1', servedName: 'mine' }, weightsHash: 'a'.repeat(64), sizeBytes: 1, path: '/dev/null', contextLength: 262_144, price });
+	const control = {
+		get: async () => ({ coordinatorKey: 'keeta_coordinator' }),
+		post: async () => ({ eligible: true, status: 'online', relayUrl: 'ws://127.0.0.1:1', relayToken: 'token', relayTokenExpiresAt: Date.now() + 60_000 })
+	} as unknown as ControlClient;
+	class Socket {
+		readyState = 1;
+		addEventListener() {}
+		close() {}
+		send() {}
+	}
+	/* A pinned tokenizer renders and encodes the whole prompt, in time set by its size; record each prompt it is given. */
+	const tokenizer = new PromptCounter(byteTokenizerFiles());
+	let counted = 0;
+	const countPrompt: PromptCount = async (_modelId, request) => {
+		counted++;
+		return tokenizer.count(request);
+	};
+	const node = { publicKey: 'keeta_node', sign: async () => 'signature' };
+	const provider = new Provider({
+		store,
+		control,
+		node,
+		verify: () => true,
+		models,
+		runtime: null,
+		kind: 'linux',
+		hardware: () => ({ os: 'linux', osVersion: '6.8', chip: 'x86_64', memoryBytes: 64 * 2 ** 30, freeDiskBytes: 500 * 2 ** 30 }),
+		registration: () => ({}),
+		log: () => undefined,
+		onJob: () => undefined,
+		onChange: () => undefined,
+		WebSocketImpl: Socket as unknown as typeof WebSocket,
+		localConditions: async () => ({ onBattery: false, idleSeconds: 1e9 }),
+		countPrompt
+	});
+	const internals = provider as unknown as { beat(): Promise<void>; active: Map<string, AbortController> };
+	await internals.beat();
+	assert.equal(provider.status.state, 'online');
+
+	const envelope = (content: string, maxInputTokens: number): JobEnvelope => ({
+		ticket: {
+			ticket: { v: 1, jobId: 'job_1', network: 'test', nodeKey: node.publicKey, modelId: 'my-model', buyer: 'keeta_coordinator', maxInputTokens, maxOutputTokens: 16, price, asset: defaultAsset('test').address, payTo: 'keeta_operator', paymentMode: 'prepaid', prepaidAmount: '1', issuedAt: Date.now(), expiresAt: Date.now() + 60_000 },
+			coordinatorSig: 'signature',
+			relayMac: 'mac'
+		},
+		request: { model: 'my-model', messages: [{ role: 'user', content }], max_tokens: 16 }
+	});
+	const tooLarge = { code: 'invalid_request', error: 'the prompt is larger than the ticket allows' };
+
+	/* A one-token ticket carrying a megabyte of prompt: refused without rendering or encoding it. */
+	assert.deepEqual(await provider.checkJob(envelope('x'.repeat(2 ** 20), 1)), tooLarge);
+	assert.equal(counted, 0);
+
+	/* Honest tickets are counted and checked exactly, from a short prompt to one of a hundred thousand tokens in a dense script. */
+	for (const content of ['hello', '漢字'.repeat(20_000)]) {
+		const exact = tokenizer.count(envelope(content, 0).request)!;
+		const fits = await provider.checkJob(envelope(content, promptTokenLimit(exact)));
+		assert.ok(!('error' in fits) && fits.promptTokens === exact);
+		assert.deepEqual(await provider.checkJob(envelope(content, exact - 1)), tooLarge, 'a ticket below the count is still refused once counted');
+	}
+	assert.equal(counted, 4);
+
+	/* No free slot: refused before anything is counted. */
+	internals.active.set('run_other', new AbortController());
+	assert.deepEqual(await provider.checkJob(envelope('hello', 1_000)), { code: 'busy', error: 'provider is not taking jobs right now' });
+	assert.equal(counted, 4);
 });
