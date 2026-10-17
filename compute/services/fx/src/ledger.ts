@@ -37,7 +37,7 @@ export async function createCreditToken(client: UserClient, args: { fx: string; 
 	builder.setInfo(
 		{
 			name: CREDIT_TICKER,
-			description: `${CREDIT_NAME}: prepaid inference on Keeta Compute. One credit is one US dollar.`,
+			description: CREDIT_NAME,
 			metadata: encodeTokenMetadata({ decimalPlaces: CREDIT_DECIMALS }),
 			defaultPermission: new KeetaNet.lib.Permissions(['ACCESS'])
 		},

@@ -17,7 +17,7 @@ export const CREDIT_DECIMALS = 6;
 
 /** The token's ledger name (its ticker) and description, set by `credits:create`. */
 export const CREDIT_TICKER = 'KCREDIT';
-export const CREDIT_NAME = 'Keeta Compute Credits';
+export const CREDIT_NAME = 'Keeta Compute Prepaid Credits';
 
 /** How amounts in credits are labelled in the apps. */
 export const CREDIT_SYMBOL = 'credits';
