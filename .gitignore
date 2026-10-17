@@ -5,3 +5,4 @@ node_modules/
 compute/**/lib/
 compute/**/dist/
 compute/**/.firebase/
+.DS_Store
