@@ -293,6 +293,8 @@ export class ControlService {
 		}
 
 		const now = this.now();
+		/* Offers and status were checked against the network they were heartbeated on (pinnedOfferOk, isEligible); a node that moves starts paused with none. */
+		const carried = existing?.network === network ? existing : undefined;
 		const record: StoredProvider = {
 			nodeKey,
 			payTo,
@@ -302,10 +304,10 @@ export class ControlService {
 			network,
 			hardware,
 			tier: hardwareTier(hardware),
-			offers: existing?.offers ?? [],
-			offeredModels: existing?.offeredModels ?? [],
+			offers: carried?.offers ?? [],
+			offeredModels: carried?.offeredModels ?? [],
 			access: existing?.access ?? { mode: 'public', allow: [] },
-			status: existing?.status ?? 'paused',
+			status: carried?.status ?? 'paused',
 			load: existing?.load ?? { active: 0, capacity: 1 },
 			lastHeartbeat: existing?.lastHeartbeat ?? 0,
 			registeredAt: existing?.registeredAt ?? now,

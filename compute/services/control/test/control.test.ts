@@ -28,6 +28,7 @@ import {
 	type HardwareProfile,
 	type JobRecord,
 	type JobTicket,
+	type NetworkName,
 	type Offer,
 	type Receipt,
 	type SignedTicket,
@@ -154,7 +155,7 @@ function settlementAccount(ledger: TestLedger) {
 	return { settlement, stats };
 }
 
-function harness(options: { fallback?: FallbackConfig; credits?: boolean; creditBalanceOf?: CreditBalanceReader } = {}) {
+function harness(options: { fallback?: FallbackConfig; credits?: boolean; creditBalanceOf?: CreditBalanceReader; networks?: NetworkName[] } = {}) {
 	let clock = 1_800_000_000_000;
 	const store = new MemoryStore();
 	const coordinator = newSigner();
@@ -172,7 +173,7 @@ function harness(options: { fallback?: FallbackConfig; credits?: boolean; credit
 		relaySecret: 'relay-secret',
 		routerSecret: 'router-secret',
 		relayUrl: 'http://relay.local',
-		networks: ['test'],
+		networks: options.networks ?? ['test'],
 		verifyPayment,
 		/* The test-network credit token, through the deployment settings that name one ahead of its pin. */
 		credits: options.credits === false ? {} : creditsFromEnv({ ...SECRETS, TEST_CREDIT_TOKEN: CREDITS, TEST_FX_ACCOUNT: FX }, ['test']),
@@ -860,6 +861,31 @@ test('machines under 32 GB register but are never scheduled', async () => {
 	const hb = await h.call(node, 'POST', '/v1/providers/heartbeat', { status: 'online', offers: [offer('llama-3.2-3b-instruct')] });
 	assert.equal((hb.body as { eligible: boolean; status: string }).eligible, false);
 	assert.equal((hb.body as { status: string }).status, 'paused');
+});
+
+test('a node that moves to the main network leaves its test-network offers behind, so unpinned catalog models stay off main', async () => {
+	const h = harness({ networks: ['test', 'main'] });
+	const node = newSigner();
+	const operator = newSigner();
+	const register = async (network: NetworkName) => {
+		const issuedAt = h.now();
+		const link = await operator.sign(operatorLinkMessage({ nodeKey: node.publicKey, payTo: operator.publicKey, network, issuedAt }));
+		const res = await h.call(node, 'POST', '/v1/providers/register', { network, kind: 'mac', name: 'Studio', hardware: hardware(64), payTo: operator.publicKey, link: { issuedAt, signature: link } });
+		assert.equal(res.status, 200, JSON.stringify(res.body));
+	};
+	const beat = () => h.call(node, 'POST', '/v1/providers/heartbeat', { status: 'online', offers: [offer('qwen3-8b')], load: { active: 0, capacity: 1 } });
+	const live = async (network: NetworkName) => ((await h.call(null, 'GET', `/v1/models?network=${network}`)).body as { models: Array<{ id: string }> }).models.map((m) => m.id);
+
+	/* qwen3-8b has no pin: the test network takes it and the main network refuses it. */
+	await register('test');
+	await beat();
+	assert.deepEqual(await live('test'), ['qwen3-8b']);
+	await register('main');
+	assert.deepEqual(await live('main'), [], 'the offer heartbeated on test does not carry over to main');
+	const moved = (await h.store.getProvider(node.publicKey))!;
+	assert.deepEqual([moved.offeredModels, moved.status], [[], 'paused']);
+	await beat();
+	assert.deepEqual(await live('main'), [], 'and a heartbeat on main drops it');
 });
 
 test('router quotes are prepaid to the provider over x402 in the default stablecoin, at a credit to the dollar', async () => {
