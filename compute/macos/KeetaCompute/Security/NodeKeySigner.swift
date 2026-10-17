@@ -69,10 +69,8 @@ final class NodeKeySigner: @unchecked Sendable {
                 if let key = try findEnclaveKey() {
                     return try NodeKeySigner(privateKey: key, storage: .secureEnclave)
                 }
-                // Prefer an existing software key over minting a new enclave key so the node keeps its identity.
-                if let key = try findSoftwareKey() {
-                    return try NodeKeySigner(privateKey: key, storage: .software(reason: "This Mac's node key was created before the Secure Enclave was available to the app."))
-                }
+                // Never adopt a software key from the login Keychain while the enclave works: any process
+                // running as this user can put one there, and its maker would hold this Mac's identity.
                 return try NodeKeySigner(privateKey: try createEnclaveKey(), storage: .secureEnclave)
             } catch {
                 log.error("Secure Enclave key unavailable, using a software key: \(error.localizedDescription, privacy: .public)")

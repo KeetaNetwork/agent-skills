@@ -151,7 +151,9 @@ use the `?mode=developer` suffix on the associated domain together with
   64-byte r‖s and normalizes to low S. The public key is passed to the agent as a
   33-byte compressed point. If the Secure Enclave can't be used (no enclave, or a
   build without the keychain entitlement), a software P-256 key is stored in the
-  login Keychain instead and Settings says so.
+  login Keychain instead and Settings says so. While the enclave works the app
+  never adopts a software key it finds in the login Keychain, since any process
+  running as the user could have put one there.
 - **Operator wallet**: a passkey (relying party `keeta.ai`) with the WebAuthn PRF
   extension, salt SHA-256("keeta.com/wallet/seed/v1"), the same scheme as the
   Keeta web wallet. Onboarding creates the passkey, then performs an assertion to
