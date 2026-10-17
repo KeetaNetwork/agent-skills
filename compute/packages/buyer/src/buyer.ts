@@ -104,6 +104,13 @@ export class Buyer {
 	private readonly escrowing = new Set<string>();
 	/** The follow-up in progress; overlapping calls share it. */
 	private following: Promise<{ reported: number; settled: number }> | null = null;
+	/**
+	 * Escrows of jobs whose bill is not counted yet, held against the daily
+	 * limit of the day they were sent until the receipt or the settlement is
+	 * counted, so requests in flight together cannot pass the limit. Kept in
+	 * memory: after a restart the follow-up counts what those jobs were billed.
+	 */
+	private readonly held = new Map<string, { amount: bigint; day: string }>();
 
 	constructor(private readonly deps: BuyerDeps) {}
 
@@ -240,7 +247,7 @@ export class Buyer {
 		const maxInputTokens = await this.inputLimit(body);
 		/* The most this request may cost under the spend limits, so the control plane never quotes, and holds a provider for, a job this Mac would refuse. */
 		const perRequest = BigInt(policy.perRequestMax);
-		const dailyLeft = BigInt(policy.dailyMax) - BigInt(store.state.spentByDay[utcDay()] ?? '0');
+		const dailyLeft = BigInt(policy.dailyMax) - this.committedToday();
 		if (dailyLeft <= 0n) {
 			throw new HttpError(402, 'spend_limit', 'the daily spend limit set in the app has been reached');
 		}
@@ -271,9 +278,12 @@ export class Buyer {
 		let ticket: SignedTicket;
 		try {
 			this.checkQuote(job, quote, { maxInputTokens, maxOutputTokens });
+			/* Checked and held in one step, before the escrow is sent: parallel requests see each other's escrows. */
+			this.held.set(quote.jobId, { amount: BigInt(quote.maxCost), day: utcDay() });
 			ticket = await this.escrow(quote);
 		} catch (error) {
 			/* Give the quote back so the provider is free at once; an escrow that did go out is refunded. */
+			this.held.delete(quote.jobId);
 			await this.cancel(quote.jobId);
 			throw error;
 		}
@@ -297,10 +307,21 @@ export class Buyer {
 		if (maxCost > BigInt(policy.perRequestMax)) {
 			throw new HttpError(402, 'spend_limit', `this request could cost up to ${credits(maxCost)}, above the per-request limit of ${credits(policy.perRequestMax)}; lower max_tokens or raise the limit in the app`);
 		}
-		const spentToday = BigInt(this.deps.store.state.spentByDay[utcDay()] ?? '0');
-		if (spentToday + maxCost > BigInt(policy.dailyMax)) {
+		if (this.committedToday() + maxCost > BigInt(policy.dailyMax)) {
 			throw new HttpError(402, 'spend_limit', 'the daily spend limit set in the app would be exceeded');
 		}
+	}
+
+	/** What today's spending has taken of the daily limit: what was billed, and the escrows of jobs not billed yet. */
+	private committedToday(): bigint {
+		const day = utcDay();
+		let committed = BigInt(this.deps.store.state.spentByDay[day] ?? '0');
+		for (const hold of this.held.values()) {
+			if (hold.day === day) {
+				committed += hold.amount;
+			}
+		}
+		return committed;
 	}
 
 	/**
@@ -509,8 +530,9 @@ export class Buyer {
 		if (mismatch) {
 			this.deps.log('warn', `job ${ticket.ticket.jobId}: ${mismatch}; the relay's delivery record decides the charge`);
 		}
-		/* Counted against the daily limit as billed; a refund after a mismatch does not give it back. */
+		/* Counted against the daily limit as billed, in place of its escrow; a refund after a mismatch does not give it back. */
 		this.deps.store.addToDay('spentByDay', BigInt(r.amount));
+		this.held.delete(ticket.ticket.jobId);
 		this.deps.onJob({ ...summary, inputTokens: r.inputTokens, outputTokens: r.outputTokens, amount: r.amount, status: 'completed', ...(mismatch ? { error: mismatch } : {}), at: Date.now() });
 	}
 
@@ -617,6 +639,8 @@ export class Buyer {
 				continue;
 			}
 			settled++;
+			/* Its bill, fee or refund is counted below in place of its escrow. */
+			this.held.delete(jobId);
 			const billed = job.receipt?.receipt;
 			/* A ticket not used promptly also paid the provider the no-show fee (counted here; the receipt only counts the bill). */
 			const fee = job.settlement.noShow ? NO_SHOW_FEE : 0n;

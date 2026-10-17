@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { NO_SHOW_FEE, escrowAmount, jobCost, receiptMessage, sha256Hex, sseData, sseEvent, utcDay, type Receipt, type SignedTicket } from '@keeta-compute/protocol';
+import { NO_SHOW_FEE, escrowAmount, jobCost, promptTokenBound, receiptMessage, sha256Hex, sseData, sseEvent, utcDay, type Receipt, type SignedTicket } from '@keeta-compute/protocol';
 import type { ControlClient } from '@keeta-compute/protocol/client';
 import { Account, accountSigner, verifyKeetaSignature } from '@keeta-compute/protocol/keeta';
 import { SerialQueue } from '@keeta-compute/wallet';
@@ -428,6 +428,138 @@ test('the daily spend counts what each escrow paid, on the day the job ran here,
 	assert.deepEqual([jobOf(negative)?.status, jobOf(cheap)?.status], ['paid', 'paid']);
 	assert.equal(spent(), '6');
 	assert.deepEqual(Object.keys(store.state.spentByDay), [utcDay()], 'nothing is filed under the provider\'s own dates');
+});
+
+test('requests in flight together hold their escrows against the daily limit, so only those that fit are escrowed', async (t) => {
+	const spendAccount = Account.fromSeed(Account.generateRandomSeed({ asString: true }) as string, 0);
+	const spend = accountSigner(spendAccount);
+	const price = { inputPerMillion: '100000', outputPerMillion: '400000' };
+	const body = { model: 'qwen3-8b', messages: [{ role: 'user' as const, content: 'hi' }], max_tokens: 16 };
+	const escrow = escrowAmount(price, { maxInputTokens: promptTokenBound(body), maxOutputTokens: 16 });
+	const store = new MemoryBuyerStore();
+	/* Room for two of these escrows today, not three. */
+	store.state.buyer.dailyMax = (2n * escrow + escrow / 2n).toString();
+	const outputHash = await sha256Hex('Hello');
+	const tickets = new Map<string, Record<string, unknown>>();
+	const sends: string[] = [];
+	/* Each job's stream waits here, after its text, until the test lets its receipt through. */
+	const gates = new Map<string, () => void>();
+	const control = {
+		post: async (_signer: unknown, path: string, request: Record<string, number>) => {
+			if (path === '/v1/jobs') {
+				const jobId = `job_${tickets.size + 1}`;
+				const limits = { maxInputTokens: request.maxInputTokens!, maxOutputTokens: request.maxOutputTokens! };
+				tickets.set(jobId, { jobId, modelId: 'qwen3-8b', payTo: 'keeta_provider', nodeKey: 'keeta_node', buyer: spend.publicKey, asset: 'keeta_credits', price, ...limits });
+				return { job: { jobId, asset: 'keeta_credits', price, ...limits }, quote: { jobId, network: 'test', maxCost: escrowAmount(price, limits).toString(), token: 'keeta_credits', decimals: 6, settlement: 'keeta_settlement', expiresAt: Date.now() + 60_000 } };
+			}
+			const escrowed = /^\/v1\/jobs\/(job_\d+)\/escrow$/.exec(path);
+			if (escrowed) {
+				return { ticket: { ticket: tickets.get(escrowed[1]!), coordinatorSig: '', relayMac: '' } };
+			}
+			return {};
+		},
+		get: async () => ({ jobs: [] })
+	} as unknown as ControlClient;
+	const buyer = new Buyer({
+		store,
+		control,
+		spend,
+		spendAccount,
+		ledger: {
+			balances: async () => ({ kta: 0n, tokens: {} }),
+			send: async (_from, _to, _amount, _asset, reference) => {
+				sends.push(reference!);
+				return 'B'.repeat(64);
+			},
+			received: async () => [],
+			requestTestFunds: async () => ''
+		},
+		queue: new SerialQueue(),
+		verify: () => true,
+		log: () => undefined,
+		onJob: (job) =>
+			store.update((s) => {
+				const index = s.jobs.findIndex((j) => j.jobId === job.jobId);
+				if (index >= 0) {
+					s.jobs[index] = job;
+				} else {
+					s.jobs.unshift(job);
+				}
+			}),
+		fetchImpl: (async (url: string) => {
+			const jobId = /\/v1\/jobs\/(job_\d+)\/run$/.exec(url)![1]!;
+			const ticket = tickets.get(jobId)!;
+			const usage = { inputTokens: 12, outputTokens: 3 };
+			const receipt: Receipt = {
+				v: 1,
+				jobId,
+				network: 'test',
+				nodeKey: 'keeta_node',
+				payTo: 'keeta_provider',
+				buyer: spend.publicKey,
+				modelId: 'qwen3-8b',
+				weightsHash: 'a'.repeat(64),
+				runtime: { kind: 'mlx', build: 'test' },
+				...usage,
+				price: ticket.price as typeof price,
+				amount: jobCost(price, usage).toString(),
+				asset: 'keeta_credits',
+				startedAt: 1,
+				finishedAt: Date.now(),
+				outputHash,
+				finishReason: 'stop'
+			};
+			const stream = new ReadableStream<Uint8Array>({
+				async start(controller) {
+					controller.enqueue(sseData({ id: 'c1', choices: [{ index: 0, delta: { content: 'Hello' }, finish_reason: 'stop' }] }));
+					await new Promise<void>((done) => gates.set(jobId, done));
+					controller.enqueue(sseEvent('keeta.receipt', { receipt, signature: '' }));
+					controller.close();
+				}
+			});
+			return new Response(stream, { status: 200 });
+		}) as typeof fetch
+	});
+	await buyer.listen(0);
+	t.after(() => buyer.close());
+
+	const refused: number[] = [];
+	const request = () =>
+		fetch(`${buyer.endpoint}/chat/completions`, {
+			method: 'POST',
+			headers: { authorization: `Bearer ${store.state.buyer.token}`, 'content-type': 'application/json' },
+			body: JSON.stringify(body)
+		}).then((response) => {
+			if (response.status !== 200) {
+				refused.push(response.status);
+			}
+			return response.status;
+		});
+	const waitFor = async (what: string, done: () => boolean) => {
+		for (let i = 0; i < 400 && !done(); i++) {
+			await new Promise((resolve) => setTimeout(resolve, 5));
+		}
+		assert.ok(done(), `timed out waiting for ${what}`);
+	};
+
+	/* Four at once, before any receipt: two are escrowed and run, the other two are refused before any credits move. */
+	const wave = [request(), request(), request(), request()];
+	await waitFor('every request to run or be refused', () => gates.size + refused.length === 4);
+	assert.deepEqual(refused, [402, 402]);
+	assert.equal(sends.length, 2, 'only the escrows that fit in the day were sent');
+	for (const open of gates.values()) {
+		open();
+	}
+	assert.deepEqual((await Promise.all(wave)).sort(), [200, 200, 402, 402]);
+	await waitFor('both receipts to be counted', () => store.state.jobs.filter((j) => j.status === 'completed').length === 2);
+	assert.equal(store.state.spentByDay[utcDay()], '6');
+
+	/* Counted at what they billed, their escrows no longer hold the day: the next request fits. */
+	const next = request();
+	await waitFor('the next request to run', () => gates.size === 3);
+	gates.get('job_5')!();
+	assert.equal(await next, 200);
+	assert.equal(sends.length, 3);
 });
 
 test('a ticket that never reaches the relay settles as a no-show the daily limit counts, and a leftover escrow is refunded rather than ticketed', async (t) => {
