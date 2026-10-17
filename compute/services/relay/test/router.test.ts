@@ -58,6 +58,7 @@ function setup(options: { runJob?: (envelope: unknown, signal: AbortSignal) => P
 	const calls: string[] = [];
 	const provider = options.runJob ? { runJob: options.runJob, startJob: options.startJob ?? (async () => true) } : heldProvider(...answer());
 	const upstreamBodies: Array<Record<string, unknown>> = [];
+	const controlBodies = new Map<string, Record<string, unknown>>();
 	let claims = 0;
 	const gateway: PaymentGateway = {
 		verify: async () => ({ isValid: true, payer: 'keeta_payer' }),
@@ -85,6 +86,9 @@ function setup(options: { runJob?: (envelope: unknown, signal: AbortSignal) => P
 				return options.openRouter!(body);
 			}
 			assert.equal((init?.headers as Record<string, string> | undefined)?.['x-router-secret'] ?? 'router-secret', 'router-secret');
+			if (init?.body) {
+				controlBodies.set(new URL(url).pathname, JSON.parse(String(init.body)) as Record<string, unknown>);
+			}
 			if (url.endsWith('/v1/router/quote')) {
 				return Response.json({ job: {}, ticket: options.ticket ?? (await makeTicket()) });
 			}
@@ -101,7 +105,7 @@ function setup(options: { runJob?: (envelope: unknown, signal: AbortSignal) => P
 			return Response.json({ ok: true });
 		}) as typeof fetch
 	});
-	return { router, calls, upstreamBodies };
+	return { router, calls, upstreamBodies, controlBodies };
 }
 
 const chatBody = (extra: Record<string, unknown> = {}) => JSON.stringify({ model: 'qwen3-8b', messages: [{ role: 'user', content: 'hi' }], max_tokens: 64, ...extra });
@@ -118,6 +122,15 @@ async function paymentFor(router: ReturnType<typeof setup>['router']): Promise<s
 	const payload: PaymentPayload = { x402Version: 2, accepted: required.accepts[0]!, payload: { block: 'signed-block' } };
 	return btoa(JSON.stringify(payload));
 }
+
+test('a facilitator that does not name the payer still gets paid requests through: the control plane reads the payer from the block', async () => {
+	const { router, controlBodies } = setup({ gateway: { verify: async () => ({ isValid: true }), settle: async () => ({ success: true, transaction: 'TX1' }) } });
+	const header = await paymentFor(router);
+	const response = await router.chatCompletions(new Request('http://api/v1/chat/completions', { method: 'POST', body: chatBody(), headers: { 'payment-signature': header } }));
+	assert.equal(response.status, 200);
+	assert.deepEqual(controlBodies.get('/v1/router/jobs/job_abc/paying'), { block: 'signed-block' }, 'no empty payer is sent');
+	assert.deepEqual(controlBodies.get('/v1/router/jobs/job_abc/settled'), { transaction: 'TX1', block: 'signed-block' });
+});
 
 test('unpaid request gets a 402 with the provider as payee', async () => {
 	const { router } = setup();

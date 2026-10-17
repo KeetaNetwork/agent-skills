@@ -132,6 +132,12 @@ export class FirestoreStore implements Store {
 		return snap.docs.map((doc) => doc.data() as JobRecord);
 	}
 
+	async listPaymentChecksDue(createdBefore: number, limit: number) {
+		/* Like payoutDue, paymentCheckDue is written only while true. Oldest first, so a backlog clears in order. */
+		const snap = await this.jobs().where('paymentCheckDue', '==', true).where('createdAt', '<', createdBefore).orderBy('createdAt', 'asc').limit(limit).get();
+		return snap.docs.map((doc) => doc.data() as JobRecord);
+	}
+
 	async getPairing(pairingId: string) {
 		const snap = await this.pairings().doc(pairingId).get();
 		return snap.exists ? (snap.data() as PairingRecord) : null;

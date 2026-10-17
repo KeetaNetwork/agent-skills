@@ -988,18 +988,20 @@ test('a node that moves to the main network leaves its test-network offers behin
 /**
  * Pay a router quote as the router does: record the payer's signed block,
  * settle it (it lands on the ledger), then report the settlement, whose
- * transaction is the vote staple's hash. `report: false` loses the report.
+ * transaction is the vote staple's hash. `report: false` loses the report;
+ * `named: false` leaves the payer out, as a facilitator's verify may.
  */
-async function payRouterQuote(h: Harness, ticket: JobTicket, payer = randomAccount(), options: { beforeSettle?: () => Promise<unknown>; beforeReport?: () => Promise<unknown>; report?: boolean } = {}) {
+async function payRouterQuote(h: Harness, ticket: JobTicket, payer = randomAccount(), options: { beforeSettle?: () => Promise<unknown>; beforeReport?: () => Promise<unknown>; report?: boolean; named?: boolean } = {}) {
 	const blockHash = await h.ledger.publish(payer, [{ to: ticket.paymentTo ?? ticket.payTo, amount: BigInt(ticket.prepaidAmount!), token: ticket.asset, external: ticket.jobId }], { held: true });
-	const recorded = await h.call(null, 'POST', `/v1/router/jobs/${ticket.jobId}/paying`, { payer: payer.publicKeyString.get(), block: h.ledger.encoded(blockHash) }, ROUTER);
+	const named = options.named === false ? {} : { payer: payer.publicKeyString.get() };
+	const recorded = await h.call(null, 'POST', `/v1/router/jobs/${ticket.jobId}/paying`, { ...named, block: h.ledger.encoded(blockHash) }, ROUTER);
 	assert.equal(recorded.status, 200, JSON.stringify(recorded.body));
 	await options.beforeSettle?.();
 	h.ledger.release();
 	await options.beforeReport?.();
 	if (options.report !== false) {
 		const staple = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('hex').toUpperCase();
-		const res = await h.call(null, 'POST', `/v1/router/jobs/${ticket.jobId}/settled`, { payer: payer.publicKeyString.get(), transaction: staple, block: h.ledger.encoded(blockHash) }, ROUTER);
+		const res = await h.call(null, 'POST', `/v1/router/jobs/${ticket.jobId}/settled`, { ...named, transaction: staple, block: h.ledger.encoded(blockHash) }, ROUTER);
 		assert.equal(res.status, 200, JSON.stringify(res.body));
 		assert.equal((res.body as JobRecord).payment?.blockHash, blockHash, "the job keeps the payer's block, which the payout reads from the ledger");
 	}
@@ -1107,6 +1109,17 @@ test('the router records each payment before settling it: a block that does not 
 	}
 	const forged = await h.call(null, 'POST', `/v1/router/jobs/${delivered.jobId}/paying`, { payer: payer.publicKeyString.get(), block: 'bm90IGEgYmxvY2s=' }, ROUTER);
 	assert.equal(forged.status, 400);
+	const signedByAnother = await h.ledger.publish(randomAccount(), [{ to: h.settlement.account, amount: due, token: delivered.asset, external: delivered.jobId }], { held: true });
+	const misnamed = await h.call(null, 'POST', `/v1/router/jobs/${delivered.jobId}/paying`, { payer: payer.publicKeyString.get(), block: h.ledger.encoded(signedByAnother) }, ROUTER);
+	assert.equal(misnamed.status, 400, 'a payer the router names must be the account that signed the block');
+
+	/* A facilitator that does not name the payer: the block's own account pays, and is refunded. */
+	const anonymous = await routerTicket();
+	const { payer: anonymousPayer, job: anonymousJob } = await payRouterQuote(h, anonymous, undefined, { named: false });
+	assert.deepEqual([anonymousJob.routerPayer, anonymousJob.paymentCheckDue], [anonymousPayer, undefined], 'the settled report clears the check');
+	assert.equal((await h.call(node, 'POST', `/v1/jobs/${anonymous.jobId}/fail`, { error: 'busy' })).status, 200);
+	await paidOut(h, anonymous.jobId);
+	assert.deepEqual(h.ledger.payouts(h.settlement.account, anonymous.jobId, stablecoin.address).to, { [anonymousPayer]: BigInt(anonymous.prepaidAmount!) });
 
 	/* Settled and run, but the router's report never arrived: the sweep reads the recorded block from the ledger and settles as the report would have. */
 	await payRouterQuote(h, delivered, payer, { report: false });
@@ -1130,6 +1143,16 @@ test('the router records each payment before settling it: a block that does not 
 	await h.service.sweep();
 	assert.deepEqual(h.ledger.payouts(h.settlement.account, silent.jobId, stablecoin.address).to, { [silentPayer]: BigInt(silent.prepaidAmount!) });
 
+	/* Settled, but the report was lost and then the provider failed the job: the sweep still finds the payment, and refunds it. */
+	const failedLost = await routerTicket();
+	const failedPayer = (await payRouterQuote(h, failedLost, undefined, { report: false })).payer;
+	assert.equal((await h.call(node, 'POST', `/v1/jobs/${failedLost.jobId}/fail`, { error: 'out of memory' })).status, 200);
+	h.advance(TICKET_TTL_MS + 5 * 60_000 + 1);
+	await h.service.sweep();
+	const refundedLost = await paidOut(h, failedLost.jobId);
+	assert.deepEqual([refundedLost.status, refundedLost.settlement!.reason, refundedLost.routerPayer, refundedLost.paymentCheckDue], ['failed', 'failed', failedPayer, undefined]);
+	assert.deepEqual(h.ledger.payouts(h.settlement.account, failedLost.jobId, stablecoin.address).to, { [failedPayer]: BigInt(failedLost.prepaidAmount!) });
+
 	/* Recorded but never settled (the payment service refused it): nothing landed, so the quote expires with nothing to pay. */
 	const unsettled = await routerTicket();
 	assert.equal((await paying(unsettled, randomAccount(), { to: h.settlement.account, amount: BigInt(unsettled.prepaidAmount!), external: unsettled.jobId })).status, 200);
@@ -1139,7 +1162,7 @@ test('the router records each payment before settling it: a block that does not 
 	h.advance(SETTLE_LAPSE_MS);
 	await h.service.sweep();
 	const expired = (await h.store.getJob(unsettled.jobId))!;
-	assert.deepEqual([expired.status, expired.settlement], ['expired', undefined]);
+	assert.deepEqual([expired.status, expired.settlement, expired.paymentCheckDue], ['expired', undefined, undefined], 'and it is no longer looked for');
 });
 
 test('a receipt on a router quote counts for its provider only once the router reports the payment', async () => {

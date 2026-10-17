@@ -138,6 +138,8 @@ export interface JobRecord {
 	 * is still found on the ledger.
 	 */
 	paymentAttempts?: Array<{ blockHash: string; payer: string; at: number }>;
+	/** A work-queue marker, set while a recorded payment attempt has no settled report: the sweep looks for it on the ledger. */
+	paymentCheckDue?: boolean;
 	/** For router jobs: the account that paid through x402. */
 	routerPayer?: string;
 	fallback?: FallbackRoute;

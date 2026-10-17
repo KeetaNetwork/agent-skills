@@ -23,6 +23,7 @@ import {
 	SETTLE_LAPSE_MS,
 	TICKET_TTL_MS,
 	ValidationError,
+	allowlistedCount,
 	assertAccess,
 	assertKeetaAddress,
 	assertModelId,
@@ -365,8 +366,7 @@ export class ControlService {
 			const pinned = offers
 				.filter((offer) => pinnedOfferOk(offer, current.network))
 				.map((offer) => (offer.access.mode === 'public' || samePolicy(offer.access, policy) ? { ...offer, access: PUBLIC_ACCESS } : offer));
-			const listed = pinned.reduce((sum, offer) => sum + offer.access.allow.length, own && policy.mode === 'allowlist' ? policy.allow.length : 0);
-			if (listed > MAX_ALLOWLISTED) {
+			if (allowlistedCount(own ? policy : PUBLIC_ACCESS, pinned.map((offer) => offer.access)) > MAX_ALLOWLISTED) {
 				throw new ValidationError(`a node's allowlists may hold at most ${MAX_ALLOWLISTED} addresses in total: its own list and the lists its models set for themselves`);
 			}
 			return {
@@ -836,10 +836,12 @@ export class ControlService {
 	 * A block that does not pay this job (its destination, stablecoin and
 	 * prepaid amount, with the job id as the send's reference) is refused, so
 	 * it is never settled; one that does is kept, so the sweep finds the
-	 * payment on the ledger even if the router's settled report is lost.
+	 * payment on the ledger even if the router's settled report is lost. The
+	 * payer is the block's own account; a payer the router names (from the
+	 * facilitator's verify, which may leave it out) must match it.
 	 */
 	async routerPaying(jobId: string, body: Record<string, unknown>) {
-		const payer = assertKeetaAddress(body.payer, 'payer');
+		const named = optionalKeetaAddress(body.payer, 'payer');
 		if (typeof body.block !== 'string' || body.block.length > 16_384) {
 			throw new ValidationError('block must be the signed payment block');
 		}
@@ -848,7 +850,7 @@ export class ControlService {
 			throw new NotFoundError('job not found');
 		}
 		const check = checkEncodedPaymentBlock(body.block, {
-			from: payer,
+			from: named,
 			to: current.paymentTo ?? current.payTo,
 			asset: current.asset,
 			minAmount: BigInt(current.prepaidAmount ?? '0'),
@@ -857,7 +859,7 @@ export class ControlService {
 		if (check.status !== 'confirmed') {
 			throw new ValidationError(`the payment does not pay this job: ${check.reason}`);
 		}
-		const attempt = { blockHash: check.blockHash, payer, at: this.now() };
+		const attempt = { blockHash: check.blockHash, payer: check.payer, at: this.now() };
 		const job = await this.store.updateJob(jobId, (latest) => {
 			if (latest.payment || latest.status !== 'scheduled') {
 				throw new ConflictError('this quote can no longer be paid');
@@ -869,7 +871,7 @@ export class ControlService {
 			if (attempts.length >= 4) {
 				throw new ConflictError('too many payments were tried for this quote; request a new one');
 			}
-			return { ...latest, paymentAttempts: [...attempts, attempt] };
+			return { ...latest, paymentAttempts: [...attempts, attempt], paymentCheckDue: true };
 		});
 		return { recorded: true, jobId: job.jobId };
 	}
@@ -902,10 +904,11 @@ export class ControlService {
 	 * hash the job keeps, and the settlement's transaction (the vote staple),
 	 * kept only when the block is missing. Nothing is paid on the router's
 	 * word: a payout to the provider (or back to the payer) reads the block
-	 * from the ledger first (routerPayoutSends).
+	 * from the ledger first (routerPayoutSends). The payer is the account of
+	 * the block the router recorded (routerPaying), else the one it names.
 	 */
 	async routerSettled(jobId: string, body: Record<string, unknown>) {
-		const payer = assertKeetaAddress(body.payer, 'payer');
+		const named = optionalKeetaAddress(body.payer, 'payer');
 		const raw = typeof body.transaction === 'string' ? body.transaction.slice(0, 200) : '';
 		const block = typeof body.block === 'string' && body.block.length <= 16_384 ? encodedBlockHash(body.block) : null;
 		const transaction = block ?? (/^[0-9A-Fa-f]{64}$/.test(raw) ? raw.toUpperCase() : raw);
@@ -918,22 +921,28 @@ export class ControlService {
 			if (current.payment) {
 				return current;
 			}
+			/* A recorded block's payer was read from the block itself (routerPaying), so it wins over a named one. */
+			const payer = current.paymentAttempts?.find((attempt) => attempt.blockHash === transaction)?.payer ?? named;
+			if (!payer) {
+				throw new ValidationError('payer is required for a payment the router did not record');
+			}
 			const now = this.now();
 			const payment = { blockHash: transaction, paidAt: now, verified: true };
+			const { paymentCheckDue: _check, ...settled } = current;
 			/* A fallback job has no provider receipt to wait for: payment completes it. */
 			if (current.fallback) {
-				return { ...current, payment, routerPayer: payer, status: 'paid', completedAt: now };
+				return { ...settled, payment, routerPayer: payer, status: 'paid', completedAt: now };
 			}
 			/* The provider's receipt can land first; the job is paid now, and the receipt counts for the provider now. */
 			if (current.status === 'completed') {
 				receiptCounts = current.receipt ?? null;
-				return { ...current, payment, routerPayer: payer, status: 'paid', ...prepaidSettlement(current, 'delivered', now) };
+				return { ...settled, payment, routerPayer: payer, status: 'paid', ...prepaidSettlement(current, 'delivered', now) };
 			}
 			/* Paid for a job that already failed or lapsed: it all goes back. */
 			if (current.status === 'failed' || current.status === 'expired') {
-				return { ...current, payment, routerPayer: payer, status: 'failed', ...prepaidSettlement(current, 'failed', now) };
+				return { ...settled, payment, routerPayer: payer, status: 'failed', ...prepaidSettlement(current, 'failed', now) };
 			}
-			return { ...current, payment, routerPayer: payer };
+			return { ...settled, payment, routerPayer: payer };
 		});
 		if (receiptCounts) {
 			const { outputTokens } = receiptCounts.receipt;
@@ -1356,29 +1365,43 @@ export class ControlService {
 			paidOut += (await this.serially(() => this.payout(job))).settlement?.blockHash ? 1 : 0;
 		});
 		/*
-		 * Router jobs last: tickets that drew no receipt (mostly quotes nobody
-		 * paid), and receipts no payment was reported for (a reported payment
-		 * makes the job paid). Their tickets expired long ago.
+		 * Router jobs last. First, payments the router recorded but never
+		 * reported settled (a lost report, or a settlement that failed), in
+		 * any status: one on the ledger settles as the report would have,
+		 * which refunds it if the job has since failed or lapsed. A block the
+		 * ledger does not show may still land, so it is looked for until the
+		 * lapse; then the job is left to the unpaid steps below.
+		 */
+		await each(await this.store.listPaymentChecksDue(ticketLapse, 200), async (job) => {
+			const paid = job.payment ? null : await this.attemptedPayment(job);
+			if (paid) {
+				const reported = await this.routerSettled(job.jobId, { payer: paid.payer, transaction: paid.blockHash });
+				if (reported.payoutDue) {
+					paidOut += (await this.serially(() => this.payout(reported))).settlement?.blockHash ? 1 : 0;
+				}
+				return;
+			}
+			if (!job.payment && (job.ticketIssuedAt ?? job.createdAt) > now - SETTLE_LAPSE_MS) {
+				return;
+			}
+			await this.store.updateJob(job.jobId, (current) => {
+				if (!current.paymentCheckDue || (!current.payment && current.paymentAttempts?.length !== job.paymentAttempts?.length)) {
+					return current;
+				}
+				const { paymentCheckDue: _check, ...rest } = current;
+				return rest;
+			});
+		});
+		/*
+		 * Then tickets that drew no receipt (mostly quotes nobody paid), and
+		 * receipts no payment was reported for (a reported payment makes the
+		 * job paid). Their tickets expired long ago.
 		 */
 		for (const status of ['scheduled', 'completed'] as const) {
 			await each(await this.store.listJobsByStatus(status, 'prepaid', ticketLapse, 200), async (job) => {
-				/* The router recorded a payment it settled but its report never came: settle from the ledger as the report would have. */
-				if (!job.payment && job.paymentAttempts?.length) {
-					const paid = await this.attemptedPayment(job);
-					if (paid) {
-						const reported = await this.routerSettled(job.jobId, { payer: paid.payer, transaction: paid.blockHash });
-						if (reported.payoutDue) {
-							paidOut += (await this.serially(() => this.payout(reported))).settlement?.blockHash ? 1 : 0;
-						}
-						return;
-					}
-					/* A payment block the ledger does not show yet may still land: look again until the lapse. */
-					if ((job.ticketIssuedAt ?? job.createdAt) > now - SETTLE_LAPSE_MS) {
-						return;
-					}
-				}
 				const updated = await this.store.updateJob(job.jobId, (current) => {
-					if (current.status !== status) {
+					/* A recorded payment is still being looked for (above). */
+					if (current.status !== status || current.paymentCheckDue) {
 						return current;
 					}
 					/* Paid to the settlement account but never billed: the payment goes back to the payer, once a job could no longer be running (MAX_JOB_MS). */
@@ -1577,6 +1600,11 @@ function assertBaseUnits(value: unknown, field: string): bigint {
 		throw new ValidationError(`${field} must be a whole number of base units, as a string`);
 	}
 	return BigInt(value);
+}
+
+/** A Keeta address the caller may leave out (absent, null or empty): undefined then. */
+function optionalKeetaAddress(value: unknown, field: string): string | undefined {
+	return value === undefined || value === null || value === '' ? undefined : assertKeetaAddress(value, field);
 }
 
 /** A list of provider keys or payout addresses from a quote request, without repeats; undefined when it names none. */

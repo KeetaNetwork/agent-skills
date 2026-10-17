@@ -42,6 +42,8 @@ export interface Store {
 	listJobsByStatus(status: JobStatus, paymentMode: PaymentMode, createdBefore: number, limit: number): Promise<JobRecord[]>;
 	/** Escrowed jobs whose settlement is decided but not yet paid out (`payoutDue`). */
 	listPayoutsDue(limit: number): Promise<JobRecord[]>;
+	/** Router jobs with a recorded payment and no settled report (`paymentCheckDue`), created before `createdBefore`: oldest first, up to `limit`. */
+	listPaymentChecksDue(createdBefore: number, limit: number): Promise<JobRecord[]>;
 
 	getPairing(pairingId: string): Promise<PairingRecord | null>;
 	findPairingByCodeHash(codeHash: string): Promise<PairingRecord | null>;
@@ -158,6 +160,14 @@ export class MemoryStore implements Store {
 
 	async listPayoutsDue(limit: number) {
 		return [...this.jobs.values()].filter((j) => j.payoutDue).slice(0, limit).map(clone);
+	}
+
+	async listPaymentChecksDue(createdBefore: number, limit: number) {
+		return [...this.jobs.values()]
+			.filter((j) => j.paymentCheckDue && j.createdAt < createdBefore)
+			.sort((a, b) => a.createdAt - b.createdAt)
+			.slice(0, limit)
+			.map(clone);
 	}
 
 	async getPairing(pairingId: string) {

@@ -40,6 +40,10 @@ let node: Signer;
 let operator: string;
 let buyerAccount: KeetaAccount;
 let buyer: Signer;
+let offer: Offer;
+
+/* The node heartbeats as the agent does (every 30 s), so it stays schedulable however slow the test network is (PROVIDER_STALE_MS). */
+const beat = () => api.post(node, '/v1/providers/heartbeat', { status: 'online', offers: [offer], load: { active: 0, capacity: 4 } });
 
 before(async () => {
 	if (skipLive) {
@@ -69,8 +73,8 @@ before(async () => {
 		payTo: operator,
 		link: { issuedAt, signature: link }
 	});
-	const offer: Offer = { modelId: MODEL, weightsHash: 'c'.repeat(64), runtime: { kind: 'mlx', build: 'live' }, price: PRICE, access: { mode: 'public', allow: [] }, contextLength: 8192 };
-	await api.post(node, '/v1/providers/heartbeat', { status: 'online', offers: [offer], load: { active: 0, capacity: 4 } });
+	offer = { modelId: MODEL, weightsHash: 'c'.repeat(64), runtime: { kind: 'mlx', build: 'live' }, price: PRICE, access: { mode: 'public', allow: [] }, contextLength: 8192 };
+	await beat();
 
 	/* The buyer holds credits as if it had bought them: sent from the FX account, which holds the supply. */
 	buyerAccount = funder.track(freshAccount());
@@ -91,6 +95,7 @@ after(async () => {
 const creditsOf = (address: string) => funder.balance(address, credits.token);
 
 const quote = async () => {
+	await beat();
 	const { job, quote: q } = await api.post<{ job: JobRecord; quote: EscrowQuote }>(buyer, '/v1/jobs', { network: NETWORK, model: MODEL, maxInputTokens: 200, maxOutputTokens: 100 });
 	assert.equal(job.status, 'quoted');
 	return q;
@@ -101,7 +106,15 @@ const reportEscrow = (jobId: string, blockHash: string) => api.post<{ pending?: 
 
 /** Report an escrow block until the control plane finds it on the ledger; resolves to the ticket. */
 async function ticketFor(jobId: string, blockHash: string): Promise<SignedTicket> {
-	return until(`the escrow of ${jobId} to be read from the ledger`, async () => (await reportEscrow(jobId, blockHash)).ticket ?? null, 60_000, 1_000);
+	return until(
+		`the escrow of ${jobId} to be read from the ledger`,
+		async () => {
+			await beat();
+			return (await reportEscrow(jobId, blockHash)).ticket ?? null;
+		},
+		60_000,
+		1_000
+	);
 }
 
 /** Wait for the settlement account's payout block for a job, sweeping as the control plane's sweeper does. */

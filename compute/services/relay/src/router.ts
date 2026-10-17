@@ -323,7 +323,8 @@ export function createRouter(deps: RouterDeps) {
 			if (!block) {
 				return errorResponse(402, 'invalid_payment', 'the payment carries no signed block');
 			}
-			const recorded = await control(`/v1/router/jobs/${ticket.jobId}/paying`, { method: 'POST', body: { payer: verified.payer ?? '', block } }).catch(() => null);
+			/* A facilitator's verify may not name the payer; the control plane then reads it from the block. */
+			const recorded = await control(`/v1/router/jobs/${ticket.jobId}/paying`, { method: 'POST', body: { ...(verified.payer ? { payer: verified.payer } : {}), block } }).catch(() => null);
 			if (!recorded?.ok) {
 				if (recorded && recorded.status < 500) {
 					const reason = ((await recorded.json().catch(() => null)) as { error?: { message?: string } } | null)?.error?.message ?? 'the payment was refused';
@@ -341,7 +342,7 @@ export function createRouter(deps: RouterDeps) {
 				if (delay) {
 					await new Promise((resolve) => setTimeout(resolve, delay));
 				}
-				const reported = await control(`/v1/router/jobs/${ticket.jobId}/settled`, { method: 'POST', body: { payer, transaction: settlement.transaction ?? '', block } }).catch(() => null);
+				const reported = await control(`/v1/router/jobs/${ticket.jobId}/settled`, { method: 'POST', body: { ...(payer ? { payer } : {}), transaction: settlement.transaction ?? '', block } }).catch(() => null);
 				if (reported && reported.status < 500) {
 					break;
 				}
