@@ -135,7 +135,8 @@ export interface FallbackConfig {
 	models: Record<string, { route: string; price: Price; contextLength: number }>;
 }
 
-export type EscrowCheck = { status: 'confirmed'; amount: bigint } | { status: 'pending' } | { status: 'rejected'; reason?: string };
+/** `pending`: the ledger does not show the block (yet). `unavailable`: the ledger could not be asked, so nothing is known. */
+export type EscrowCheck = { status: 'confirmed'; amount: bigint } | { status: 'pending' } | { status: 'unavailable'; reason?: string } | { status: 'rejected'; reason?: string };
 
 /**
  * Finds a block on the ledger: a send from `from` to `to` of `asset`, at
@@ -664,7 +665,7 @@ export class ControlService {
 		if (check.status === 'rejected') {
 			throw new PaymentRequiredError(`that block does not escrow this job${check.reason ? `: ${check.reason}` : ''}`);
 		}
-		if (check.status === 'pending') {
+		if (check.status === 'pending' || check.status === 'unavailable') {
 			return { job: redactJob(job), pending: true };
 		}
 		const now = this.now();
@@ -878,10 +879,12 @@ export class ControlService {
 
 	/**
 	 * A router job past its ticket with no settled report: look for a payment
-	 * the router recorded before settling, on the ledger. Null when none is
-	 * there (or none was recorded).
+	 * the router recorded before settling, on the ledger. `paid` is null when
+	 * none is there; `answered` is false when the ledger could not be asked
+	 * about some attempt, so it may still be there.
 	 */
-	private async attemptedPayment(job: JobRecord): Promise<{ blockHash: string; payer: string } | null> {
+	private async attemptedPayment(job: JobRecord): Promise<{ paid: { blockHash: string; payer: string } | null; answered: boolean }> {
+		let answered = true;
 		for (const attempt of job.paymentAttempts ?? []) {
 			const check = await this.config.verifyPayment({
 				network: job.network,
@@ -893,10 +896,11 @@ export class ControlService {
 				reference: job.jobId
 			});
 			if (check.status === 'confirmed') {
-				return attempt;
+				return { paid: attempt, answered: true };
 			}
+			answered &&= check.status !== 'unavailable';
 		}
-		return null;
+		return { paid: null, answered };
 	}
 
 	/**
@@ -1370,10 +1374,11 @@ export class ControlService {
 		 * any status: one on the ledger settles as the report would have,
 		 * which refunds it if the job has since failed or lapsed. A block the
 		 * ledger does not show may still land, so it is looked for until the
-		 * lapse; then the job is left to the unpaid steps below.
+		 * lapse; then the job is left to the unpaid steps below. While the
+		 * ledger cannot be asked, it is looked for however long that lasts.
 		 */
 		await each(await this.store.listPaymentChecksDue(ticketLapse, 200), async (job) => {
-			const paid = job.payment ? null : await this.attemptedPayment(job);
+			const { paid, answered } = job.payment ? { paid: null, answered: true } : await this.attemptedPayment(job);
 			if (paid) {
 				const reported = await this.routerSettled(job.jobId, { payer: paid.payer, transaction: paid.blockHash });
 				if (reported.payoutDue) {
@@ -1381,7 +1386,7 @@ export class ControlService {
 				}
 				return;
 			}
-			if (!job.payment && (job.ticketIssuedAt ?? job.createdAt) > now - SETTLE_LAPSE_MS) {
+			if (!answered || (!job.payment && (job.ticketIssuedAt ?? job.createdAt) > now - SETTLE_LAPSE_MS)) {
 				return;
 			}
 			await this.store.updateJob(job.jobId, (current) => {

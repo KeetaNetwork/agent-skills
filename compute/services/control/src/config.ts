@@ -107,8 +107,9 @@ export function ledgerPaymentVerifier(): PaymentVerifier {
 			}
 			return result.status === 'not-found' ? { status: 'pending' } : { status: 'rejected', reason: result.reason };
 		} catch (error) {
-			console.warn('payment lookup failed; will retry', (error as Error).message);
-			return { status: 'pending' };
+			const reason = (error as Error).message.slice(0, 300);
+			console.warn('payment lookup failed; will retry', reason);
+			return { status: 'unavailable', reason };
 		}
 	};
 }

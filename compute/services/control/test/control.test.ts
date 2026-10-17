@@ -170,8 +170,12 @@ function harness(options: { fallback?: FallbackConfig; credits?: boolean; credit
 	const coordinator = newSigner();
 	const ledger = new TestLedger();
 	const { settlement, stats: payouts } = settlementAccount(ledger);
-	/* What the production verifier does with checkPaymentBlock's answer (config.ts ledgerPaymentVerifier). */
+	/* What the production verifier does with checkPaymentBlock's answer (config.ts ledgerPaymentVerifier); `ledgerDown` fails every lookup. */
+	let ledgerDown = false;
 	const verifyPayment: PaymentVerifier = async (args) => {
+		if (ledgerDown) {
+			return { status: 'unavailable', reason: 'the ledger did not answer' };
+		}
 		const result = await checkPaymentBlock(ledger as never, args);
 		return result.status === 'confirmed' ? result : result.status === 'not-found' ? { status: 'pending' } : { status: 'rejected', reason: result.reason };
 	};
@@ -201,7 +205,7 @@ function harness(options: { fallback?: FallbackConfig; credits?: boolean; credit
 		return handle(req);
 	}
 
-	return { store, coordinator, service, call, ledger, settlement, payouts, advance: (ms: number) => (clock += ms), now: () => clock };
+	return { store, coordinator, service, call, ledger, settlement, payouts, advance: (ms: number) => (clock += ms), now: () => clock, ledgerDown: (down: boolean) => (ledgerDown = down) };
 }
 
 type Harness = ReturnType<typeof harness>;
@@ -1152,6 +1156,22 @@ test('the router records each payment before settling it: a block that does not 
 	const refundedLost = await paidOut(h, failedLost.jobId);
 	assert.deepEqual([refundedLost.status, refundedLost.settlement!.reason, refundedLost.routerPayer, refundedLost.paymentCheckDue], ['failed', 'failed', failedPayer, undefined]);
 	assert.deepEqual(h.ledger.payouts(h.settlement.account, failedLost.jobId, stablecoin.address).to, { [failedPayer]: BigInt(failedLost.prepaidAmount!) });
+
+	/* Settled with the report lost while the ledger cannot be asked: the payment is looked for past the lapse, until the ledger answers. */
+	const outage = await routerTicket();
+	const outagePayer = (await payRouterQuote(h, outage, undefined, { report: false })).payer;
+	h.ledgerDown(true);
+	h.advance(TICKET_TTL_MS + 5 * 60_000 + 1);
+	await h.service.sweep();
+	h.advance(SETTLE_LAPSE_MS);
+	await h.service.sweep();
+	const waiting = (await h.store.getJob(outage.jobId))!;
+	assert.deepEqual([waiting.status, waiting.paymentCheckDue, waiting.payment], ['scheduled', true, undefined], 'not expired while the ledger is down');
+	h.ledgerDown(false);
+	await h.service.sweep();
+	const outageRefund = await paidOut(h, outage.jobId);
+	assert.deepEqual([outageRefund.status, outageRefund.settlement!.reason, outageRefund.routerPayer], ['failed', 'no-receipt', outagePayer]);
+	assert.deepEqual(h.ledger.payouts(h.settlement.account, outage.jobId, stablecoin.address).to, { [outagePayer]: BigInt(outage.prepaidAmount!) });
 
 	/* Recorded but never settled (the payment service refused it): nothing landed, so the quote expires with nothing to pay. */
 	const unsettled = await routerTicket();
