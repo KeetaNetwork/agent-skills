@@ -6,11 +6,11 @@
  * The buyer agent escrows each job's maximum cost from that budget with the
  * settlement account at ticket time, and the control plane pays it out in
  * one block once the relay's delivery record settles it: the provider's bill
- * to its operator, the rest back to the budget.
+ * less the 0.25% network fee to its operator, the rest back to the budget.
  */
 
 import assert from 'node:assert/strict';
-import type { JobRecord } from '@keeta-compute/protocol';
+import { providerShare, type JobRecord } from '@keeta-compute/protocol';
 import { until } from '../support/harness.ts';
 import type { Stack } from './stack.ts';
 import { USDC, type Funder } from './support.ts';
@@ -50,8 +50,8 @@ export async function fundAppBuyer(funder: Funder, stack: Stack, buyer: AppBuyer
 /**
  * Start watching an operator's and a buyer's credits; the returned function
  * waits for a job to be paid out and checks, on the ledger, that the
- * operator received exactly the bill and the buyer's escrow came back less
- * the bill.
+ * operator received exactly the bill less the network fee and the buyer's
+ * escrow came back less the bill.
  */
 export async function watchSettlement(stack: Stack, funder: Funder, operator: string, buyerSpend: string): Promise<(jobId: string, timeoutMs?: number) => Promise<JobRecord>> {
 	const token = creditsOf(stack);
@@ -74,8 +74,8 @@ export async function watchSettlement(stack: Stack, funder: Funder, operator: st
 		assert.ok(job.escrow?.blockHash, 'escrowed on the ledger before the ticket');
 		const billed = BigInt(job.receipt!.receipt.amount);
 		assert.ok(billed > 0n);
-		await until('the payout to show on the ledger', async () => (await funder.balance(operator, token)) >= operatorBefore + billed, 60_000, 1_000);
-		assert.equal(await funder.balance(operator, token), operatorBefore + billed, "the operator's credits went up by exactly the bill");
+		await until('the payout to show on the ledger', async () => (await funder.balance(operator, token)) >= operatorBefore + providerShare(billed), 60_000, 1_000);
+		assert.equal(await funder.balance(operator, token), operatorBefore + providerShare(billed), "the operator's credits went up by exactly the bill less the network fee");
 		assert.equal(await funder.balance(buyerSpend, token), buyerBefore - billed, "the buyer's budget paid the bill and got the rest of the escrow back");
 		return job;
 	};

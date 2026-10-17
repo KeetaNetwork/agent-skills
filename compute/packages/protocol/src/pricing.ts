@@ -52,6 +52,24 @@ export function escrowAmount(price: Price, limits: { maxInputTokens: number; max
 	return most > NO_SHOW_FEE ? most : NO_SHOW_FEE;
 }
 
+/**
+ * keeta.ai's network fee: 0.25% (25 basis points) of what a job bills for
+ * its tokens. It comes out of the provider's share; buyers pay the listed
+ * price. Rounded up to a whole base unit, and it never applies to the
+ * no-show fee.
+ */
+export const NETWORK_FEE_BPS = 25n;
+
+/** The network fee on a job that billed `billed` base units. */
+export function networkFee(billed: bigint): bigint {
+	return billed > 0n ? ceilDiv(billed * NETWORK_FEE_BPS, 10_000n) : 0n;
+}
+
+/** What a provider receives for a job that billed `billed`: the bill less the network fee. */
+export function providerShare(billed: bigint): bigint {
+	return billed - networkFee(billed);
+}
+
 /** Format base units as a decimal string, e.g. 1234567n with 6 decimals → "1.234567". */
 export function formatAmount(amount: bigint, decimals: number): string {
 	const negative = amount < 0n;

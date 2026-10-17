@@ -3,9 +3,12 @@
  * paid with real x402 on the Keeta test network. A client with no Keeta
  * Compute software, only @x402/fetch and the Keeta exact scheme, gets a 402,
  * signs a send of the router's stablecoin (KUSD once it is pinned, test USDC
- * until then) from a fresh account, and the facilitator settles it to the
- * provider's operator. The funding account must hold that stablecoin. The router unit tests own the flow with a stubbed
- * gateway; this file owns what only the real facilitator and ledger show.
+ * until then) from a fresh account, and the facilitator settles it to
+ * keeta.ai's settlement account. Once the provider's receipt bills the job,
+ * the control plane pays the operator the bill less the 0.25% network fee
+ * and returns the rest to the payer. The funding account must hold that
+ * stablecoin. The router unit tests own the flow with a stubbed gateway; this
+ * file owns what only the real facilitator and ledger show.
  */
 
 import { after, before, test } from 'node:test';
@@ -13,7 +16,7 @@ import assert from 'node:assert/strict';
 import { HTTPFacilitatorClient } from '@x402/core/server';
 import { decodePaymentResponseHeader, wrapFetchWithPayment, x402Client } from '@x402/fetch';
 import { ExactKeetaScheme, KEETA_TESTNET_CAIP2, toClientKeetaSigner } from '@x402/keeta';
-import { CREDIT_DECIMALS, defaultAsset, formatAmount, receiptMessage, rescaleAmount, type SignedReceipt } from '@keeta-compute/protocol';
+import { CREDIT_DECIMALS, defaultAsset, formatAmount, networkFee, providerShare, receiptMessage, rescaleAmount, type SignedReceipt } from '@keeta-compute/protocol';
 import { verifyKeetaSignature } from '@keeta-compute/protocol/keeta';
 import { Scratch, until } from '../support/harness.ts';
 import { Funder, NETWORK, announceSkip, freshAccount, skipLive, type KeetaAccount } from './support.ts';
@@ -44,7 +47,7 @@ before(async () => {
 	funder = await Funder.open();
 	const held = await funder.balance(funder.address, ASSET.address);
 	assert.ok(held >= PAYER_FUNDS, `the funding account ${funder.address} holds ${formatAmount(held, ASSET.decimals)} test ${ASSET.symbol}, which the router quotes in; it needs at least ${formatAmount(PAYER_FUNDS, ASSET.decimals)}`);
-	stack = await startStack(scratch);
+	stack = await startStack(scratch, { settlement: { funder } });
 	payer = funder.track(freshAccount());
 	/* x402 payers need no KTA: the facilitator pays the network fee. */
 	await funder.fund(payer.publicKeyString.get(), ASSET.address, PAYER_FUNDS);
@@ -58,10 +61,14 @@ after(async () => {
 const body = JSON.stringify({ model: MODEL, messages: [{ role: 'user', content: 'Say hello' }], max_tokens: 32 });
 
 let paymentHeader = '';
+/** What the first job billed, in the stablecoin's base units. */
+let billed = 0n;
 
-test('an x402 client pays the router in its stablecoin and gets the completion with the provider receipt; the operator is paid on the ledger', { skip: skipLive, timeout: 300_000 }, async () => {
+test('an x402 client pays the router in its stablecoin and gets the completion with the provider receipt; the operator is paid its share on the ledger', { skip: skipLive, timeout: 300_000 }, async () => {
 	const operator = stack.mac.operator;
-	const before = await funder.balance(operator, ASSET.address);
+	const settlementAccount = stack.settlement!;
+	const payerAddress = payer.publicKeyString.get();
+	const [before, payerBefore, settlementBefore] = (await Promise.all([operator, payerAddress, settlementAccount].map((address) => funder.balance(address, ASSET.address)))) as [bigint, bigint, bigint];
 	const signer = toClientKeetaSigner(payer);
 	let quoted = '';
 	try {
@@ -75,8 +82,9 @@ test('an x402 client pays the router in its stablecoin and gets the completion w
 			paymentHeader = request.headers.get('payment-signature') ?? request.headers.get('x-payment') ?? paymentHeader;
 			const response = await fetch(request);
 			if (response.status === 402) {
-				const required = JSON.parse(atob(response.headers.get('payment-required')!)) as { accepts: Array<{ amount: string; payTo: string; asset: string }> };
-				assert.equal(required.accepts[0]!.payTo, operator, 'the quote pays the provider directly');
+				const required = JSON.parse(atob(response.headers.get('payment-required')!)) as { accepts: Array<{ amount: string; payTo: string; asset: string; extra: { jobId: string; external?: string } }> };
+				assert.equal(required.accepts[0]!.payTo, settlementAccount, 'the quote pays the settlement account');
+				assert.equal(required.accepts[0]!.extra.external, required.accepts[0]!.extra.jobId, 'and the send names the job');
 				assert.equal(required.accepts[0]!.asset, ASSET.address, `the router quotes in ${ASSET.symbol}`);
 				quoted = required.accepts[0]!.amount;
 			}
@@ -104,13 +112,29 @@ test('an x402 client pays the router in its stablecoin and gets the completion w
 			const current = await stack.control.store.getJob(receipt.receipt.jobId);
 			return current?.routerPayer ? current : null;
 		});
-		assert.equal(job.routerPayer, payer.publicKeyString.get());
+		assert.equal(job.routerPayer, payerAddress);
 		assert.equal(job.prepaidAmount, quoted);
+		billed = rescaleAmount(BigInt(receipt.receipt.amount), CREDIT_DECIMALS, ASSET.decimals);
+		assert.ok(billed > 0n && billed <= BigInt(quoted), 'the receipt bills at most what was prepaid');
+		const paid = await until(
+			'the settlement account to pay the job out',
+			async () => {
+				/* Settle what is due the way the control plane's sweeper does, without waiting for it. */
+				await stack.control.service.sweep();
+				const current = await stack.control.store.getJob(job.jobId);
+				return current?.settlement?.blockHash ? current : null;
+			},
+			120_000,
+			1_000
+		);
+		assert.deepEqual([paid.status, paid.settlement!.reason], ['paid', 'delivered']);
 	} finally {
 		await signer.destroy();
 	}
-	await until('the payment to show on the ledger', async () => (await funder.balance(operator, ASSET.address)) >= before + BigInt(quoted), 60_000, 1_000);
-	assert.equal(await funder.balance(operator, ASSET.address), before + BigInt(quoted), 'the operator received exactly the quoted amount');
+	await until('the payout to show on the ledger', async () => (await funder.balance(operator, ASSET.address)) >= before + providerShare(billed), 60_000, 1_000);
+	assert.equal(await funder.balance(operator, ASSET.address), before + providerShare(billed), 'the operator received the bill less the network fee');
+	assert.equal(await funder.balance(payerAddress, ASSET.address), payerBefore - billed, 'the payer paid the bill and got the rest of its prepayment back');
+	assert.equal(await funder.balance(settlementAccount, ASSET.address), settlementBefore + networkFee(billed), 'the settlement account kept the network fee');
 });
 
 test('a replayed x402 payment header is refused and moves no money', { skip: skipLive, timeout: 120_000 }, async () => {

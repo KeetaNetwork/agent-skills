@@ -17,6 +17,7 @@ import {
 	maxOutputTokensFor,
 	maxPromptBoundFor,
 	promptTokenBound,
+	providerShare,
 	receiptMessage,
 	sha256Hex,
 	ticketMessage,
@@ -561,7 +562,7 @@ export class Provider {
 				const day = utcDay();
 				s.tokensByDay[day] = (s.tokensByDay[day] ?? 0) + outputTokens;
 			});
-			this.deps.onJob({ ...summary, inputTokens, outputTokens, amount: amount.toString(), status: 'completed', at: Date.now() });
+			this.deps.onJob({ ...summary, inputTokens, outputTokens, amount: providerShare(amount).toString(), status: 'completed', at: Date.now() });
 		};
 		try {
 			const requested = envelope.request.max_completion_tokens ?? envelope.request.max_tokens ?? ticket.maxOutputTokens;

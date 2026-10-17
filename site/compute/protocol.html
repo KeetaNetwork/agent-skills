@@ -112,13 +112,14 @@ sha256hex(body)</code></pre>
 <li><strong>Delivery record.</strong> For app jobs the relay records a sha256 hash of the text it forwarded and the job's output limit, when the buyer brought the ticket, and when the buyer hung up if that was before any text. After a hang-up the relay tells the provider to stop, and the record also counts the text the provider sent before that reached it, for at most 5 seconds, so it covers what the receipt bills.</li>
 <li><p><strong>Settlement.</strong> The relay's record decides how the escrow is paid out, in one Keeta block from the settlement account whose sends reference the job:</p>
 <ul>
-<li>The receipt's <code>outputHash</code> matches the record and its output tokens fit in that text: <code>amount</code> to <code>payTo</code>, the rest of the escrow back to the buyer.</li>
+<li>The receipt's <code>outputHash</code> matches the record and its output tokens fit in that text: <code>amount</code> less the network fee to <code>payTo</code>, the rest of the escrow back to the buyer. The fee stays in the settlement account.</li>
 <li>The receipt bills other text: the whole escrow back to the buyer, and the dispute counts against the provider.</li>
 <li>A receipt with no record yet waits up to a minute for one, then the whole escrow goes back to the buyer.</li>
 <li>The provider fails the job, or no receipt arrives within 15 minutes of a ticket the buyer brought to the relay: the whole escrow goes back to the buyer.</li>
 <li>A ticket holds a slot on its provider, so it must be brought to the relay within 10 seconds of being issued and not hung up on within 10 seconds of arriving before any text. A ticket the relay never saw, or hung up on that early, is a no-show: the provider gets the no-show fee, <code>1000</code> base units (0.001 credits), and the rest of the escrow goes back to the buyer. A ticket brought late that runs pays the fee on top of its <code>amount</code>. A buyer that waited longer than 10 seconds for text gets the whole escrow back.</li>
 </ul>
-<p>Before paying, the settlement account looks for a block of its own that references the job, so a job is never paid out twice.</p></li>
+<p>Before paying, the settlement account looks for a block of its own that references the job, so a job is never paid out twice.</p>
+<p>Router jobs settle from the x402 payment instead of an escrow. It goes to the settlement account with the job id as the send's external reference. Once the receipt bills the job, one block pays <code>payTo</code> the receipt's <code>amount</code> in the payment's stablecoin (never more than the prepayment) less the network fee, and sends the rest back to the payer. A job the provider fails, or one with no receipt before its ticket lapses, is refunded in full. The payment block is read from the ledger before anything is paid.</p></li>
 <li><strong>Reputation.</strong> Completed, failed and disputed jobs update the provider's record, which the scheduler reads. A router job counts as completed only once the router has reported its payment.</li>
 </ol>
 <p>Structured output is compiled before the first token, so requests are bounded: <code>response_format</code> JSON schemas (and tool parameters when a tool call is forced) must be at most 8 KB, nest at most 8 levels and avoid <code>anyOf</code>, <code>oneOf</code>, <code>allOf</code>, <code>not</code>, <code>$ref</code>, <code>pattern</code> and conditionals; <code>stop</code> takes at most 4 sequences of 256 bytes. Counting a prompt's tokens takes time in proportion to its size, so a provider refuses a request whose size bound (the one tickets use without a pinned tokenizer) is more than 16 times its ticket's input limit plus 65,536, before counting it.</p>
@@ -172,10 +173,14 @@ sha256hex(body)</code></pre>
 <pre><code class="language-text">raw    = inputTokens × inputPerMillion + outputTokens × outputPerMillion
 amount = ceil(raw / 1000000)</code></pre>
 <p>Any job that processed at least one token costs at least 1 base unit. An escrow quote (<code>maxCost</code>) or x402 challenge uses the same formula with <code>maxInputTokens</code> and <code>maxOutputTokens</code>. The router converts the result to its stablecoin's decimals, one US dollar per credit, rounding up.</p>
+<p>The buyer pays <code>amount</code>. The network keeps a 0.25% fee from it, and the provider receives the rest:</p>
+<pre><code class="language-text">fee      = ceil(amount × 25 / 10000)
+provider = amount − fee</code></pre>
+<p>The fee applies to app and router jobs alike, and not to the no-show fee. For a router job it is computed on <code>amount</code> after conversion to the stablecoin.</p>
 <p>Example: 1200 input and 300 output tokens at <code>50000</code> / <code>100000</code> gives raw = 60000000 + 30000000 = 90000000, so amount = 90 base units (0.00009 credits, or $0.00009).</p>
 <h2 id="on-chain-and-off-chain">On-chain and off-chain</h2>
 <ul>
-<li><strong>On-chain (Keeta Network):</strong> all money and every balance. The credit token, swaps between credits and stablecoins, each app job's escrow to the settlement account and its payout block, and router payments straight from the buyer to the provider's payout address.</li>
+<li><strong>On-chain (Keeta Network):</strong> all money and every balance. The credit token, swaps between credits and stablecoins, each app job's escrow to the settlement account and its payout block, and each router payment to the settlement account and its payout block.</li>
 <li><strong>Off-chain (app backend):</strong> the provider registry (node keys, hardware, offers, prices, access lists, heartbeats), job records (routing state, the receipt, the relay's delivery record, and the hashes of the escrow and payout blocks), pairing records for Linux helpers, and reputation counters. No balances, amounts owed or earnings.</li>
 <li><strong>Never stored:</strong> prompts and outputs. They pass through the relay to the provider and back. Job records hold the receipt, which holds only the output's hash.</li>
 </ul>

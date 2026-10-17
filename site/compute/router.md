@@ -40,7 +40,7 @@ Paid. OpenAI request and response format; `stream: true` is supported. Set `max_
 2. Your client signs one Keeta send block for `amount` to `payTo` and retries the same request with the `PAYMENT-SIGNATURE` header. The block is signed, not published.
 3. The router has the x402 facilitator verify the block. The provider checks the quote and reserves a slot for the job, the facilitator settles the payment on Keeta, and only then does the provider run the job. If the provider is offline, busy or refuses the quote, nothing is settled and you are not charged.
 
-The payment goes straight to the serving provider's address. The router never holds the funds.
+The payment goes to keeta.ai's settlement account, with the job id written into the send. When the provider's signed receipt bills the job, one Keeta transaction from the settlement account pays the provider what it billed, less the 0.25% network fee, and sends the rest of your payment back to the address that paid. If the job fails or no receipt arrives, the whole payment comes back.
 
 Example 402:
 
@@ -68,10 +68,11 @@ The `PAYMENT-REQUIRED` header, decoded:
       "network": "keeta:1413829460",
       "asset": "keeta_<the KUSD token address>",
       "amount": "27",
-      "payTo": "keeta_<the serving provider's address>",
+      "payTo": "keeta_<keeta.ai's settlement address>",
       "maxTimeoutSeconds": 60,
       "extra": {
         "jobId": "job_<id>",
+        "external": "job_<id>",
         "assetSymbol": "KUSD",
         "model": "qwen3-8b",
         "maxInputTokens": 20,
@@ -88,12 +89,12 @@ The `PAYMENT-REQUIRED` header, decoded:
 | `network` | `keeta:1413829460` on the test network, `keeta:21378` on the main network |
 | `asset` | The KUSD token address on that network, or USDC's until KUSD is live there. `extra.assetSymbol` names it. |
 | `amount` | The maximum cost in the asset's base units: estimated input tokens plus `max_tokens`, at the provider's price in credits, one US dollar per credit, rounded up |
-| `payTo` | The serving provider's Keeta address |
-| `extra` | The job id, the asset's symbol, the model, token limits and price the amount was computed from |
+| `payTo` | keeta.ai's settlement address, which pays the serving provider once the job is billed |
+| `extra` | The job id (also as `external`, which the Keeta x402 client writes into the send), the asset's symbol, the model, token limits and price the amount was computed from |
 
 In the example, 20 × 50000 + 256 × 100000 = 26600000, divided by one million and rounded up: 27 base units, or 0.000027 KUSD.
 
-You pay the maximum. Tokens not used are not refunded in this version, so keep `max_tokens` close to what you need.
+You pay the maximum up front. After the job, what the receipt did not bill comes back to the paying address in the same transaction that pays the provider.
 
 ## When the network is full
 
@@ -185,5 +186,5 @@ try {
 | 400 | Invalid request: malformed JSON or fields the router does not accept |
 | 402 | Payment required, or the payment failed verification or settlement |
 | 404 | Unknown model |
-| 502 | The provider failed. If it failed before it accepted the job, the payment is not settled and the message says so. If it failed after the job started, the payment was settled, and the `PAYMENT-RESPONSE` header shows it. |
+| 502 | The provider failed. If it failed before it accepted the job, the payment is not settled and the message says so. If it failed after the job started, the payment was settled, and the `PAYMENT-RESPONSE` header shows it; the whole payment comes back once the job is settled as failed. |
 | 503 | No provider is available for the model now. Retry after the `Retry-After` header. |

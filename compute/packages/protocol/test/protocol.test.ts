@@ -16,6 +16,8 @@ import {
 	maxJobCost,
 	escrowAmount,
 	NO_SHOW_FEE,
+	networkFee,
+	providerShare,
 	pairingCheckString,
 	pairingCodeHash,
 	parseAmount,
@@ -62,6 +64,16 @@ test('pricing is exact, rounds up and never charges zero for work', () => {
 	assert.equal(formatAmount(1_000_000n, 6), '1');
 	assert.equal(parseAmount('1.5', 6), 1_500_000n);
 	assert.throws(() => parseAmount('1.0000001', 6));
+});
+
+test('the network fee is 0.25% of the bill, rounded up, and comes out of the provider\'s share', () => {
+	assert.equal(networkFee(1_000_000n), 2_500n, 'one credit pays 0.0025');
+	assert.equal(providerShare(1_000_000n), 997_500n);
+	assert.equal(networkFee(92_000n), 230n);
+	assert.equal(networkFee(401n), 2n, 'a part of a base unit rounds up');
+	assert.equal(networkFee(1n), 1n);
+	assert.equal(networkFee(0n), 0n, 'nothing billed, no fee');
+	assert.equal(providerShare(0n), 0n);
 });
 
 test('hardware tiers follow the plan', () => {

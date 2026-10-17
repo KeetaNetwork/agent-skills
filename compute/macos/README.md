@@ -13,7 +13,8 @@ opens by itself on first launch for setup. It lets the owner of a Mac:
 - **Use**: give tools and agents on the Mac an OpenAI-compatible endpoint
   (`http://127.0.0.1:11435/v1`) that runs requests on other providers. Each
   request escrows its maximum cost in credits from an "agent budget" before it
-  runs; the provider is paid what it billed and the rest comes back.
+  runs; the provider is paid what it billed, less a 0.25% network fee, and
+  the rest comes back.
 - **Manage a fleet**: pair Linux machines as provider-only helpers whose
   earnings land in this Mac's wallet.
 

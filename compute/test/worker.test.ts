@@ -16,7 +16,7 @@ import { after, before, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { request as httpRequest } from 'node:http';
 import { Readable } from 'node:stream';
-import { ONE_CREDIT, operatorLinkMessage, promptTokenBound, requestedMaxTokens, jobAuthMessage, readRelayEvents, chunkText, sha256Hex, type ChatCompletionRequest, type EscrowQuote, type SignedReceipt, type SignedTicket, type Signer, type JobRecord } from '@keeta-compute/protocol';
+import { ONE_CREDIT, operatorLinkMessage, promptTokenBound, providerShare, requestedMaxTokens, jobAuthMessage, readRelayEvents, chunkText, sha256Hex, type ChatCompletionRequest, type EscrowQuote, type SignedReceipt, type SignedTicket, type Signer, type JobRecord } from '@keeta-compute/protocol';
 import { Account, accountSigner } from '@keeta-compute/protocol/keeta';
 import { startServer } from '../services/control/src/server.ts';
 import { ControlClient } from '@keeta-compute/protocol/client';
@@ -194,11 +194,11 @@ test('an app job runs through the Worker to the provider, and the relay records 
 	assert.ok(record.delivery!.presentedAt! >= record.ticketIssuedAt!, 'it says when the buyer brought the ticket');
 	assert.equal(record.delivery!.abandonedAt, undefined);
 
-	/* The record matches the receipt, so the escrow pays the provider its bill and the buyer the rest. */
+	/* The record matches the receipt, so the escrow pays the provider its bill less the network fee, and the buyer the rest. */
 	const { settled, to } = await payout(jobId);
 	assert.equal(settled.status, 'paid');
 	assert.equal(settled.settlement!.reason, 'delivered');
-	assert.deepEqual(to, { [operator]: BigInt(receipt.receipt.amount), [buyer.publicKey]: escrowed - BigInt(receipt.receipt.amount) });
+	assert.deepEqual(to, { [operator]: providerShare(BigInt(receipt.receipt.amount)), [buyer.publicKey]: escrowed - BigInt(receipt.receipt.amount) });
 });
 
 test('a buyer hanging up mid-answer cancels the job on the provider, and the receipt bills what the relay forwarded', async () => {
@@ -226,7 +226,7 @@ test('a buyer hanging up mid-answer cancels the job on the provider, and the rec
 
 	const { settled, to } = await payout(jobId);
 	assert.equal(settled.settlement!.reason, 'delivered');
-	assert.deepEqual(to, { [operator]: BigInt(billed.amount), [buyer.publicKey]: escrowed - BigInt(billed.amount) }, 'the provider is paid for what was forwarded, and the rest comes back');
+	assert.deepEqual(to, { [operator]: providerShare(BigInt(billed.amount)), [buyer.publicKey]: escrowed - BigInt(billed.amount) }, 'the provider is paid for what was forwarded, less the network fee, and the rest comes back');
 });
 
 test('a ticket brought to the Worker while its provider is offline is recorded, so the buyer owes no no-show fee', async () => {
@@ -265,9 +265,10 @@ test('the public router lists models and quotes while the payment service is dow
 	const body = JSON.stringify({ model: MODEL, messages: [{ role: 'user', content: 'Say hello' }], max_tokens: 32 });
 	const quote = await fetch(`${worker.url}/v1/chat/completions`, { method: 'POST', headers: { 'content-type': 'application/json' }, body });
 	assert.equal(quote.status, 402);
-	const required = JSON.parse(atob(quote.headers.get('payment-required')!)) as { accepts: Array<{ payTo: string; amount: string; network: string; extra: { jobId: string } }> };
+	const required = JSON.parse(atob(quote.headers.get('payment-required')!)) as { accepts: Array<{ payTo: string; amount: string; network: string; extra: { jobId: string; external: string } }> };
 	const [accepted] = required.accepts;
-	assert.equal(accepted!.payTo, operator, 'the provider is paid directly');
+	assert.equal(accepted!.payTo, SETTLEMENT, 'paid to the settlement account, which pays the provider once the receipt bills the job');
+	assert.equal(accepted!.extra.external, accepted!.extra.jobId, 'the send names the job');
 	assert.equal(accepted!.network, 'keeta:1413829460');
 
 	const header = btoa(JSON.stringify({ x402Version: 2, accepted, payload: { block: 'unchecked' } }));

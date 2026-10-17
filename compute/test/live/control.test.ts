@@ -11,7 +11,7 @@
 
 import { after, before, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { NO_SHOW_FEE, jobCost, operatorLinkMessage, receiptMessage, type EscrowQuote, type JobRecord, type Offer, type Receipt, type SignedTicket, type Signer } from '@keeta-compute/protocol';
+import { NO_SHOW_FEE, jobCost, networkFee, operatorLinkMessage, providerShare, receiptMessage, type EscrowQuote, type JobRecord, type Offer, type Receipt, type SignedTicket, type Signer } from '@keeta-compute/protocol';
 import { Account, accountSigner } from '@keeta-compute/protocol/keeta';
 import { startServer } from '../../services/control/src/server.ts';
 import { ledgerSettlement } from '../../services/control/src/config.ts';
@@ -196,9 +196,10 @@ test('a matched receipt and relay record settle the escrow in one payout block, 
 	const job = await paidOut(q.jobId);
 	assert.equal(job.status, 'paid');
 	assert.equal(job.settlement!.reason, 'delivered');
-	await until('the payout to show on the ledger', async () => (await creditsOf(operator)) === bill, 60_000, 1_000);
+	/* 0.25% of 300, rounded up: the provider receives 299. */
+	await until('the payout to show on the ledger', async () => (await creditsOf(operator)) === providerShare(bill), 60_000, 1_000);
 	assert.equal(await creditsOf(buyer.publicKey), buyerBefore - bill, 'the buyer paid the bill and got the rest of its escrow back');
-	assert.equal(await creditsOf(settlement), settlementBefore, 'the payout spent exactly the escrow');
+	assert.equal(await creditsOf(settlement), settlementBefore + networkFee(bill), 'the settlement account kept the network fee and paid out the rest of the escrow');
 
 	/* The record that keeps the job from being paid again is the block on the ledger, not a field in the store. */
 	const own = ledgerSettlement(credits.settlementSeed);

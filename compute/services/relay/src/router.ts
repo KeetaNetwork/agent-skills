@@ -3,7 +3,9 @@
  * buyers without the app, paid per request with x402 on Keeta in a
  * stablecoin: KUSD once it is pinned, otherwise USDC. Offer prices are in
  * credits, and one credit is one US dollar of the stablecoin. Payment goes
- * straight to the serving provider's account.
+ * to keeta.ai's settlement account, referencing the job; once the job is
+ * decided, the control plane pays the provider what the receipt bills, less
+ * the 0.25% network fee, and sends the rest of the payment back to the payer.
  *
  * Flow: quote (control plane schedules a provider and signs a prepaid
  * ticket) → 402 with the ticket inside the requirements → client signs a
@@ -107,10 +109,12 @@ export function requirementsFromTicket(signed: SignedTicket, network: NetworkNam
 		network: NETWORKS[network].caip2,
 		asset: ticket.asset,
 		amount: ticket.prepaidAmount ?? '0',
-		payTo: ticket.payTo,
+		payTo: ticket.paymentTo ?? ticket.payTo,
 		maxTimeoutSeconds: 60,
 		extra: {
 			jobId: ticket.jobId,
+			/* Written into the send, so the settlement account can tell which job a payment is for. */
+			external: ticket.jobId,
 			/* Which stablecoin `asset` is (KUSD or USDC); the price is in credits, one to the dollar. */
 			assetSymbol: findAsset(network, ticket.asset)?.symbol ?? null,
 			model: ticket.modelId,

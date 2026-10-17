@@ -84,7 +84,7 @@
 <li>Your client signs one Keeta send block for <code>amount</code> to <code>payTo</code> and retries the same request with the <code>PAYMENT-SIGNATURE</code> header. The block is signed, not published.</li>
 <li>The router has the x402 facilitator verify the block. The provider checks the quote and reserves a slot for the job, the facilitator settles the payment on Keeta, and only then does the provider run the job. If the provider is offline, busy or refuses the quote, nothing is settled and you are not charged.</li>
 </ol>
-<p>The payment goes straight to the serving provider's address. The router never holds the funds.</p>
+<p>The payment goes to keeta.ai's settlement account, with the job id written into the send. When the provider's signed receipt bills the job, one Keeta transaction from the settlement account pays the provider what it billed, less the 0.25% network fee, and sends the rest of your payment back to the address that paid. If the job fails or no receipt arrives, the whole payment comes back.</p>
 <p>Example 402:</p>
 <pre><code class="language-bash">curl -i https://api.keeta.ai/v1/chat/completions \
   -H "Content-Type: application/json" \
@@ -102,10 +102,11 @@ payment-required: eyJ4NDAyVmVyc2lvbiI6Mi...</code></pre>
       "network": "keeta:1413829460",
       "asset": "keeta_&lt;the KUSD token address&gt;",
       "amount": "27",
-      "payTo": "keeta_&lt;the serving provider's address&gt;",
+      "payTo": "keeta_&lt;keeta.ai's settlement address&gt;",
       "maxTimeoutSeconds": 60,
       "extra": {
         "jobId": "job_&lt;id&gt;",
+        "external": "job_&lt;id&gt;",
         "assetSymbol": "KUSD",
         "model": "qwen3-8b",
         "maxInputTokens": 20,
@@ -121,12 +122,12 @@ payment-required: eyJ4NDAyVmVyc2lvbiI6Mi...</code></pre>
 <tr><td><code>network</code></td><td class="wrap"><code>keeta:1413829460</code> on the test network, <code>keeta:21378</code> on the main network</td></tr>
 <tr><td><code>asset</code></td><td class="wrap">The KUSD token address on that network, or USDC's until KUSD is live there. <code>extra.assetSymbol</code> names it.</td></tr>
 <tr><td><code>amount</code></td><td class="wrap">The maximum cost in the asset's base units: estimated input tokens plus <code>max_tokens</code>, at the provider's price in credits, one US dollar per credit, rounded up</td></tr>
-<tr><td><code>payTo</code></td><td class="wrap">The serving provider's Keeta address</td></tr>
-<tr><td><code>extra</code></td><td class="wrap">The job id, the asset's symbol, the model, token limits and price the amount was computed from</td></tr>
+<tr><td><code>payTo</code></td><td class="wrap">keeta.ai's settlement address, which pays the serving provider once the job is billed</td></tr>
+<tr><td><code>extra</code></td><td class="wrap">The job id (also as <code>external</code>, which the Keeta x402 client writes into the send), the asset's symbol, the model, token limits and price the amount was computed from</td></tr>
 </tbody>
 </table>
 <p>In the example, 20 × 50000 + 256 × 100000 = 26600000, divided by one million and rounded up: 27 base units, or 0.000027 KUSD.</p>
-<p>You pay the maximum. Tokens not used are not refunded in this version, so keep <code>max_tokens</code> close to what you need.</p>
+<p>You pay the maximum up front. After the job, what the receipt did not bill comes back to the paying address in the same transaction that pays the provider.</p>
 <h2 id="when-the-network-is-full">When the network is full</h2>
 <p>When no provider can take a request, keeta.ai may answer it from its own capacity so paid requests still get an answer. keeta.ai turns this on per model and sets its price.</p>
 <ul>
@@ -205,7 +206,7 @@ try {
 <tr><td>400</td><td class="wrap">Invalid request: malformed JSON or fields the router does not accept</td></tr>
 <tr><td>402</td><td class="wrap">Payment required, or the payment failed verification or settlement</td></tr>
 <tr><td>404</td><td class="wrap">Unknown model</td></tr>
-<tr><td>502</td><td class="wrap">The provider failed. If it failed before it accepted the job, the payment is not settled and the message says so. If it failed after the job started, the payment was settled, and the <code>PAYMENT-RESPONSE</code> header shows it.</td></tr>
+<tr><td>502</td><td class="wrap">The provider failed. If it failed before it accepted the job, the payment is not settled and the message says so. If it failed after the job started, the payment was settled, and the <code>PAYMENT-RESPONSE</code> header shows it; the whole payment comes back once the job is settled as failed.</td></tr>
 <tr><td>503</td><td class="wrap">No provider is available for the model now. Retry after the <code>Retry-After</code> header.</td></tr>
 </tbody>
 </table>

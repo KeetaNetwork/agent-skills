@@ -110,7 +110,7 @@ export interface JobSummary {
 	counterparty: string;
 	inputTokens: number;
 	outputTokens: number;
-	/** Credit base units billed. */
+	/** Credit base units: what the buyer was billed, or for a provider what it receives (the bill less the network fee). */
 	amount: string;
 	/** 'completed': receipt in; 'paid': settled from the escrow on the ledger; 'failed': refunded or not run (`amount` is the no-show fee when the ticket never reached the relay). */
 	status: 'running' | 'completed' | 'paid' | 'failed';

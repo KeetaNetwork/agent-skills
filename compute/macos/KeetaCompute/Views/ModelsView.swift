@@ -336,6 +336,9 @@ struct OfferSettingsSheet: View {
                         Text("Suggested: \(model.money.priceSummary(entry.model.suggestedPrice))")
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                        Text("Buyers pay this price. You receive 99.75% of it; the network keeps 0.25%.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
                     Section("Who can use this model") {
                         Picker("Access", selection: $access) {

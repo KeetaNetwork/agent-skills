@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { defaultAsset, ticketMac, type JobTicket, type SignedTicket } from '@keeta-compute/protocol';
-import { createRouter, type PaymentGateway, type PaymentPayload } from '../src/router.ts';
+import { createRouter, requirementsFromTicket, type PaymentGateway, type PaymentPayload } from '../src/router.ts';
 import { checkEnvelope } from '../src/relay.ts';
 import { lazyGateway } from '../src/gateway.ts';
 import { sseData, sseEvent } from '../src/sse.ts';
@@ -322,4 +322,12 @@ test('relay rejects envelopes without a valid MAC or buyer signature', async () 
 	assert.match((await checkEnvelope('wrong', 'job_abc', { ticket, request, buyerSig: 'aa' }, Date.now()))!, /not issued/);
 	const quoted = await makeTicket();
 	assert.match((await checkEnvelope(SECRET, 'job_abc', { ticket: quoted, request, buyerSig: 'aa' }, Date.now()))!, /paid API/, 'a prepaid ticket from a 402 quote cannot be run directly');
+});
+
+test('a ticket that names a payment account is paid there, with the job in the send', async () => {
+	const settlement = 'keeta_aabtcqckq3xxdh2rb6iybh5azglfspbrgubs3dz4p5c5hpedjuabhbqwxrstnvy';
+	const viaSettlement = requirementsFromTicket(await makeTicket({ paymentTo: settlement }), 'test');
+	assert.equal(viaSettlement.payTo, settlement, 'keeta.ai settles the job and pays the provider its share');
+	assert.equal(viaSettlement.extra.external, 'job_abc', 'the x402 send carries the job id, so the payment can be matched to it on the ledger');
+	assert.equal(requirementsFromTicket(await makeTicket(), 'test').payTo, payTo, 'without one, the provider is paid directly');
 });

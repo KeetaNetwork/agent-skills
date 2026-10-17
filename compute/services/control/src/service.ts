@@ -31,14 +31,17 @@ import {
 	assetListing,
 	defaultAsset,
 	escrowAmount,
+	findAsset,
 	findCatalogModel,
 	hardwareTier,
 	jobCost,
 	maxJobCost,
+	networkFee,
 	operatorLinkMessage,
 	pairingApprovalMessage,
 	pairingCheckString,
 	providerRelayToken,
+	providerShare,
 	randomId,
 	receiptMessage,
 	rescaleAmount,
@@ -524,6 +527,7 @@ export class ControlService {
 			payTo: job.payTo,
 			paymentMode: job.paymentMode,
 			...(job.prepaidAmount ? { prepaidAmount: job.prepaidAmount } : {}),
+			...(job.paymentTo ? { paymentTo: job.paymentTo } : {}),
 			issuedAt,
 			expiresAt: issuedAt + TICKET_TTL_MS
 		};
@@ -754,9 +758,12 @@ export class ControlService {
 	/* ---------------------------------------------------------------- router */
 
 	/**
-	 * Public router (x402): the buyer prepays the provider directly before the
-	 * job runs, in KUSD where it is pinned and otherwise USDC, at one credit
-	 * to the dollar.
+	 * Public router (x402): the buyer prepays the job's most possible cost
+	 * before it runs, in KUSD where it is pinned and otherwise USDC, at one
+	 * credit to the dollar. The payment goes to keeta.ai's settlement account,
+	 * which pays the provider what its receipt bills, less the network fee,
+	 * and returns the rest to the payer (payoutSends). Without a settlement
+	 * account the payment goes to the provider directly.
 	 */
 	async routerQuote(body: Record<string, unknown>) {
 		const network = this.assertNetwork(body.network);
@@ -793,6 +800,7 @@ export class ControlService {
 				paymentMode: 'prepaid',
 				asset: asset.address,
 				prepaidAmount: prepaid(offer.price),
+				...(this.config.settlement ? { paymentTo: this.config.settlement.account } : {}),
 				status: 'scheduled',
 				createdAt: this.now()
 			});
@@ -821,31 +829,47 @@ export class ControlService {
 		}
 	}
 
-	/** The router reports the x402 payment's block (it paid the provider directly); the job keeps the hash. */
+	/**
+	 * The router reports the x402 payment's block; the job keeps the hash.
+	 * Nothing is paid on the router's word: a payout to the provider (or back
+	 * to the payer) reads the block from the ledger first (payoutSends).
+	 */
 	async routerSettled(jobId: string, body: Record<string, unknown>) {
 		const payer = assertKeetaAddress(body.payer, 'payer');
-		const transaction = typeof body.transaction === 'string' ? body.transaction.slice(0, 200) : '';
+		const raw = typeof body.transaction === 'string' ? body.transaction.slice(0, 200) : '';
+		const transaction = /^[0-9A-Fa-f]{64}$/.test(raw) ? raw.toUpperCase() : raw;
 		let receiptCounts = null as SignedReceipt | null;
 		const job = await this.store.updateJob(jobId, (current) => {
 			receiptCounts = null; /* a store may retry this update */
 			if (current.paymentMode !== 'prepaid') {
 				throw new ConflictError('not a router job');
 			}
-			const payment = { blockHash: transaction, paidAt: this.now(), verified: true };
+			if (current.payment) {
+				return current;
+			}
+			const now = this.now();
+			const payment = { blockHash: transaction, paidAt: now, verified: true };
 			/* A fallback job has no provider receipt to wait for: payment completes it. */
 			if (current.fallback) {
-				return { ...current, payment, routerPayer: payer, status: 'paid', completedAt: this.now() };
+				return { ...current, payment, routerPayer: payer, status: 'paid', completedAt: now };
 			}
 			/* The provider's receipt can land first; the job is paid now, and the receipt counts for the provider now. */
-			if (current.status === 'completed' && !current.payment) {
+			if (current.status === 'completed') {
 				receiptCounts = current.receipt ?? null;
-				return { ...current, payment, routerPayer: payer, status: 'paid' };
+				return { ...current, payment, routerPayer: payer, status: 'paid', ...prepaidSettlement(current, 'delivered', now) };
+			}
+			/* Paid for a job that already failed or lapsed: it all goes back. */
+			if (current.status === 'failed' || current.status === 'expired') {
+				return { ...current, payment, routerPayer: payer, status: 'failed', ...prepaidSettlement(current, 'failed', now) };
 			}
 			return { ...current, payment, routerPayer: payer };
 		});
 		if (receiptCounts) {
 			const { outputTokens } = receiptCounts.receipt;
 			await this.store.updateProvider(job.nodeKey, (record) => ({ ...record, stats: { ...record.stats, completed: record.stats.completed + 1, tokensOut: record.stats.tokensOut + outputTokens } }));
+		}
+		if (job.payoutDue) {
+			this.settleInBackground(jobId);
 		}
 		return redactJob(job);
 	}
@@ -906,8 +930,10 @@ export class ControlService {
 				throw new ConflictError(`job is already ${current.status}`);
 			}
 			heldSlot = holdsSlot(current);
-			const prepaidSettled = current.paymentMode === 'prepaid' && current.payment;
-			return { ...current, status: prepaidSettled ? 'paid' : 'completed', completedAt: now, receipt: stored };
+			if (current.paymentMode === 'prepaid' && current.payment) {
+				return { ...current, status: 'paid', completedAt: now, receipt: stored, ...prepaidSettlement(current, 'delivered', now) };
+			}
+			return { ...current, status: 'completed', completedAt: now, receipt: stored };
 		});
 		/*
 		 * A router job counts once its payment is reported (routerSettled counts
@@ -920,7 +946,7 @@ export class ControlService {
 			load: { ...record.load, active: Math.max(0, record.load.active - (heldSlot ? 1 : 0)) },
 			stats: counts ? { ...record.stats, completed: record.stats.completed + 1, tokensOut: record.stats.tokensOut + receipt.outputTokens } : record.stats
 		}));
-		if (updated.paymentMode === 'escrow') {
+		if (updated.paymentMode === 'escrow' || updated.payoutDue) {
 			this.settleInBackground(jobId);
 		}
 		return { job: redactJob(updated) };
@@ -941,14 +967,17 @@ export class ControlService {
 				throw new ConflictError(`job is already ${current.status}`);
 			}
 			heldSlot = holdsSlot(current);
-			return { ...current, status: 'failed', completedAt: this.now(), error: reason };
+			const now = this.now();
+			/* A router job paid to the settlement account: the payment goes back to the payer. */
+			const refund = current.paymentMode === 'prepaid' && current.payment ? prepaidSettlement(current, 'failed', now) : {};
+			return { ...current, status: 'failed', completedAt: now, error: reason, ...refund };
 		});
 		await this.store.updateProvider(nodeKey, (record) => ({
 			...record,
 			load: { ...record.load, active: Math.max(0, record.load.active - (heldSlot ? 1 : 0)) },
 			stats: { ...record.stats, failed: record.stats.failed + 1 }
 		}));
-		if (updated.paymentMode === 'escrow') {
+		if (updated.paymentMode === 'escrow' || updated.payoutDue) {
 			this.settleInBackground(jobId);
 		}
 		return { job: redactJob(updated) };
@@ -1124,7 +1153,7 @@ export class ControlService {
 		const where = { network: claimed.network, token: claimed.asset, jobId: claimed.jobId };
 		let blockHash: string;
 		try {
-			const earlier = await ledger.findPayout({ ...where, since: claimed.escrow!.at });
+			const earlier = await ledger.findPayout({ ...where, since: claimed.escrow?.at ?? claimed.payment?.paidAt ?? claimed.createdAt });
 			blockHash = earlier ?? (await ledger.payout({ ...where, sends: await this.payoutSends(claimed) }));
 		} catch (error) {
 			const message = (error as Error).message.slice(0, 300);
@@ -1143,12 +1172,17 @@ export class ControlService {
 
 	/**
 	 * The payout's sends, from the ledger: the escrow block's amount for this
-	 * job, split by the settlement. Delivered: the receipt's amount to the
-	 * provider and the rest to the buyer; anything else: all of it back to the
-	 * buyer. A ticket not used promptly (`noShow`) adds NO_SHOW_FEE to the
-	 * provider's share, which never exceeds the escrow.
+	 * job, split by the settlement. Delivered: the buyer pays the receipt's
+	 * amount and gets the rest back; anything else: all of it back to the
+	 * buyer. A ticket not used promptly (`noShow`) adds NO_SHOW_FEE to what
+	 * the buyer pays, which never exceeds the escrow. The provider receives
+	 * what the buyer pays less the network fee on the billed part, and the
+	 * fee stays in the settlement account.
 	 */
 	private async payoutSends(job: JobRecord): Promise<Array<{ to: string; amount: bigint }>> {
+		if (job.paymentMode === 'prepaid') {
+			return this.routerPayoutSends(job);
+		}
 		const check = await this.config.verifyPayment({
 			network: job.network,
 			blockHash: job.escrow!.blockHash,
@@ -1162,11 +1196,46 @@ export class ControlService {
 			throw new Error(`the escrow block cannot be read from the ledger right now (${check.status})`);
 		}
 		const escrowed = check.amount;
-		const owed = (job.settlement!.reason === 'delivered' ? BigInt(job.receipt!.receipt.amount) : 0n) + (job.settlement!.noShow ? NO_SHOW_FEE : 0n);
-		const provider = owed < escrowed ? owed : escrowed;
+		const billed = job.settlement!.reason === 'delivered' ? BigInt(job.receipt!.receipt.amount) : 0n;
+		const owed = billed + (job.settlement!.noShow ? NO_SHOW_FEE : 0n);
+		const paid = owed < escrowed ? owed : escrowed;
+		const fee = networkFee(billed < paid ? billed : paid);
 		return [
-			{ to: job.payTo, amount: provider },
-			{ to: job.buyer, amount: escrowed - provider }
+			{ to: job.payTo, amount: paid - fee },
+			{ to: job.buyer, amount: escrowed - paid }
+		].filter((send) => send.amount > 0n);
+	}
+
+	/**
+	 * A router job's payout, from the ledger: the x402 payment block must send
+	 * at least the quoted amount from the payer to the settlement account,
+	 * referencing the job. Delivered: the provider gets the receipt's amount
+	 * in the payment's stablecoin, less the network fee, and the payer the
+	 * rest; anything else: all of it back to the payer.
+	 */
+	private async routerPayoutSends(job: JobRecord): Promise<Array<{ to: string; amount: bigint }>> {
+		const asset = findAsset(job.network, job.asset);
+		if (!asset || !job.payment || !job.routerPayer) {
+			throw new Error('the router payment cannot be paid out: its stablecoin or payment is unknown');
+		}
+		const check = await this.config.verifyPayment({
+			network: job.network,
+			blockHash: job.payment.blockHash,
+			from: job.routerPayer,
+			to: this.config.settlement!.account,
+			asset: job.asset,
+			minAmount: BigInt(job.prepaidAmount ?? '0'),
+			reference: job.jobId
+		});
+		if (check.status !== 'confirmed') {
+			throw new Error(`the router payment block cannot be read from the ledger right now (${check.status})`);
+		}
+		const received = check.amount;
+		const billed = job.settlement!.reason === 'delivered' ? rescaleAmount(BigInt(job.receipt!.receipt.amount), CREDIT_DECIMALS, asset.decimals) : 0n;
+		const paid = billed < received ? billed : received;
+		return [
+			{ to: job.payTo, amount: providerShare(paid) },
+			{ to: job.routerPayer, amount: received - paid }
 		].filter((send) => send.amount > 0n);
 	}
 
@@ -1222,8 +1291,20 @@ export class ControlService {
 		 */
 		for (const status of ['scheduled', 'completed'] as const) {
 			await each(await this.store.listJobsByStatus(status, 'prepaid', ticketLapse, 200), async (job) => {
-				const updated = await this.store.updateJob(job.jobId, (current) => (current.status === status ? { ...current, status: 'expired' } : current));
+				const updated = await this.store.updateJob(job.jobId, (current) => {
+					if (current.status !== status) {
+						return current;
+					}
+					/* Paid to the settlement account but never billed: the payment goes back to the payer. */
+					if (current.payment && current.paymentTo && !current.settlement) {
+						return { ...current, status: 'failed', completedAt: current.completedAt ?? now, ...prepaidSettlement(current, 'no-receipt', now) };
+					}
+					return { ...current, status: 'expired' };
+				});
 				expired += updated.status === 'expired' ? 1 : 0;
+				if (updated.payoutDue) {
+					paidOut += (await this.serially(() => this.payout(updated))).settlement?.blockHash ? 1 : 0;
+				}
 			});
 		}
 		return { expired, settled, paidOut };
@@ -1500,6 +1581,17 @@ function reputation(stats: ProviderRecord['stats']): ProviderRecord['stats'] {
 function publicProvider(record: StoredProvider): ProviderRecord {
 	const { offeredModels: _offered, ...rest } = record;
 	return rest;
+}
+
+/**
+ * The settlement of a router job paid to the settlement account, marked for
+ * payout; nothing for one paid to its provider directly (or not yet paid).
+ */
+function prepaidSettlement(job: JobRecord, reason: SettlementReason, now: number): Pick<JobRecord, 'settlement' | 'payoutDue'> | Record<string, never> {
+	if (!job.paymentTo || job.settlement) {
+		return {};
+	}
+	return { settlement: { reason, decidedAt: now }, payoutDue: true };
 }
 
 /** Whether the relay's delivery record covers exactly the text the job's receipt bills. */

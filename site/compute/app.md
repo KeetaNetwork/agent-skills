@@ -62,11 +62,11 @@ A tier describes what a machine proves in its benchmark, not the badge on it.
 
 ## Get paid
 
-- You earn credits for each completed request, paid to your wallet on the Keeta ledger. The amount is the tokens used times your price ([pricing math](https://keeta.ai/compute/protocol.md)).
-- The buyer's credits are escrowed before your Mac runs anything. When your signed receipt matches what the relay forwarded, one Keeta transaction pays you what you billed. A receipt that bills anything else is not paid and counts against you.
+- You earn credits for each completed request, paid to your wallet on the Keeta ledger. The amount is the tokens used times your price, less a 0.25% network fee ([pricing math](https://keeta.ai/compute/protocol.md)). Buyers pay your full price.
+- The buyer's credits are escrowed before your Mac runs anything. When your signed receipt matches what the relay forwarded, one Keeta transaction pays you what you billed, less the network fee. A receipt that bills anything else is not paid and counts against you.
 - A ticket reserves one of your Mac's slots. If the buyer does not use it promptly, you keep a 0.001-credit no-show fee from the escrow. A buyer hanging up within 10 seconds, before your Mac answers, does not count against you; one that waited longer counts as a stall.
 - Earnings in the app are read from the ledger: what keeta.ai's settlement account sent your wallet.
-- Requests from the public router are paid to your wallet directly in KUSD (USDC until KUSD is live).
+- Requests from the public router are paid to your wallet in KUSD (USDC until KUSD is live), the same way: the buyer prepays keeta.ai's settlement account, and it pays you what your receipt billed, less the network fee.
 - Cash credits out to KUSD or another Keeta stablecoin whenever you like.
 - Bank deposits and withdrawals go through Keeta's banking anchors and need identity verification (KYC for people, KYB for businesses). Coming later; not part of the preview.
 
@@ -125,4 +125,4 @@ export OPENAI_API_KEY=<token shown in the app>
 2. The app escrows that many credits from your Agent budget with keeta.ai's settlement account, in one Keeta transaction that names the job, and gets a ticket for the job. The ticket reserves a slot on the provider. It escrows each job once, even if it retries.
 3. The request goes to the provider through the relay, and the tokens stream back to your agent. The relay records a hash of what it forwarded.
 4. The provider signs a receipt with the token counts and the amount, and the app checks it against the ticket and the text it received.
-5. Settlement is one Keeta transaction from the settlement account: when the receipt matches the relay's record, the provider gets what it billed and the rest comes back to your Agent budget. If the provider fails, the receipt bills other text, or no receipt arrives, all of it comes back. The ticket reserves the provider, so if the request does not reach the relay within 10 seconds (the app quit or lost its connection), or your agent cancels it within 10 seconds before any text arrives, the provider keeps a no-show fee of 0.001 credits and the rest comes back. No x402 round trip is needed between apps.
+5. Settlement is one Keeta transaction from the settlement account: when the receipt matches the relay's record, the provider gets what it billed (less the 0.25% network fee, which comes out of the provider's share) and the rest comes back to your Agent budget. If the provider fails, the receipt bills other text, or no receipt arrives, all of it comes back. The ticket reserves the provider, so if the request does not reach the relay within 10 seconds (the app quit or lost its connection), or your agent cancels it within 10 seconds before any text arrives, the provider keeps a no-show fee of 0.001 credits and the rest comes back. No x402 round trip is needed between apps.

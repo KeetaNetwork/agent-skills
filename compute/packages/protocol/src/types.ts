@@ -67,8 +67,9 @@ export interface ProviderRecord {
 /**
  * 'escrow': an app job. The buyer escrows its maximum cost in credits with
  * keeta.ai before the ticket is issued, and the control plane pays the
- * provider from it. 'prepaid': a public router job, paid to the provider
- * directly over x402 before it runs.
+ * provider from it. 'prepaid': a public router job, paid over x402 before it
+ * runs: to keeta.ai's settlement account (`paymentTo`), which pays the
+ * provider after its receipt and returns the unused rest to the payer.
  */
 export type PaymentMode = 'escrow' | 'prepaid';
 
@@ -87,10 +88,11 @@ export type JobStatus = 'quoted' | 'scheduled' | 'completed' | 'failed' | 'paid'
 export type SettlementReason = 'delivered' | 'mismatch' | 'no-delivery' | 'failed' | 'no-receipt' | 'expired' | 'no-show';
 
 /**
- * How an escrowed app job settles, decided once, and the payout block. No
- * amounts: the payout splits the escrow block's amount (read from the
- * ledger) by the reason, paying the receipt's amount when delivered and
- * NO_SHOW_FEE for a no-show.
+ * How a job paid to the settlement account settles, decided once, and the
+ * payout block. No amounts: the payout splits the escrow (or router payment)
+ * block's amount, read from the ledger, by the reason: when delivered, the
+ * provider gets the receipt's amount less the network fee, plus NO_SHOW_FEE
+ * for a no-show.
  */
 export interface Settlement {
 	reason: SettlementReason;
@@ -122,6 +124,8 @@ export interface JobRecord {
 	asset: string;
 	/** Router jobs: what the x402 payment must carry, in base units of `asset`. */
 	prepaidAmount?: string;
+	/** Router jobs: the settlement account the x402 payment goes to, when it does not go to `payTo` directly. */
+	paymentTo?: string;
 	status: JobStatus;
 	createdAt: number;
 	completedAt?: number;
@@ -140,9 +144,9 @@ export interface JobRecord {
 	escrow?: { blockHash: string; at: number };
 	/** App jobs: when the ticket was issued (on escrow), taking a slot on its provider. */
 	ticketIssuedAt?: number;
-	/** App jobs: how the escrow is split and the payout. */
+	/** App jobs, and router jobs paid to the settlement account: how the payment is split and the payout. */
 	settlement?: Settlement;
-	/** App jobs: a work-queue marker, set while a decided settlement has no payout block yet. */
+	/** A work-queue marker, set while a decided settlement has no payout block yet. */
 	payoutDue?: boolean;
 	/**
 	 * For app jobs: what the relay forwarded to the buyer, which decides
@@ -222,6 +226,8 @@ export interface JobTicket {
 	paymentMode: PaymentMode;
 	/** Router jobs: the x402 amount, in base units of `asset`. */
 	prepaidAmount?: string;
+	/** Router jobs: where the x402 payment goes when not to `payTo`: keeta.ai's settlement account, which pays the provider after its receipt. */
+	paymentTo?: string;
 	issuedAt: number;
 	expiresAt: number;
 }

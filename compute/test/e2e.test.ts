@@ -22,7 +22,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ONE_CREDIT, availableAssets, chunkText, escrowAmount, maxOutputTokensFor, promptTokenBound, randomId, sha256Hex, sseData, sseEvent, toHex, type ChatCompletionRequest, type HardwareProfile, type JobEnvelope, type ProviderFrame } from '@keeta-compute/protocol';
+import { ONE_CREDIT, availableAssets, chunkText, escrowAmount, maxOutputTokensFor, networkFee, promptTokenBound, providerShare, randomId, sha256Hex, sseData, sseEvent, toHex, type ChatCompletionRequest, type HardwareProfile, type JobEnvelope, type ProviderFrame } from '@keeta-compute/protocol';
 import { Account } from '@keeta-compute/protocol/keeta';
 import { startServer } from '../services/control/src/server.ts';
 import { checkEnvelope, checkProviderToken } from '../services/relay/src/relay.ts';
@@ -366,10 +366,14 @@ test('a buyer buys credits with a stablecoin, escrows each job at ticket time, a
 	const escrows = ledger.sendsFor(first.jobId, spendKey);
 	assert.equal(escrows.length, 1);
 	assert.deepEqual([escrows[0]!.to, escrows[0]!.token, escrows[0]!.amount, escrows[0]!.block], [SETTLEMENT, CREDITS, escrowAmount(paidFirst.price, paidFirst), paidFirst.escrow!.blockHash]);
-	/* The relay's record matched the receipt: one block pays the provider 3 base units (12 in at 0.10/M + 3 out at 0.40/M, rounded up) and returns the rest. */
+	/*
+	 * The relay's record matched the receipt: the bill is 3 base units (12 in at 0.10/M + 3 out at 0.40/M, rounded up).
+	 * One block pays the provider the bill less the 0.25% network fee (rounded up, so 1 here) and returns the rest of the escrow; the fee stays with the settlement account.
+	 */
 	const firstPayout = ledger.sendsFor(first.jobId, SETTLEMENT);
+	assert.equal(networkFee(3n), 1n);
 	assert.deepEqual(firstPayout.map((s) => [s.to, s.amount, s.block]), [
-		[operator, 3n, paidFirst.settlement!.blockHash],
+		[operator, 2n, paidFirst.settlement!.blockHash],
 		[spendKey, escrows[0]!.amount - 3n, paidFirst.settlement!.blockHash]
 	]);
 	await until('the buyer to see the first job paid', async () => {
@@ -430,7 +434,7 @@ test('a buyer buys credits with a stablecoin, escrows each job at ticket time, a
 	assert.equal(ledger.sendsFor(hungUpJob, spendKey).length, 1, 'one escrow send per job');
 	const hungUpPayout = ledger.sendsFor(hungUpJob, SETTLEMENT);
 	assert.equal(new Set(hungUpPayout.map((s) => s.block)).size, 1, 'one payout block per job');
-	assert.equal(hungUpPayout.find((s) => s.to === operator)!.amount, hungUpBill);
+	assert.equal(hungUpPayout.find((s) => s.to === operator)!.amount, providerShare(hungUpBill));
 	assert.equal(hungUpPayout.find((s) => s.to === spendKey)!.amount, ledger.sendsFor(hungUpJob, spendKey)[0]!.amount - hungUpBill, 'the rest of the escrow comes back');
 	await until('the buyer to record the hung-up job as paid', async () => {
 		await Promise.all([1, 2, 3].map(() => buyer.rpc['buyer.settle']!({})));
@@ -487,12 +491,12 @@ test('a buyer buys credits with a stablecoin, escrows each job at ticket time, a
 	assert.equal(second.body.choices[0]!.message.content, 'Hello from Keeta');
 	const paidSecond = await paidOut('the helper job to be paid out', second.jobId);
 	assert.equal(paidSecond.nodeKey, helperKey);
-	assert.equal(ledger.sendsFor(second.jobId, SETTLEMENT).find((s) => s.to === operator)?.amount, 3n, 'helpers earn for the Mac operator');
+	assert.equal(ledger.sendsFor(second.jobId, SETTLEMENT).find((s) => s.to === operator)?.amount, providerShare(3n), 'helpers earn for the Mac operator');
 	assert.deepEqual((await control.store.getProvider(helperKey))!.stats, { completed: 1, failed: 0, tokensOut: 3 }, 'the control plane keeps job counts, not earnings');
 
 	/* The operator's earnings are the settlement account's payouts to it, read from the ledger; cashing out sells them for a stablecoin. */
 	const earned = ledger.sends.filter((s) => s.from === SETTLEMENT && s.to === operator).reduce((sum, s) => sum + s.amount, 0n);
-	assert.equal(earned, 6n + hungUpBill);
+	assert.equal(earned, providerShare(3n) * 2n + providerShare(hungUpBill));
 	await provider.rpc['wallet.refresh']!({});
 	assert.equal((await provider.rpc['provider.status']!({})).earnedTotal, earned.toString());
 	const sale = await provider.rpc['wallet.creditQuote']!({ side: 'sell', amount: earned.toString(), stablecoin: stablecoin.symbol });
@@ -546,7 +550,7 @@ test('a buyer buys credits with a stablecoin, escrows each job at ticket time, a
 	const paidThird = await paidOut('the Linux job to be paid out', third.jobId);
 	assert.equal(paidThird.nodeKey, linuxKey);
 	assert.equal(paidThird.payTo, linuxOperator);
-	assert.equal(ledger.sendsFor(third.jobId, SETTLEMENT).find((s) => s.to === linuxOperator)?.amount, 3n, 'the Linux node is paid to its own operator');
+	assert.equal(ledger.sendsFor(third.jobId, SETTLEMENT).find((s) => s.to === linuxOperator)?.amount, providerShare(3n), 'the Linux node is paid to its own operator');
 
 	/* The Linux node buys too: credits bought from the CLI into its own budget, escrowed by its own endpoint. */
 	const linuxBuyer = linuxNode.state().buyer!;

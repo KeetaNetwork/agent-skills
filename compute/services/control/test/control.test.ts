@@ -12,6 +12,8 @@ import {
 	defaultAsset,
 	generatePairingCode,
 	NO_SHOW_FEE,
+	networkFee,
+	providerShare,
 	NO_SHOW_WINDOW_MS,
 	escrowAmount,
 	jobCost,
@@ -105,15 +107,15 @@ class TestLedger {
 		this.held.clear();
 	}
 
-	/** Every credit send on the ledger. */
-	sends(): Array<{ block: string; from: string; to: string; amount: bigint; reference: string | undefined }> {
+	/** Every send of a token (credits unless named) on the ledger. */
+	sends(token: string = CREDITS): Array<{ block: string; from: string; to: string; amount: bigint; reference: string | undefined }> {
 		return [...this.blocks.values()].flatMap((block) =>
 			block.operations.flatMap((operation) => {
 				if (operation.type !== KeetaNet.lib.Block.OperationType.SEND) {
 					return [];
 				}
 				const send = operation as InstanceType<typeof KeetaNet.lib.Block.Operation.SEND>;
-				if (send.token.publicKeyString.get() !== CREDITS) {
+				if (send.token.publicKeyString.get() !== token) {
 					return [];
 				}
 				return [{ block: block.hash.toString().toUpperCase(), from: block.account.publicKeyString.get(), to: send.to.publicKeyString.get(), amount: send.amount, reference: send.external }];
@@ -122,8 +124,8 @@ class TestLedger {
 	}
 
 	/** What the settlement account sent for a job, by recipient. */
-	payouts(settlement: string, jobId: string): { blocks: string[]; to: Record<string, bigint> } {
-		const sends = this.sends().filter((s) => s.from === settlement && s.reference === jobId);
+	payouts(settlement: string, jobId: string, token: string = CREDITS): { blocks: string[]; to: Record<string, bigint> } {
+		const sends = this.sends(token).filter((s) => s.from === settlement && s.reference === jobId);
 		const to: Record<string, bigint> = {};
 		for (const send of sends) {
 			to[send.to] = (to[send.to] ?? 0n) + send.amount;
@@ -360,13 +362,15 @@ test('an app job: quoted in credits, escrowed on the ledger before the ticket, p
 	assert.equal((await fileReceipt(h, node, receipt)).status, 200);
 	assert.equal(h.payouts.published, 0, 'a receipt alone pays nothing until the relay records what it forwarded');
 
-	/* The relay's record matches the receipt: one block pays the provider what it billed and returns the rest. */
+	/* The relay's record matches the receipt: one block pays the provider what it billed less the network fee, and returns the rest. */
 	assert.equal((await h.call(null, 'POST', `/v1/relay/jobs/${q.jobId}/delivery`, { outputHash: 'd'.repeat(64), maxOutputTokens: 100 })).status, 401, 'only the relay records deliveries');
 	assert.equal(((await deliver(h, q.jobId, 'd'.repeat(64), 100)).body as { recorded: boolean }).recorded, true);
 	const settled = await paidOut(h, q.jobId);
 	const payout = h.ledger.payouts(h.settlement.account, q.jobId);
 	assert.deepEqual(payout.blocks, [settled.settlement!.blockHash], 'one payout block, recorded on the job');
-	assert.deepEqual(payout.to, { [operator.publicKey]: BigInt(receipt.amount), [buyer.address]: BigInt(q.maxCost) - BigInt(receipt.amount) });
+	assert.deepEqual(payout.to, { [operator.publicKey]: providerShare(BigInt(receipt.amount)), [buyer.address]: BigInt(q.maxCost) - BigInt(receipt.amount) });
+	assert.ok(networkFee(BigInt(receipt.amount)) > 0n, 'the settlement account keeps the network fee');
+	assert.equal(BigInt(q.maxCost) - Object.values(payout.to).reduce((a, b) => a + b, 0n), networkFee(BigInt(receipt.amount)));
 	assert.equal(settled.status, 'paid');
 	assert.equal(settled.settlement!.reason, 'delivered');
 	assert.ok(h.payouts.searched >= 1, 'the settlement account\'s history is searched before paying');
@@ -433,7 +437,7 @@ test('the escrow comes back in full on a mismatch, a provider failure or a missi
 	h.advance(DELIVERY_GRACE_MS - 1);
 	await deliver(h, lateRecord.jobId, 'a'.repeat(64));
 	assert.equal((await paidOut(h, lateRecord.jobId)).settlement!.reason, 'delivered', 'a record within the grace still pays the provider');
-	assert.equal(h.ledger.payouts(h.settlement.account, lateRecord.jobId).to[operator.publicKey], BigInt(lateReceipt.amount));
+	assert.equal(h.ledger.payouts(h.settlement.account, lateRecord.jobId).to[operator.publicKey], providerShare(BigInt(lateReceipt.amount)));
 	assert.deepEqual(await h.service.sweep(), { expired: 0, settled: 0, paidOut: 0 }, 'a receipt is not refunded the moment it lands without a record');
 	h.advance(2);
 	assert.deepEqual(await h.service.sweep(), { expired: 0, settled: 1, paidOut: 0 });
@@ -484,7 +488,7 @@ test('a ticket not used promptly pays its provider the no-show fee: brought to t
 	await fileReceipt(h, node, promptReceipt);
 	await deliver(h, prompt.jobId, 'a'.repeat(64), 20, { presentedAt: h.now() + 500 });
 	assert.equal((await paidOut(h, prompt.jobId)).settlement!.noShow, undefined);
-	assert.deepEqual(payouts(prompt.jobId), { [operator.publicKey]: BigInt(promptReceipt.amount), [buyer.address]: prompt.escrowed - BigInt(promptReceipt.amount) });
+	assert.deepEqual(payouts(prompt.jobId), { [operator.publicKey]: providerShare(BigInt(promptReceipt.amount)), [buyer.address]: prompt.escrowed - BigInt(promptReceipt.amount) });
 	const late = await escrowedJob(h, buyer, { extra: 5_000n });
 	const lateReceipt = receiptFor(late.ticket, buyer.address);
 	await fileReceipt(h, node, lateReceipt);
@@ -492,7 +496,8 @@ test('a ticket not used promptly pays its provider the no-show fee: brought to t
 	const lateSettled = await paidOut(h, late.jobId);
 	assert.deepEqual([lateSettled.status, lateSettled.settlement!.reason, lateSettled.settlement!.noShow], ['paid', 'delivered', true]);
 	const lateOwed = BigInt(lateReceipt.amount) + NO_SHOW_FEE;
-	assert.deepEqual(payouts(late.jobId), { [operator.publicKey]: lateOwed, [buyer.address]: late.escrowed - lateOwed });
+	/* The network fee is on the billed tokens only, never on the no-show fee. */
+	assert.deepEqual(payouts(late.jobId), { [operator.publicKey]: lateOwed - networkFee(BigInt(lateReceipt.amount)), [buyer.address]: late.escrowed - lateOwed });
 
 	/* Hung up before any text: soon after arriving it is a no-show; after waiting out the window, the provider stalled and the buyer gets it all back. */
 	const quit = await escrowedJob(h, buyer, { extra: 5_000n });
@@ -537,7 +542,7 @@ test('a payout is idempotent on the ledger: an attempt that published but never 
 	const recorded = (await h.store.getJob(job.jobId))!;
 	const payout = h.ledger.payouts(h.settlement.account, job.jobId);
 	assert.deepEqual(payout.blocks, [recorded.settlement!.blockHash], 'the block found on the ledger is recorded');
-	assert.deepEqual(payout.to, { [operator.publicKey]: BigInt(receipt.amount), [buyer.address]: job.escrowed - BigInt(receipt.amount) }, 'paid once');
+	assert.deepEqual(payout.to, { [operator.publicKey]: providerShare(BigInt(receipt.amount)), [buyer.address]: job.escrowed - BigInt(receipt.amount) }, 'paid once');
 	assert.equal(h.payouts.published, 1);
 	assert.equal(recorded.settlement!.error, undefined);
 	assert.equal(recorded.payoutDue, undefined);
@@ -603,7 +608,7 @@ test('a buyer who hands a ticket back mid-stream pays for what the relay forward
 	await deliver(h, job.jobId, 'a'.repeat(64), 2);
 	const settled = await paidOut(h, job.jobId);
 	assert.equal(settled.settlement!.reason, 'delivered');
-	assert.deepEqual(h.ledger.payouts(h.settlement.account, job.jobId).to, { [operator.publicKey]: BigInt(receipt.amount), [buyer.address]: job.escrowed - BigInt(receipt.amount) });
+	assert.deepEqual(h.ledger.payouts(h.settlement.account, job.jobId).to, { [operator.publicKey]: providerShare(BigInt(receipt.amount)), [buyer.address]: job.escrowed - BigInt(receipt.amount) });
 });
 
 test('quotes: an escrow after expiry is refunded, quotes nobody escrows expire, and a buyer holds at most four', async () => {
@@ -973,29 +978,79 @@ test('a node that moves to the main network leaves its test-network offers behin
 	assert.deepEqual(await live('main'), [], 'and a heartbeat on main drops it');
 });
 
-test('router quotes are prepaid to the provider over x402 in the default stablecoin, at a credit to the dollar', async () => {
+/** A router quote's x402 payment: the payer's send of the quoted amount to where the ticket says, referencing the job. */
+async function payRouterQuote(h: Harness, ticket: JobTicket, payer = randomAccount()) {
+	const blockHash = await h.ledger.publish(payer, [{ to: ticket.paymentTo ?? ticket.payTo, amount: BigInt(ticket.prepaidAmount!), token: ticket.asset, external: ticket.jobId }]);
+	const res = await h.call(null, 'POST', `/v1/router/jobs/${ticket.jobId}/settled`, { payer: payer.publicKeyString.get(), transaction: blockHash }, ROUTER);
+	assert.equal(res.status, 200, JSON.stringify(res.body));
+	return { payer: payer.publicKeyString.get(), blockHash, job: res.body as JobRecord };
+}
+
+test('router quotes are prepaid over x402 to the settlement account in the default stablecoin, at a credit to the dollar', async () => {
 	const h = harness();
 	const { node, operator } = await registerMac(h);
 	await h.call(node, 'POST', '/v1/providers/heartbeat', { status: 'online', offers: [offer('qwen3-8b')], load: { active: 0, capacity: 2 } });
 	assert.equal((await h.call(null, 'POST', '/v1/router/quote', { network: 'test', model: 'qwen3-8b', maxInputTokens: 10, maxOutputTokens: 10 })).status, 401);
 	const routerQuote = await h.call(null, 'POST', '/v1/router/quote', { network: 'test', model: 'qwen3-8b', maxInputTokens: 1000, maxOutputTokens: 1000 }, ROUTER);
 	assert.equal(routerQuote.status, 200);
-	const { job, asset } = routerQuote.body as { job: { jobId: string; payTo: string; prepaidAmount: string; asset: string; paymentMode: string }; asset: { symbol: string; address: string; decimals: number } };
+	const { job, ticket, asset } = routerQuote.body as { job: { jobId: string; payTo: string; prepaidAmount: string; asset: string; paymentMode: string }; ticket: SignedTicket; asset: { symbol: string; address: string; decimals: number } };
 	const stablecoin = defaultAsset('test');
 	assert.deepEqual(asset, { symbol: stablecoin.symbol, address: stablecoin.address, decimals: stablecoin.decimals }, 'KUSD once it is pinned, else USDC');
 	assert.equal(job.asset, stablecoin.address);
 	assert.equal(job.paymentMode, 'prepaid');
 	assert.equal(job.payTo, operator.publicKey);
+	assert.equal(ticket.ticket.paymentTo, h.settlement.account, 'the payment goes to the settlement account, not the provider');
 	/* 1000 tokens each way at 0.1 and 0.4 credits per million: 0.0005 credits, the same in dollars. */
-	assert.equal(job.prepaidAmount, rescaleAmount(500n, CREDIT_DECIMALS, stablecoin.decimals).toString());
-	const settled = await h.call(null, 'POST', `/v1/router/jobs/${job.jobId}/settled`, { payer: newSigner().publicKey, transaction: 'tx' }, ROUTER);
-	assert.equal(settled.status, 200);
+	const prepaid = rescaleAmount(500n, CREDIT_DECIMALS, stablecoin.decimals);
+	assert.equal(job.prepaidAmount, prepaid.toString());
+	const { payer } = await payRouterQuote(h, ticket.ticket);
 	for (let i = 0; i < 5; i++) {
 		const unpaid = await h.call(null, 'POST', '/v1/router/quote', { network: 'test', model: 'qwen3-8b', maxInputTokens: 10, maxOutputTokens: 10 }, ROUTER);
 		assert.equal(unpaid.status, 200, 'unpaid quotes do not use up the provider');
 	}
 	assert.equal((await h.call(newSigner(), 'POST', '/v1/jobs', { network: 'test', model: 'qwen3-8b', maxInputTokens: 10, maxOutputTokens: 10 })).status, 200);
-	assert.equal(h.payouts.published, 0, 'router jobs never touch the settlement account');
+	assert.equal(h.payouts.published, 0, 'nothing is paid out before the receipt');
+
+	/* The receipt bills 1000 tokens in and 500 out: 0.0003 dollars. The provider gets that less the network fee, the payer the rest. */
+	assert.equal((await fileReceipt(h, node, receiptFor(ticket.ticket, h.coordinator.publicKey, { inputTokens: 1000, outputTokens: 500 }))).status, 200);
+	const done = await paidOut(h, job.jobId);
+	assert.deepEqual([done.status, done.settlement!.reason], ['paid', 'delivered']);
+	const billed = rescaleAmount(300n, CREDIT_DECIMALS, stablecoin.decimals);
+	assert.deepEqual(h.ledger.payouts(h.settlement.account, job.jobId, stablecoin.address).to, { [operator.publicKey]: providerShare(billed), [payer]: prepaid - billed });
+	const kept = prepaid - providerShare(billed) - (prepaid - billed);
+	assert.equal(kept, networkFee(billed), 'the settlement account keeps the 0.25% fee');
+});
+
+test('a router payment goes back to its payer when the job fails, lapses, or failed before the payment', async () => {
+	const h = harness();
+	const { node } = await registerMac(h);
+	await h.call(node, 'POST', '/v1/providers/heartbeat', { status: 'online', offers: [offer('qwen3-8b')], load: { active: 0, capacity: 4 } });
+	const routerTicket = async () => ((await h.call(null, 'POST', '/v1/router/quote', { network: 'test', model: 'qwen3-8b', ...LIMITS }, ROUTER)).body as { ticket: SignedTicket }).ticket.ticket;
+	const stablecoin = defaultAsset('test');
+	const refunded = (ticket: JobTicket, payer: string) => assert.deepEqual(h.ledger.payouts(h.settlement.account, ticket.jobId, stablecoin.address).to, { [payer]: BigInt(ticket.prepaidAmount!) });
+
+	/* The provider reports the job failed after it was paid. */
+	const failed = await routerTicket();
+	const failedPayer = (await payRouterQuote(h, failed)).payer;
+	assert.equal((await h.call(node, 'POST', `/v1/jobs/${failed.jobId}/fail`, { error: 'out of memory' })).status, 200);
+	assert.equal((await paidOut(h, failed.jobId)).settlement!.reason, 'failed');
+	refunded(failed, failedPayer);
+
+	/* The job failed first, then the payment was reported. */
+	const early = await routerTicket();
+	await h.call(node, 'POST', `/v1/jobs/${early.jobId}/fail`, { error: 'busy' });
+	const earlyPayer = (await payRouterQuote(h, early)).payer;
+	assert.equal((await paidOut(h, early.jobId)).status, 'failed');
+	refunded(early, earlyPayer);
+
+	/* Paid, but no receipt ever came: the sweep refunds it after the ticket lapses. */
+	const silent = await routerTicket();
+	const silentPayer = (await payRouterQuote(h, silent)).payer;
+	h.advance(TICKET_TTL_MS + 5 * 60_000 + 1);
+	await h.service.sweep();
+	const lapsed = (await h.store.getJob(silent.jobId))!;
+	assert.deepEqual([lapsed.status, lapsed.settlement?.reason, Boolean(lapsed.settlement?.blockHash)], ['failed', 'no-receipt', true]);
+	refunded(silent, silentPayer);
 });
 
 test('a receipt on a router quote counts for its provider only once the router reports the payment', async () => {
@@ -1004,7 +1059,6 @@ test('a receipt on a router quote counts for its provider only once the router r
 	await h.call(node, 'POST', '/v1/providers/heartbeat', { status: 'online', offers: [offer('qwen3-8b')], load: { active: 0, capacity: 2 } });
 	const stats = async () => (await h.store.getProvider(node.publicKey))!.stats;
 	const routerTicket = async () => ((await h.call(null, 'POST', '/v1/router/quote', { network: 'test', model: 'qwen3-8b', ...LIMITS }, ROUTER)).body as { ticket: SignedTicket }).ticket.ticket;
-	const reportPayment = (jobId: string) => h.call(null, 'POST', `/v1/router/jobs/${jobId}/settled`, { payer: newSigner().publicKey, transaction: 'tx' }, ROUTER);
 
 	/* The 402 hands anyone the signed ticket, so a provider can file receipts on quotes nobody pays. */
 	const unpaid = await routerTicket();
@@ -1013,17 +1067,22 @@ test('a receipt on a router quote counts for its provider only once the router r
 	assert.deepEqual(await stats(), { completed: 0, failed: 0, tokensOut: 0 }, 'a receipt with no payment reported counts for nothing');
 
 	/* A payment reported after the receipt counts it then, once. */
-	assert.equal(((await reportPayment(unpaid.jobId)).body as JobRecord).status, 'paid');
+	const payment = await payRouterQuote(h, unpaid);
+	assert.equal(payment.job.status, 'paid');
 	assert.deepEqual(await stats(), { completed: 1, failed: 0, tokensOut: 7 });
-	await reportPayment(unpaid.jobId);
+	const repeated = await h.call(null, 'POST', `/v1/router/jobs/${unpaid.jobId}/settled`, { payer: payment.payer, transaction: payment.blockHash }, ROUTER);
+	assert.equal(repeated.status, 200);
 	assert.deepEqual(await stats(), { completed: 1, failed: 0, tokensOut: 7 }, 'a repeated report counts nothing more');
+	assert.equal((await paidOut(h, unpaid.jobId)).settlement!.reason, 'delivered');
 
 	/* The usual order: the payment, then the receipt. */
 	const paid = await routerTicket();
-	await reportPayment(paid.jobId);
+	await payRouterQuote(h, paid);
 	assert.equal((await fileReceipt(h, node, receiptFor(paid, h.coordinator.publicKey, { outputTokens: 3 }))).status, 200);
 	assert.equal((await h.store.getJob(paid.jobId))!.status, 'paid');
 	assert.deepEqual(await stats(), { completed: 2, failed: 0, tokensOut: 10 });
+	await paidOut(h, paid.jobId);
+	assert.equal(h.payouts.published, 2, 'each job is paid out once');
 });
 
 test('router quotes nobody paid, and receipts filed on them, never hold up the sweep settling app jobs', async () => {

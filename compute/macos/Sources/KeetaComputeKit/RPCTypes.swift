@@ -269,7 +269,7 @@ public struct JobSummary: Codable, Sendable, Equatable, Identifiable {
     public var counterparty: String
     public var inputTokens: Int
     public var outputTokens: Int
-    /// Credit base units billed.
+    /// Credit base units: what the buyer was billed, or for a provider what it receives (the bill less the network fee).
     public var amount: String
     public var status: JobSummaryStatus
     /// Milliseconds since the Unix epoch.

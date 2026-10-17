@@ -3,12 +3,13 @@
  * the real relay Worker under `wrangler dev` with the real facilitator, and a
  * Mac-style provider connected to it over a WebSocket. With `credits`, also
  * this run's Keeta Compute Credits, the FX service selling them and the
- * settlement account app jobs escrow with (credits.ts). Only the model is a
- * fake, unless LIVE_MODEL_URL points at a real server.
+ * settlement account app jobs escrow with (credits.ts); with `settlement`,
+ * only a settlement account, which public router payments go to. Only the
+ * model is a fake, unless LIVE_MODEL_URL points at a real server.
  */
 
 import { Account } from '@keeta-compute/protocol/keeta';
-import type { Price } from '@keeta-compute/protocol';
+import { toHex, type Price } from '@keeta-compute/protocol';
 import { startServer } from '../../services/control/src/server.ts';
 import type { ModelManager } from '@keeta-compute/provider';
 import { Scratch, fakeModelServer, freePort, listen, macAgent, passkeyEntropy, until } from '../support/harness.ts';
@@ -28,9 +29,19 @@ export interface Stack {
 	mac: ReturnType<typeof macAgent> & { operator: string; nodeKey: string; entropy: string };
 	/** Present when started with `credits`. */
 	credits: LiveCredits | null;
+	/** keeta.ai's settlement account, when started with `credits` or `settlement`. */
+	settlement: string | null;
 }
 
-export async function startStack(scratch: Scratch, options: { credits?: { funder: Funder } } = {}): Promise<Stack> {
+/** A fresh settlement account with KTA for its payout blocks; the funding account sweeps what is left on it. */
+async function settlementAccount(funder: Funder) {
+	const seed = toHex(crypto.getRandomValues(new Uint8Array(32)));
+	const address = funder.track(Account.fromSeed(seed, 0)).publicKeyString.get();
+	await funder.fundKta([address]);
+	return { seed, address };
+}
+
+export async function startStack(scratch: Scratch, options: { credits?: { funder: Funder }; settlement?: { funder: Funder } } = {}): Promise<Stack> {
 	let model: Stack['model'];
 	if (liveModel) {
 		model = { ...liveModel, fake: false };
@@ -46,10 +57,11 @@ export async function startStack(scratch: Scratch, options: { credits?: { funder
 	scratch.defer(() => worker.stop());
 
 	const credits = options.credits ? await startCredits(options.credits.funder, scratch) : null;
+	const settlement = credits ? { seed: credits.settlementSeed, address: credits.settlement.publicKeyString.get() } : options.settlement ? await settlementAccount(options.settlement.funder) : null;
 	const control = await startServer({
 		port: controlPort,
 		/* The escrow verifier and the settlement account are the production ones from config.ts. */
-		env: { COORDINATOR_SEED: Account.generateRandomSeed({ asString: true }) as string, RELAY_URL: worker.url, ALLOW_SMALL_PROVIDERS: 'true', ...secrets, ...(credits?.env ?? {}) }
+		env: { COORDINATOR_SEED: Account.generateRandomSeed({ asString: true }) as string, RELAY_URL: worker.url, ALLOW_SMALL_PROVIDERS: 'true', ...secrets, ...(credits?.env ?? {}), ...(settlement ? { SETTLEMENT_SEED: settlement.seed } : {}) }
 	});
 	scratch.defer(() => {
 		control.server.close();
@@ -82,6 +94,7 @@ export async function startStack(scratch: Scratch, options: { credits?: { funder
 		worker,
 		model,
 		mac: { ...mac, operator, nodeKey, entropy },
-		credits
+		credits,
+		settlement: settlement?.address ?? null
 	};
 }
