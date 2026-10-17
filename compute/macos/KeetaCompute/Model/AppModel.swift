@@ -261,6 +261,14 @@ final class AppModel: ObservableObject {
 
     func appendLog(_ source: LogLine.Source, _ level: LogLevel, _ message: String) {
         logs.append(LogLine(date: Date(), source: source, level: level, message: message))
+        // Mirrored to the unified log, so `log stream --predicate 'subsystem == "ai.keeta.compute"'` shows it too.
+        let type: OSLogType = switch level {
+        case .debug: .debug
+        case .info: .info
+        case .warn: .default
+        case .error: .error
+        }
+        log.log(level: type, "[\(String(describing: source), privacy: .public)] \(message, privacy: .public)")
         if logs.count > 2000 {
             logs.removeFirst(logs.count - 2000)
         }
