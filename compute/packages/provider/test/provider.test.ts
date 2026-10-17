@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -8,7 +9,7 @@ import { join } from 'node:path';
 import { CATALOG, defaultAsset, type HardwareProfile, type JobEnvelope, type ProviderFrame } from '@keeta-compute/protocol';
 import type { ControlClient } from '@keeta-compute/protocol/client';
 import type { MlxRuntime } from '@keeta-compute/runtime-mlx';
-import { ModelManager, Provider, hashDirectory, weightsHashFrom, type ProviderState, type ProviderStore } from '../src/index.ts';
+import { ModelManager, Provider, downloadRepo, hashDirectory, weightsHashFrom, type ProviderState, type ProviderStore } from '../src/index.ts';
 
 function tempDir(t: { after: (fn: () => void) => void }): string {
 	const dir = mkdtempSync(join(tmpdir(), 'kc-provider-'));
@@ -44,6 +45,33 @@ test('a weights hash covers every file name and content, in any order, and skips
 	assert.notEqual((await hashDirectory(dir)).weightsHash, first.weightsHash, 'changed contents change the hash');
 	assert.equal(weightsHashFrom([['b', sha('2')], ['a', sha('1')]]), weightsHashFrom([['a', sha('1')], ['b', sha('2')]]));
 	assert.notEqual(weightsHashFrom([['a', sha('1')]]), weightsHashFrom([['c', sha('1')]]), 'a renamed file changes the hash');
+});
+
+test('an install leaves the model directory holding exactly the files its weights hash covers', async (t) => {
+	const dir = tempDir(t);
+	const repo: Record<string, string> = { 'config.json': '{}', 'model-00001-of-00002.safetensors': 'first half', 'model-00002-of-00002.safetensors': 'second half' };
+	const fetched: string[] = [];
+	const fetchImpl = (async (url: string) => {
+		if (url.includes('/api/models/')) {
+			const lfs = (text: string) => ({ lfs: { oid: createHash('sha256').update(text).digest('hex'), size: text.length } });
+			return Response.json(Object.entries(repo).map(([path, text]) => ({ type: 'file', path, size: text.length, ...(path.endsWith('.safetensors') ? lfs(text) : {}) })));
+		}
+		const path = decodeURIComponent(url.split('/resolve/main/')[1]!);
+		fetched.push(path);
+		return new Response(repo[path]);
+	}) as typeof fetch;
+	/* An interrupted install of another revision, laid out in three shards, and a finished shard of this one. */
+	mkdirSync(join(dir, 'sub'));
+	writeFileSync(join(dir, 'model-00001-of-00003.safetensors'), 'stale');
+	writeFileSync(join(dir, 'model-00003-of-00003.safetensors'), 'stale');
+	writeFileSync(join(dir, 'model-00002-of-00002.safetensors.partial'), 'sec');
+	writeFileSync(join(dir, 'sub', 'extra.json'), '{}');
+	writeFileSync(join(dir, 'model-00001-of-00002.safetensors'), 'first half');
+
+	const { weightsHash } = await downloadRepo('owner/model', 'main', dir, { signal: new AbortController().signal, onProgress: () => undefined, fetchImpl });
+	assert.deepEqual(fetched.sort(), ['config.json', 'model-00002-of-00002.safetensors'], 'a finished shard is not downloaded again');
+	assert.deepEqual(readdirSync(dir, { recursive: true }).sort(), ['config.json', 'model-00001-of-00002.safetensors', 'model-00002-of-00002.safetensors', 'sub']);
+	assert.equal((await hashDirectory(dir)).weightsHash, weightsHash);
 });
 
 test('the model manager keeps installed models and offers in the saved state', (t) => {

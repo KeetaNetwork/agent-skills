@@ -8,7 +8,7 @@
  */
 
 import { createHash } from 'node:crypto';
-import { createReadStream, createWriteStream, existsSync, mkdirSync, renameSync, statSync } from 'node:fs';
+import { createReadStream, createWriteStream, existsSync, mkdirSync, renameSync, rmSync, statSync } from 'node:fs';
 import { readdir } from 'node:fs/promises';
 import { dirname, join, relative } from 'node:path';
 import { Readable } from 'node:stream';
@@ -90,7 +90,21 @@ export async function downloadRepo(
 		renameSync(partial, target);
 		hashes.push([file.path, digest]);
 	}
+	/* The runtime loads every weight file in the directory, so it must hold only what the hash covers: an interrupted install of another revision can leave shards the listing no longer names. */
+	await removeUnlisted(destination, new Set(files.map((file) => file.path)));
 	return { weightsHash: weightsHashFrom(hashes), sizeBytes: total };
+}
+
+/** Delete every file under `dir` whose path relative to `root` is not in `keep`. */
+async function removeUnlisted(root: string, keep: ReadonlySet<string>, dir = root): Promise<void> {
+	for (const entry of await readdir(dir, { withFileTypes: true })) {
+		const full = join(dir, entry.name);
+		if (entry.isDirectory()) {
+			await removeUnlisted(root, keep, full);
+		} else if (!keep.has(relative(root, full))) {
+			rmSync(full, { force: true });
+		}
+	}
 }
 
 export function weightsHashFrom(entries: Array<[string, string]>): string {
