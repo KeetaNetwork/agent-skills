@@ -1,5 +1,6 @@
 import Foundation
 import KeetaComputeKit
+import Security
 import os
 
 /// Where the app is in its relationship with the bundled agent process.
@@ -38,19 +39,27 @@ enum AgentLocator {
 
     /// In Debug builds only, `KEETA_COMPUTE_AGENT_PATH` overrides the bundled helper.
     /// Release builds always run the signed helper inside the app bundle: the agent
-    /// receives passkey output and can ask the node key to sign.
+    /// receives passkey output and can ask the node key to sign, so `AgentCodeCheck`
+    /// checks its signature once it is running.
     static func executableURL() -> URL? {
-        let fileManager = FileManager.default
+        if let override = debugOverrideURL() {
+            return override
+        }
+        if let url = Bundle.main.url(forResource: executableName, withExtension: nil),
+           FileManager.default.isExecutableFile(atPath: url.path) {
+            return url
+        }
+        return nil
+    }
+
+    /// The executable `KEETA_COMPUTE_AGENT_PATH` names in a Debug build; always nil in Release.
+    static func debugOverrideURL() -> URL? {
         #if DEBUG
         if let override = ProcessInfo.processInfo.environment["KEETA_COMPUTE_AGENT_PATH"], !override.isEmpty,
-           fileManager.isExecutableFile(atPath: override) {
+           FileManager.default.isExecutableFile(atPath: override) {
             return URL(fileURLWithPath: override)
         }
         #endif
-        if let url = Bundle.main.url(forResource: executableName, withExtension: nil),
-           fileManager.isExecutableFile(atPath: url.path) {
-            return url
-        }
         return nil
     }
 
@@ -60,6 +69,55 @@ enum AgentLocator {
         let directory = base.appendingPathComponent("Keeta Compute", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         return directory
+    }
+}
+
+/// Checks that a launched agent is the helper this app shipped before the app
+/// answers it or sends it anything secret. macOS does not re-check a file in
+/// Resources after installation, so without this anyone able to replace it
+/// would be lent the node key and handed passkey output.
+///
+/// The team comes from this app's signed entitlements as the kernel holds them
+/// for the running process, so changing files in the bundle cannot change it.
+/// The helper's signature must come from that team under Apple's anchor, with
+/// the identifier scripts/bundle-agent.sh signs it with, and it is checked on
+/// the running process, so swapping the file around the launch fails too.
+/// Builds without a provisioning profile (unsigned or ad-hoc, as in local
+/// development) have no team and skip the check: without a profile they also
+/// lack the keychain and passkey entitlements, so they have nothing to lend.
+enum AgentCodeCheck {
+    static let helperIdentifier = "ai.keeta.compute.agent"
+
+    /// The team in this app's signed entitlements; nil for a build without a provisioning profile.
+    private static let teamIdentifier: String? = {
+        guard let task = SecTaskCreateFromSelf(nil),
+              let team = SecTaskCopyValueForEntitlement(task, "com.apple.developer.team-identifier" as CFString, nil) as? String,
+              !team.isEmpty
+        else { return nil }
+        return team
+    }()
+
+    /// Nil when the process `pid` may be trusted as the agent; otherwise why not.
+    static func problem(pid: pid_t) -> String? {
+        guard let team = teamIdentifier else { return nil }
+        let text = "identifier \"\(helperIdentifier)\" and anchor apple generic and certificate leaf[subject.OU] = \"\(team)\""
+        var compiled: SecRequirement?
+        let requirementStatus = SecRequirementCreateWithString(text as CFString, [], &compiled)
+        guard requirementStatus == errSecSuccess, let requirement = compiled else {
+            return "the code requirement did not compile (status \(requirementStatus))"
+        }
+        var guest: SecCode?
+        let attributes = [kSecGuestAttributePid as String: NSNumber(value: pid)] as CFDictionary
+        let guestStatus = SecCodeCopyGuestWithAttributes(nil, attributes, [], &guest)
+        guard guestStatus == errSecSuccess, let agent = guest else {
+            return "its code could not be inspected (status \(guestStatus))"
+        }
+        // Also fails when the file on disk no longer matches what is running.
+        let status = SecCodeCheckValidity(agent, [], requirement)
+        guard status == errSecSuccess else {
+            return "its signature does not satisfy \(text) (status \(status))"
+        }
+        return nil
     }
 }
 
@@ -230,6 +288,17 @@ actor AgentRPCClient {
         } catch {
             log.error("Failed to launch agent: \(error.localizedDescription, privacy: .public)")
             await scheduleRestart(after: "launch failed: \(error.localizedDescription)", generation: currentGeneration)
+            return
+        }
+
+        // Nothing has been read from or written to the agent yet. A Debug build's
+        // KEETA_COMPUTE_AGENT_PATH names a local agent build, which is not signed like the bundled helper.
+        if executable != AgentLocator.debugOverrideURL(), let problem = AgentCodeCheck.problem(pid: process.processIdentifier) {
+            log.error("Refusing to use keeta-compute-agent: \(problem, privacy: .public)")
+            // Retire this generation so the exit handler doesn't schedule a restart.
+            generation += 1
+            kill(process.processIdentifier, SIGKILL)
+            await setState(.failed("Keeta Compute's background service failed its signature check, so it was stopped. Reinstall Keeta Compute."))
             return
         }
 

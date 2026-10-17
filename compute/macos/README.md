@@ -67,7 +67,7 @@ The script must also sign the helper, because Xcode does not sign executables
 in `Resources`:
 
 ```sh
-codesign --force --options runtime --timestamp \
+codesign --force --options runtime --timestamp --identifier ai.keeta.compute.agent \
   --entitlements "${SRCROOT}/Config/keeta-compute-agent.entitlements" \
   --sign "${EXPANDED_CODE_SIGN_IDENTITY}" \
   "${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/keeta-compute-agent"
@@ -76,9 +76,16 @@ codesign --force --options runtime --timestamp \
 `Config/keeta-compute-agent.entitlements` grants the JIT exceptions a
 bun-compiled executable needs under the hardened runtime.
 
+The agent receives passkey output and asks the node key to sign, so a signed
+app checks the running helper before it talks to it: its signature must come
+from the app's own team under Apple's anchor, with the identifier
+`ai.keeta.compute.agent`. Otherwise the app stops it and says so. Unsigned and
+ad-hoc builds have no team to compare with and skip the check.
+
 During development you can point the app at any agent build by setting
 `KEETA_COMPUTE_AGENT_PATH` (an absolute path to an executable) in the scheme's
-environment. It takes precedence over the bundled helper.
+environment, in Debug builds only. It takes precedence over the bundled helper
+and is not signature-checked.
 
 The app runs the agent as:
 
