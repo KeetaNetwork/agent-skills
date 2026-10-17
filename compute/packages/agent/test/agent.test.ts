@@ -41,6 +41,28 @@ test('one saved state serves the provider and the buyer, and survives a restart'
 	assert.equal(reopened.state.spentByDay[utcDay()], '2000');
 });
 
+test('a running node and one-shot commands share the state file without undoing each other', (t) => {
+	const dir = tempDir(t);
+	const node = new StateStore(dir);
+	node.save();
+	let reloads = 0;
+	node.onReload = () => reloads++;
+	/* `token --rotate` and `buy --daily-max` from another process. */
+	const command = new StateStore(dir);
+	const token = command.rotateBuyerToken();
+	command.update((s) => (s.buyer.dailyMax = '1000000'));
+	assert.equal(node.state.buyer.token, token, 'the running node takes the new token at once');
+	assert.equal(node.state.buyer.dailyMax, '1000000');
+	assert.equal(reloads, 1, 'read again once, not on every access');
+	/* The node's next save is made on top of the command's change, and the command sees the node's. */
+	node.recordJob({ jobId: 'job_1', role: 'buyer', modelId: 'qwen3-8b', counterparty: 'keeta_node', inputTokens: 0, outputTokens: 0, amount: '0', status: 'running', at: 1 });
+	const reopened = new StateStore(dir);
+	assert.deepEqual([reopened.state.buyer.token, reopened.state.buyer.dailyMax], [token, '1000000']);
+	assert.deepEqual(reopened.state.jobs.map((j) => j.jobId), ['job_1']);
+	assert.deepEqual(command.state.jobs.map((j) => j.jobId), ['job_1']);
+	assert.equal(reloads, 1, 'its own saves are not read back');
+});
+
 test('JSON-RPC peers call each other both ways', async () => {
 	const aToB = new PassThrough();
 	const bToA = new PassThrough();

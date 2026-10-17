@@ -119,6 +119,11 @@ export class AgentApp {
 	private earned = { today: '0', total: '0' };
 	private controlReachable = false;
 	private walletTimer: ReturnType<typeof setInterval> | null = null;
+	/** The network and control plane a serving node's network stack was built for. */
+	private built: { network: NetworkName; controlUrl: string } | null = null;
+	/** A rebuild after another process changed those; one at a time, and none after shutdown. */
+	private rebuilding: Promise<void> = Promise.resolve();
+	private closed = false;
 
 	constructor(private readonly options: AppOptions) {
 		this.store = new StateStore(options.dataDir);
@@ -130,6 +135,22 @@ export class AgentApp {
 			}
 			if (level !== 'debug') {
 				options.notify('event.log', { level, message });
+			}
+		};
+		/*
+		 * A one-shot command beside a running node (`config`) moved it to another
+		 * network or control plane: build the network stack again for them, as a
+		 * network switch from the app does. Other settings are read where used.
+		 */
+		this.store.onReload = () => {
+			const built = this.built;
+			const { network, controlUrl } = this.store.state;
+			if (built && (network !== built.network || controlUrl !== built.controlUrl)) {
+				this.built = null;
+				this.log('info', `the settings changed to the ${network} network at ${controlUrl}; reconnecting`);
+				this.rebuilding = this.rebuilding
+					.then(() => (this.closed ? undefined : this.startNetwork()))
+					.catch((error: Error) => this.log('error', `could not reconnect: ${error.message}`));
 			}
 		};
 	}
@@ -227,8 +248,9 @@ export class AgentApp {
 		if (this.walletTimer) {
 			clearInterval(this.walletTimer);
 		}
-		const network = this.store.state.network;
-		this.control = new ControlClient(this.store.state.controlUrl, this.options.fetchImpl);
+		const { network, controlUrl } = this.store.state;
+		this.built = online ? { network, controlUrl } : null;
+		this.control = new ControlClient(controlUrl, this.options.fetchImpl);
 		this.ledger = this.options.ledgerFor?.(network) ?? new KeetaLedger(network);
 		this.spend = spendAccount(this.options.dataDir, network);
 		const spendSigner = accountSigner(this.spend);
@@ -333,6 +355,7 @@ export class AgentApp {
 	}
 
 	shutdown(): void {
+		this.closed = true;
 		this.provider?.stop();
 		void this.buyer?.close();
 		this.runtime?.stopAll();

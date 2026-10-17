@@ -6,7 +6,7 @@
  * here. Never holds the passkey PRF output.
  */
 
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync, type Stats } from 'node:fs';
 import { join } from 'node:path';
 import type { PendingEscrow } from '@keeta-compute/buyer';
 import { utcDay, type NetworkName } from '@keeta-compute/protocol';
@@ -80,30 +80,71 @@ export function defaultState(): AgentStateFile {
 	};
 }
 
+/** Which save of the file this is: every save writes a new file and renames it into place. */
+function versionOf(stats: Stats): string {
+	return `${stats.ino}:${stats.size}:${stats.mtimeMs}`;
+}
+
 export class StateStore {
 	readonly file: string;
-	state: AgentStateFile;
+	/** Called after the file was read again because another process saved it. */
+	onReload: (() => void) | null = null;
+	private current: AgentStateFile;
+	/** The version of the file this process last read or saved. */
+	private seen: string | null = null;
 
 	constructor(readonly dataDir: string) {
 		mkdirSync(dataDir, { recursive: true, mode: 0o700 });
 		this.file = join(dataDir, 'state.json');
-		this.state = existsSync(this.file) ? { ...defaultState(), ...(JSON.parse(readFileSync(this.file, 'utf8')) as Partial<AgentStateFile>) } : defaultState();
+		this.current = existsSync(this.file) ? this.read() : defaultState();
+	}
+
+	/**
+	 * The saved state. A running node shares the file with one-shot CLI
+	 * commands (`token --rotate`, `provide`, `buy`, `models offer`): when one
+	 * of them saved it since this process last read or saved it, it is read
+	 * again, so the node applies the change at once and its own saves keep it.
+	 */
+	get state(): AgentStateFile {
+		let reloaded = false;
+		try {
+			if (versionOf(statSync(this.file)) !== this.seen) {
+				this.current = this.read();
+				reloaded = true;
+			}
+		} catch {
+			/* Missing or unreadable: keep this process's copy, which its next save writes. */
+		}
+		if (reloaded) {
+			this.onReload?.();
+		}
+		return this.current;
+	}
+
+	private read(): AgentStateFile {
+		const version = versionOf(statSync(this.file));
+		const state = { ...defaultState(), ...(JSON.parse(readFileSync(this.file, 'utf8')) as Partial<AgentStateFile>) };
 		/* Older files carried pay-later receipts and a stored earnings tally; credits are escrowed and earnings read from the ledger now. */
 		for (const key of ['unpaid', 'awaitingReceipts', 'earnedByDay', 'earnedTotal']) {
-			delete (this.state as unknown as Record<string, unknown>)[key];
+			delete (state as unknown as Record<string, unknown>)[key];
 		}
+		this.seen = version;
+		return state;
 	}
 
 	save(): void {
-		const tmp = `${this.file}.tmp`;
-		writeFileSync(tmp, JSON.stringify(this.state, null, 2), { mode: 0o600 });
+		/* A temporary file of this process's own, so processes saving at once never rename each other's. */
+		const tmp = `${this.file}.${process.pid}.tmp`;
+		writeFileSync(tmp, JSON.stringify(this.current, null, 2), { mode: 0o600 });
+		this.seen = versionOf(statSync(tmp));
 		renameSync(tmp, this.file);
 	}
 
+	/** Apply a change to the latest saved state and save it, so it never undoes another process's change. */
 	update(mutate: (state: AgentStateFile) => void): AgentStateFile {
 		mutate(this.state);
 		this.save();
-		return this.state;
+		return this.current;
 	}
 
 	rotateBuyerToken(): string {

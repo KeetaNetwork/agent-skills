@@ -65,6 +65,8 @@ keeta-compute-agent buy --per-request-max 0.25 --daily-max 5
 
 ### Other commands
 
+Commands that change settings (`token --rotate`, `provide`, `buy`, `models`, `config`) apply to a running `run` at once, without a restart.
+
 | Command | What it does |
 | --- | --- |
 | `status` | Node key, operator, network, endpoints, balances, policies and models (`--json` for scripts). |
