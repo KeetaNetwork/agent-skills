@@ -1,4 +1,5 @@
 # The Keeta agent skills moved to keeta.md (KeetaNetwork/keeta.md). Old keeta.ai links follow them.
+# Pages adds Access-Control-Allow-Origin: * to these 301s, so browser-based agents can follow them (CI checks it).
 /SKILL.md https://keeta.md/SKILL.md 301
 /skill.md https://keeta.md/skill.md 301
 /skills/* https://keeta.md/skills/:splat 301

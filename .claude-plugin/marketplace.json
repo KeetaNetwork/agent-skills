@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
+  "name": "keeta",
+  "owner": {
+    "name": "Keeta Network",
+    "url": "https://keeta.com"
+  },
+  "metadata": {
+    "description": "The Keeta agent skills moved to KeetaNetwork/keeta.md (https://keeta.md). This marketplace keeps existing installs of the keeta plugin working; new installs: /plugin marketplace add KeetaNetwork/keeta.md."
+  },
+  "plugins": [
+    {
+      "name": "keeta",
+      "source": {
+        "source": "git-subdir",
+        "url": "https://github.com/KeetaNetwork/keeta.md.git",
+        "path": "plugins/keeta"
+      },
+      "description": "Keeta Network agent skills for moving money, now maintained at KeetaNetwork/keeta.md: payments, bank accounts and payouts (Bivo), card payouts, bridges (Bridge.xyz, LayerZero), FX, KYC/KYB, tokens and x402.",
+      "author": {
+        "name": "Keeta Network"
+      },
+      "category": "development"
+    }
+  ]
+}

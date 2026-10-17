@@ -35,10 +35,32 @@ jobs:
         run: grep -qx 'pages_build_output_dir = "./_site"' wrangler.toml
       - name: Check the skills live only at keeta.md
         run: |
-          # The skills moved to KeetaNetwork/keeta.md; old keeta.ai skill URLs redirect there.
+          # The skills moved to KeetaNetwork/keeta.md; old keeta.ai skill URLs redirect there, and the old
+          # plugin marketplace points existing Claude Code installs there.
           if git ls-files | grep -qi 'skill\.md$'; then echo "SKILL.md files belong in KeetaNetwork/keeta.md"; exit 1; fi
-          for path in /SKILL.md /skills/ /llms-full.txt /.well-known/agent-skills/ /.well-known/skills/; do
-            grep -q "^$path.* https://keeta.md/.* 301$" site/_redirects || { echo "no redirect for $path"; exit 1; }
+          python3 - <<'EOF'
+          import json
+          plugins = json.load(open(".claude-plugin/marketplace.json"))["plugins"]
+          expected = {"source": "git-subdir", "url": "https://github.com/KeetaNetwork/keeta.md.git", "path": "plugins/keeta"}
+          assert [p["name"] for p in plugins] == ["keeta"] and plugins[0]["source"] == expected, plugins
+          EOF
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Serve the build as Pages does, and check the old skill URLs redirect to keeta.md
+        env:
+          DISABLE_TELEMETRY: "1"
+        run: |
+          npx --yes wrangler@4.151.0 pages dev _site --port 8788 --ip 127.0.0.1 > pages-dev.log 2>&1 &
+          for i in $(seq 1 60); do curl -fs -o /dev/null http://127.0.0.1:8788/llms.txt && break; sleep 1; done
+          curl -fsS -o /dev/null http://127.0.0.1:8788/llms.txt || { cat pages-dev.log; exit 1; }
+          # Browser-based agents follow a redirect only if it allows their origin.
+          for path in /SKILL.md /skill.md /skills/keeta/SKILL.md /skills/keeta/references/anchors.md /llms-full.txt \
+              /.well-known/agent-skills/index.json /.well-known/skills/index.json; do
+            headers=$(curl -sS -o /dev/null -D - -H 'Origin: https://example.com' "http://127.0.0.1:8788$path" | tr -d '\r')
+            echo "$headers" | grep -qx 'HTTP/1.1 301 Moved Permanently' || { echo "$path: not a 301"; echo "$headers"; exit 1; }
+            echo "$headers" | grep -qix "location: https://keeta.md$path" || { echo "$path: wrong location"; echo "$headers"; exit 1; }
+            echo "$headers" | grep -qix 'access-control-allow-origin: \*' || { echo "$path: no CORS header"; echo "$headers"; exit 1; }
           done
 
   compute:

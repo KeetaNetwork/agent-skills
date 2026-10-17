@@ -22,6 +22,7 @@ The Keeta agent skills (wallets, payments, bank payouts, cards, bridges, FX, ide
 | Claude Code plugin | `/plugin marketplace add KeetaNetwork/keeta.md`, then `/plugin install keeta@keeta` |
 
 keeta.ai's old skill URLs (`/SKILL.md`, `/skills/…`, `/llms-full.txt` and the `/.well-known/` skill indexes) redirect to the same paths on keeta.md.
+Claude Code users who added the old `KeetaNetwork/agent-skills` marketplace keep the `keeta` plugin: `.claude-plugin/marketplace.json` here now installs it from KeetaNetwork/keeta.md.
 
 ## Hosting on keeta.ai
 
@@ -43,7 +44,7 @@ The build turns `site/` into `_site/`, the folder Pages serves, and fills the Co
 | `/SKILL.md`, `/skills/…`, `/llms-full.txt`, `/.well-known/…` | 301 redirects to the same paths on keeta.md |
 
 - **Response headers.** `site/_headers` lets any origin fetch `llms.txt` and the Compute docs, so browser-based agents can read them. Pages applies the file and doesn't publish it.
-- **Redirects.** `site/_redirects` sends the old skill URLs to keeta.md. Deploy keeta.md before a keeta.ai build with these redirects reaches `main`, so the old URLs never point at nothing.
+- **Redirects.** `site/_redirects` sends the old skill URLs to keeta.md. Pages adds `Access-Control-Allow-Origin: *` to the redirects too, so browser-based agents follow them; CI checks this under `wrangler pages dev`. Merge and deploy keeta.md before a keeta.ai build with these redirects reaches `main`, so the old URLs and the old marketplace never point at nothing.
 - **Not found.** Pages serves `404.html` with status 404 for any path that doesn't exist.
 
 **One-time setup:**
@@ -64,6 +65,7 @@ npx wrangler@4.151.0 pages dev _site      # serves _site/ the way Pages does, on
 | Path | Contents |
 | --- | --- |
 | `site/` | the home page and 404 page, plus `_headers` and `_redirects` for Cloudflare |
+| `.claude-plugin/marketplace.json` | the old plugin marketplace, kept so existing installs of the `keeta` plugin update from KeetaNetwork/keeta.md |
 | `site/assets/` | the official Keeta wordmark and app icon, the link-preview image, and self-hosted Geist fonts (SIL Open Font License, in `fonts/OFL.txt`) |
 | `wrangler.toml` | Cloudflare Pages settings: the project name and the `_site` output directory |
 | `compute/packages/` | Keeta Compute's packages: protocol, runtimes, wallet, provider, buyer, agent and CLI |
