@@ -13,6 +13,8 @@ import { postDelivery, postProviderOffline } from './delivery.ts';
 
 const FIRST_FRAME_TIMEOUT_MS = 120_000;
 const IDLE_FRAME_TIMEOUT_MS = 120_000;
+/** How long after a buyer hangs up the relay still counts the provider's text, waiting for its receipt: what it sent before the cancel reached it. */
+export const HANG_UP_GRACE_MS = 5_000;
 const PING_INTERVAL_MS = 25_000;
 
 interface Pending {
@@ -25,6 +27,8 @@ interface Pending {
 	/** When the buyer brought the ticket, and when it hung up if nothing had been forwarded yet: the control plane charges a no-show fee for a ticket not used promptly. */
 	presentedAt: number;
 	abandonedAt?: number;
+	/** App jobs only: the buyer hung up, and the record waits for the provider's receipt (or HANG_UP_GRACE_MS). */
+	hungUp?: boolean;
 	/** The one delivery record post for this job, once started. */
 	attesting: Promise<void> | null;
 	/** Router jobs only: the provider holds a slot for it and waits for `start`. */
@@ -132,13 +136,7 @@ export class ProviderChannel {
 			attesting: null
 		};
 		this.pending.set(id, entry);
-		signal.addEventListener('abort', () => {
-			if (!entry.closed && entry.delivered === '') {
-				entry.abandonedAt = Date.now();
-			}
-			this.send({ type: 'cancel', id });
-			this.close(id);
-		});
+		signal.addEventListener('abort', () => this.hangUp(id));
 		if (!this.send({ type: 'job', id, envelope })) {
 			this.finish(id, 'provider_offline', 'could not reach the provider');
 		}
@@ -168,18 +166,27 @@ export class ProviderChannel {
 		if (!entry || entry.closed) {
 			return;
 		}
+		if (entry.hungUp) {
+			/* The buyer is gone, but the provider bills what it sent until the cancel reached it: count that too, so the record and the receipt cover the same text. */
+			if (frame.type === 'chunk' && entry.delivered !== null) {
+				entry.delivered += chunkText(frame.data);
+			} else if (frame.type === 'receipt' || frame.type === 'error') {
+				this.close(frame.id);
+			}
+			return;
+		}
 		clearTimeout(entry.timer);
 		if (frame.type === 'accepted') {
 			/* The provider drops the job itself if the router never starts it; this only bounds a provider that goes quiet. */
 			entry.accepted = true;
 			entry.timer = setTimeout(() => this.finish(frame.id, 'timeout', 'the provider stopped responding'), IDLE_FRAME_TIMEOUT_MS);
-			void entry.writer.write(sseEvent('keeta.accepted', {})).catch(() => this.close(frame.id));
+			void entry.writer.write(sseEvent('keeta.accepted', {})).catch(() => this.hangUp(frame.id));
 		} else if (frame.type === 'chunk') {
 			entry.timer = setTimeout(() => this.finish(frame.id, 'timeout', 'the provider stopped responding'), IDLE_FRAME_TIMEOUT_MS);
 			if (entry.delivered !== null) {
 				entry.delivered += chunkText(frame.data);
 			}
-			void entry.writer.write(sseData(frame.data)).catch(() => this.close(frame.id));
+			void entry.writer.write(sseData(frame.data)).catch(() => this.hangUp(frame.id));
 		} else if (frame.type === 'receipt') {
 			/* Record the delivery before the buyer sees the receipt; the control plane pays the receipt only if it matches this record. */
 			void this.attest(entry)
@@ -188,6 +195,29 @@ export class ProviderChannel {
 		} else if (frame.type === 'error') {
 			this.finish(frame.id, frame.code, frame.message);
 		}
+	}
+
+	/**
+	 * The buyer went away: cancel the job on the provider. The provider learns
+	 * of it a round trip later and bills what it sent until then, so an app
+	 * job's record waits for its receipt, for at most HANG_UP_GRACE_MS.
+	 */
+	private hangUp(id: string) {
+		const entry = this.pending.get(id);
+		if (entry?.hungUp) {
+			return;
+		}
+		this.send({ type: 'cancel', id });
+		if (!entry || entry.closed || entry.delivered === null) {
+			this.close(id);
+			return;
+		}
+		entry.hungUp = true;
+		if (entry.delivered === '') {
+			entry.abandonedAt = Date.now();
+		}
+		clearTimeout(entry.timer);
+		entry.timer = setTimeout(() => this.close(id), HANG_UP_GRACE_MS);
 	}
 
 	private finish(id: string, code: string, message: string) {

@@ -63,7 +63,7 @@ Balances are only ever read from the ledger. The network's job records keep the 
 5. **Relay.** The buyer sends the ticket, the request and its job authorization to the relay, which forwards them over the provider's open connection. If the provider is not connected, the relay answers 503 and records that for the job.
 6. **Provider.** The provider checks the ticket signature, its own key, the expiry and its allowlist, then runs the model and streams tokens back through the relay.
 7. **Signed receipt.** The provider signs a receipt with the actual token counts and the amount. If the buyer hangs up, the provider bills the text it sent.
-8. **Delivery record.** For app jobs the relay records a sha256 hash of the text it forwarded and the job's output limit, when the buyer brought the ticket, and when the buyer hung up if that was before any text.
+8. **Delivery record.** For app jobs the relay records a sha256 hash of the text it forwarded and the job's output limit, when the buyer brought the ticket, and when the buyer hung up if that was before any text. After a hang-up the relay tells the provider to stop, and the record also counts the text the provider sent before that reached it, for at most 5 seconds, so it covers what the receipt bills.
 9. **Settlement.** The relay's record decides how the escrow is paid out, in one Keeta block from the settlement account whose sends reference the job:
    - The receipt's `outputHash` matches the record and its output tokens fit in that text: `amount` to `payTo`, the rest of the escrow back to the buyer.
    - The receipt bills other text: the whole escrow back to the buyer, and the dispute counts against the provider.
