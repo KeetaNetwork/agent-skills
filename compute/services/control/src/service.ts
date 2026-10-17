@@ -195,6 +195,8 @@ const MAX_INPUT_TOKENS = 262_144;
 const MAX_OPEN_QUOTES = 4;
 /** Jobs one buyer may have in flight at once: its quotes waiting for escrow and its tickets not yet run. */
 const MAX_IN_FLIGHT = 8;
+/** Providers a quote request may name to use (allowedProviders, kept on the job) or to skip (excludeProviders). */
+const MAX_PROVIDER_LIST = 100;
 /** A payout attempt that has not recorded its block this long after it started may be retried (after checking the ledger). */
 const PAYOUT_RETRY_MS = 5 * 60_000;
 
@@ -533,7 +535,8 @@ export class ControlService {
 		const maxInputTokens = assertTokenCount(body.maxInputTokens, 'maxInputTokens', MAX_INPUT_TOKENS);
 		const maxOutputTokens = assertTokenCount(body.maxOutputTokens, 'maxOutputTokens', 32_768);
 		const maxPrice = body.maxPrice ? assertPrice(body.maxPrice, 'maxPrice') : undefined;
-		const allowedProviders = Array.isArray(body.allowedProviders) && body.allowedProviders.length ? body.allowedProviders.map((k, i) => assertKeetaAddress(k, `allowedProviders[${i}]`)) : undefined;
+		const allowedProviders = assertProviderList(body.allowedProviders, 'allowedProviders');
+		const excludeProviders = assertProviderList(body.excludeProviders, 'excludeProviders');
 		const { provider, offer } = await this.schedule({
 			network,
 			buyer,
@@ -543,7 +546,7 @@ export class ControlService {
 			...(maxPrice ? { maxPrice } : {}),
 			...(body.maxCost !== undefined ? { maxCost: assertBaseUnits(body.maxCost, 'maxCost') } : {}),
 			...(allowedProviders ? { allowedProviders } : {}),
-			...(Array.isArray(body.excludeProviders) ? { excludeProviders: body.excludeProviders.map((k, i) => assertKeetaAddress(k, `excludeProviders[${i}]`)) } : {}),
+			...(excludeProviders ? { excludeProviders } : {}),
 			publicOnly: false
 		});
 		const limits = { maxInputTokens, maxOutputTokens };
@@ -740,6 +743,7 @@ export class ControlService {
 		const modelId = assertModelId(body.model);
 		const maxInputTokens = assertTokenCount(body.maxInputTokens, 'maxInputTokens', MAX_INPUT_TOKENS);
 		const maxOutputTokens = assertTokenCount(body.maxOutputTokens, 'maxOutputTokens', 32_768);
+		const excludeProviders = assertProviderList(body.excludeProviders, 'excludeProviders');
 		const limits = { maxInputTokens, maxOutputTokens };
 		const asset = defaultAsset(network);
 		const prepaid = (price: Price) => rescaleAmount(maxJobCost(price, limits), CREDIT_DECIMALS, asset.decimals).toString();
@@ -754,7 +758,7 @@ export class ControlService {
 				buyer: this.config.coordinator.publicKey,
 				modelId,
 				...limits,
-				...(Array.isArray(body.excludeProviders) ? { excludeProviders: body.excludeProviders.map((k, i) => assertKeetaAddress(k, `excludeProviders[${i}]`)) } : {}),
+				...(excludeProviders ? { excludeProviders } : {}),
 				publicOnly: true
 			});
 			return await quoted({
@@ -1352,6 +1356,17 @@ function assertBaseUnits(value: unknown, field: string): bigint {
 		throw new ValidationError(`${field} must be a whole number of base units, as a string`);
 	}
 	return BigInt(value);
+}
+
+/** A list of provider keys or payout addresses from a quote request, without repeats; undefined when it names none. */
+function assertProviderList(value: unknown, field: string): string[] | undefined {
+	if (!Array.isArray(value) || value.length === 0) {
+		return undefined;
+	}
+	if (value.length > MAX_PROVIDER_LIST) {
+		throw new ValidationError(`${field} may name at most ${MAX_PROVIDER_LIST} providers`);
+	}
+	return [...new Set(value.map((key, i) => assertKeetaAddress(key, `${field}[${i}]`)))];
 }
 
 function assertTokenCount(value: unknown, field: string, max: number): number {

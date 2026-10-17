@@ -685,6 +685,24 @@ test('a buyer has at most eight jobs in flight, and can cap what a quote may cos
 	assert.equal(((await ask(newBuyer(), { maxCost: needed.toString() })).body as { job: JobRecord }).job.status, 'quoted', 'a ceiling at the escrow is enough');
 });
 
+test('a quote names at most 100 providers to use or skip, and its job keeps each one once', async () => {
+	const h = harness();
+	const { node, operator } = await registerMac(h);
+	await h.call(node, 'POST', '/v1/providers/heartbeat', { status: 'online', offers: [offer('qwen3-8b')], load: { active: 0, capacity: 4 } });
+	const ask = (extra: Record<string, unknown>) => h.call(newSigner(), 'POST', '/v1/jobs', { network: 'test', model: 'qwen3-8b', ...LIMITS, ...extra });
+
+	/* Copies of a live provider's key would still route to it, so a long list could only make the job record large. */
+	const padded = await ask({ allowedProviders: Array(101).fill(node.publicKey) });
+	assert.equal(padded.status, 400, JSON.stringify(padded.body));
+	assert.match(JSON.stringify(padded.body), /at most 100 providers/);
+	assert.equal((await ask({ excludeProviders: Array(101).fill(newSigner().publicKey) })).status, 400);
+	assert.equal(h.store.jobs.size, 0, 'nothing was quoted');
+
+	const listed = await ask({ allowedProviders: [...Array(99).fill(node.publicKey), operator.publicKey] });
+	assert.equal(listed.status, 200, JSON.stringify(listed.body));
+	assert.deepEqual((await h.store.getJob((listed.body as { job: JobRecord }).job.jobId))!.allowedProviders, [node.publicKey, operator.publicKey]);
+});
+
 test('a quote needs the buyer to hold the job\'s maximum cost in credits on the ledger, so empty keys cannot hold providers', async () => {
 	const balances = new Map<string, bigint>();
 	let ledgerDown = false;
