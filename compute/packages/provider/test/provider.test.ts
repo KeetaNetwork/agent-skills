@@ -317,3 +317,85 @@ test('a prompt far larger than its ticket, or a job with no free slot, is refuse
 	assert.deepEqual(await provider.checkJob(envelope('hello', 1_000)), { code: 'busy', error: 'provider is not taking jobs right now' });
 	assert.equal(counted, 4);
 });
+
+test('a cancel that arrives while an app ticket is still being checked stops the job before it runs', async (t) => {
+	let runs = 0;
+	const server = createServer((req, res) => {
+		runs++;
+		req.resume();
+		res.writeHead(200, { 'content-type': 'text/event-stream' });
+		res.write(`data: ${JSON.stringify({ id: 'c1', created: 1, choices: [{ index: 0, delta: { content: 'Hi' }, finish_reason: 'stop' }] })}\n\n`);
+		res.end(`data: ${JSON.stringify({ id: 'c1', created: 1, choices: [], usage: { prompt_tokens: 4, completion_tokens: 1 } })}\n\ndata: [DONE]\n\n`);
+	});
+	await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+	t.after(() => server.close());
+	const baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`;
+
+	const store = memoryStore();
+	store.state.provider = { ...store.state.provider, enabled: true };
+	const models = new ModelManager(store, tempDir(t), null, () => undefined);
+	const price = { inputPerMillion: '50000', outputPerMillion: '200000' };
+	models.addExternal({ modelId: 'my-model', name: 'Mine', backend: { baseUrl, servedName: 'mine' }, weightsHash: 'a'.repeat(64), sizeBytes: 1, path: '/dev/null', contextLength: 4096, price });
+	const posted: string[] = [];
+	const control = {
+		get: async () => ({ coordinatorKey: 'keeta_coordinator' }),
+		post: async (_signer: unknown, path: string) => {
+			posted.push(path);
+			return { eligible: true, status: 'online', relayUrl: 'ws://127.0.0.1:1', relayToken: 'token', relayTokenExpiresAt: Date.now() + 60_000, creditToken: 'keeta_credits' };
+		}
+	} as unknown as ControlClient;
+	const sent: ProviderFrame[] = [];
+	class Socket {
+		readyState = 1;
+		addEventListener() {}
+		close() {}
+		send(raw: string) {
+			sent.push(JSON.parse(raw) as ProviderFrame);
+		}
+	}
+	const node = { publicKey: 'keeta_node', sign: async () => 'signature' };
+	const provider = new Provider({
+		store,
+		control,
+		node,
+		verify: () => true,
+		models,
+		runtime: null,
+		kind: 'linux',
+		hardware: () => ({ os: 'linux', osVersion: '6.8', chip: 'x86_64', memoryBytes: 64 * 2 ** 30, freeDiskBytes: 500 * 2 ** 30 }),
+		registration: () => ({}),
+		log: () => undefined,
+		onJob: () => undefined,
+		onChange: () => undefined,
+		WebSocketImpl: Socket as unknown as typeof WebSocket,
+		localConditions: async () => ({ onBattery: false, idleSeconds: 1e9 })
+	});
+	const internals = provider as unknown as { beat(): Promise<void>; onFrame(raw: string): Promise<void>; active: Map<string, AbortController> };
+	await internals.beat();
+	assert.equal(provider.status.state, 'online');
+
+	const envelope = (jobId: string): JobEnvelope => ({
+		ticket: {
+			ticket: { v: 1, jobId, network: 'test', nodeKey: node.publicKey, modelId: 'my-model', buyer: 'keeta_buyer', maxInputTokens: 1000, maxOutputTokens: 16, price, asset: 'keeta_credits', payTo: 'keeta_operator', paymentMode: 'escrow', issuedAt: Date.now(), expiresAt: Date.now() + 60_000 },
+			coordinatorSig: 'signature',
+			relayMac: 'mac'
+		},
+		request: { model: 'my-model', messages: [{ role: 'user', content: 'hi' }], max_tokens: 16 },
+		buyerSig: 'signature'
+	});
+	const framesFor = (id: string) => sent.filter((f) => 'id' in f && f.id === id).map((f) => f.type);
+
+	/* The relay sends the cancel right behind the job: the buyer hung up as soon as the answer's headers came back. */
+	const cancelled = internals.onFrame(JSON.stringify({ type: 'job', id: 'run_1', envelope: envelope('job_1') }));
+	await internals.onFrame(JSON.stringify({ type: 'cancel', id: 'run_1' }));
+	await cancelled;
+	assert.equal(runs, 0, 'the model was never asked to run');
+	assert.deepEqual(framesFor('run_1'), [], 'nothing to bill, and no failure of this node to report');
+	assert.ok(!posted.some((path) => path.startsWith('/v1/jobs/job_1/')), 'no receipt and no failure filed: the relay record settles it');
+	assert.equal(internals.active.size, 0, 'the slot is free');
+
+	/* A ticket nobody cancels runs as before. */
+	await internals.onFrame(JSON.stringify({ type: 'job', id: 'run_2', envelope: envelope('job_2') }));
+	assert.equal(runs, 1);
+	assert.deepEqual(framesFor('run_2'), ['chunk', 'chunk', 'receipt']);
+});

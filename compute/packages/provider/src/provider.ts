@@ -81,6 +81,8 @@ export class Provider {
 	private eligible = true;
 	private state: ProviderState = 'offline';
 	private readonly active = new Map<string, AbortController>();
+	/** Jobs whose tickets are still being checked, by relay run id, so a cancel that arrives meanwhile stops them before they run. */
+	private readonly checking = new Map<string, AbortController>();
 	/** Running jobs the buyer hung up on (the relay's cancel), as opposed to this node stopping. */
 	private readonly hungUp = new Set<string>();
 	/** Accepted prepaid jobs waiting for the router's start, by relay run id. */
@@ -369,7 +371,7 @@ export class Provider {
 			if (this.active.has(frame.id)) {
 				this.hungUp.add(frame.id);
 			}
-			this.active.get(frame.id)?.abort();
+			(this.active.get(frame.id) ?? this.checking.get(frame.id))?.abort();
 		} else if (frame.type === 'start') {
 			this.starts.get(frame.id)?.();
 		} else if (frame.type === 'job') {
@@ -472,7 +474,10 @@ export class Provider {
 				}
 			}
 		}
-		let checked = await this.checkJob(envelope);
+		/* The buyer can hang up while the ticket is checked: its cancel aborts this before the job takes a slot. */
+		const controller = new AbortController();
+		this.checking.set(id, controller);
+		let checked = await this.checkJob(envelope).finally(() => this.checking.delete(id));
 		/* Re-check capacity with no await before taking the slot, so concurrent deliveries cannot both pass. */
 		if (!('error' in checked) && this.active.size >= this.deps.store.state.provider.maxConcurrentJobs) {
 			checked = { code: 'busy', error: 'provider is not taking jobs right now' };
@@ -486,8 +491,12 @@ export class Provider {
 			}
 			return;
 		}
+		if (controller.signal.aborted) {
+			/* The buyer hung up before the job started. As for a hang-up before any text, that is not this node's failure: an app job's escrow settles from the relay's record. */
+			this.deps.log('info', `job ${ticket.jobId} was cancelled by the buyer before it started`);
+			return;
+		}
 		const { model, promptTokens } = checked;
-		const controller = new AbortController();
 		this.active.set(id, controller);
 		/* A router job is prepaid with x402: hold the slot, and run nothing until the router has settled the payment. */
 		if (ticket.paymentMode === 'prepaid') {
