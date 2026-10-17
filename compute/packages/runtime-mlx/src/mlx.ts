@@ -8,8 +8,8 @@
 import { spawn, execFile, type ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
-import { createServer } from 'node:net';
 import { join } from 'node:path';
+import type { Readable } from 'node:stream';
 import { promisify } from 'node:util';
 import type { Log } from '@keeta-compute/protocol';
 import { waitForServer, type Backend } from '@keeta-compute/runtime-openai';
@@ -28,22 +28,53 @@ const UV_SHA256 = 'dc098ff224d78ed418e121fd374f655949d2c7031a70f6f6604eaf016a130
 const PYTHON_VERSION = '3.12';
 const START_TIMEOUT_MS = 15 * 60_000;
 
-function freePort(): Promise<number> {
+/*
+ * Runs `mlx_lm.server` on port 0, so the kernel picks a free port as the
+ * server binds it: a port chosen first and bound later would be free in
+ * between, and any local account could take it and receive buyer prompts.
+ * mlx_lm.server logs only the port it was given, so this reports the one
+ * it got, once it listens, on fd 3: a pipe only the runtime reads.
+ */
+const SERVE = [
+	'import http.server, os',
+	'activate = http.server.HTTPServer.server_activate',
+	'def server_activate(self):',
+	'    activate(self)',
+	"    os.write(3, b'%d\\n' % self.server_address[1])",
+	'    os.close(3)',
+	'http.server.HTTPServer.server_activate = server_activate',
+	'from mlx_lm.server import main',
+	'main()'
+].join('\n');
+
+/** The port a server started with SERVE reports on its fd 3. */
+function reportedPort(pipe: Readable, timeoutMs: number): Promise<number> {
 	return new Promise((resolve, reject) => {
-		const server = createServer();
-		server.listen(0, '127.0.0.1', () => {
-			const address = server.address();
-			const port = typeof address === 'object' && address ? address.port : 0;
-			server.close(() => resolve(port));
+		let text = '';
+		const timer = setTimeout(() => reject(new Error('model server did not start in time')), timeoutMs);
+		pipe.setEncoding('utf8');
+		pipe.on('data', (chunk: string) => {
+			text += chunk;
+			if (text.includes('\n') || text.length > 6) {
+				clearTimeout(timer);
+				const port = Number(/^\d{1,5}\n/.exec(text)?.[0]);
+				if (port > 0 && port < 65536) {
+					resolve(port);
+				} else {
+					reject(new Error('model server reported no port'));
+				}
+			}
 		});
-		server.on('error', reject);
+		pipe.on('end', () => {
+			clearTimeout(timer);
+			reject(new Error('model server exited before it was listening'));
+		});
 	});
 }
 
 interface Running {
 	process: ChildProcess;
-	backend: Backend;
-	ready: Promise<void>;
+	ready: Promise<Backend>;
 }
 
 export class MlxRuntime {
@@ -122,16 +153,13 @@ export class MlxRuntime {
 	async start(modelId: string, modelPath: string): Promise<Backend> {
 		const existing = this.running.get(modelId);
 		if (existing) {
-			await existing.ready;
-			return existing.backend;
+			return existing.ready;
 		}
-		const port = await freePort();
-		const child = spawn(this.python, ['-m', 'mlx_lm.server', '--model', modelPath, '--host', '127.0.0.1', '--port', String(port)], {
-			stdio: ['ignore', 'ignore', 'pipe'],
+		const child = spawn(this.python, ['-c', SERVE, '--model', modelPath, '--host', '127.0.0.1', '--port', '0'], {
+			stdio: ['ignore', 'ignore', 'pipe', 'pipe'],
 			env: { ...process.env, HF_HUB_OFFLINE: '1' }
 		});
 		child.stderr?.on('data', (data: Buffer) => this.log('debug', `[mlx ${modelId}] ${data.toString().trim()}`));
-		const backend: Backend = { baseUrl: `http://127.0.0.1:${port}/v1`, servedName: modelPath };
 		const controller = new AbortController();
 		child.on('exit', (code) => {
 			controller.abort();
@@ -140,16 +168,21 @@ export class MlxRuntime {
 				this.log(code === 0 ? 'info' : 'warn', `model server for ${modelId} exited (${code})`);
 			}
 		});
-		const ready = waitForServer(backend.baseUrl, START_TIMEOUT_MS, controller.signal);
-		this.running.set(modelId, { process: child, backend, ready });
+		const ready = (async () => {
+			const deadline = Date.now() + START_TIMEOUT_MS;
+			const port = await reportedPort(child.stdio[3] as Readable, START_TIMEOUT_MS);
+			const backend: Backend = { baseUrl: `http://127.0.0.1:${port}/v1`, servedName: modelPath };
+			await waitForServer(backend.baseUrl, deadline - Date.now(), controller.signal);
+			this.log('info', `serving ${modelId} on 127.0.0.1:${port}`);
+			return backend;
+		})();
+		this.running.set(modelId, { process: child, ready });
 		try {
-			await ready;
+			return await ready;
 		} catch (error) {
 			this.stop(modelId);
 			throw error;
 		}
-		this.log('info', `serving ${modelId} on 127.0.0.1:${port}`);
-		return backend;
 	}
 
 	isRunning(modelId: string): boolean {
