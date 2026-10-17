@@ -99,6 +99,15 @@ jobs:
           codesign --force --deep --sign - "$APP"
           "$APP/Contents/MacOS/Keeta Compute" --snapshot "$PWD/build/screenshots"
           ls -la build/screenshots
+          # TEMPORARY: small previews in the log, for review from a session that can't download artifacts.
+          mkdir -p build/previews
+          for f in build/screenshots/*.png; do
+            n=$(basename "$f" .png)
+            sips -Z 360 -s format jpeg -s formatOptions 55 "$f" --out "build/previews/$n.jpg" >/dev/null
+            echo "PREVIEW-BEGIN $n"
+            base64 -b 100 -i "build/previews/$n.jpg"
+            echo "PREVIEW-END $n"
+          done
       - name: Upload the popover screenshots
         uses: actions/upload-artifact@v4
         with:
