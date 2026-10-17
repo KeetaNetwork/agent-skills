@@ -129,7 +129,7 @@ The binaries land in `packages/cli/dist/`. `self-test` initializes the agent as 
 
 `npm run test:live` runs `test/live/*.test.ts` one file at a time against the **Keeta test network**. Only the model is a fake (an OpenAI-compatible server that answers "Hello from Keeta"), unless `LIVE_MODEL_URL` points at a real one. `KEETA_LIVE_SKIP=1` skips every live test.
 
-Each run makes its own Keeta Compute Credits the way the deploy steps do (`test/live/credits.ts`): a fresh credit token with its supply in a fresh FX account, the FX service on a local port with its metadata published, and a fresh settlement account for the control plane.
+The suite has one credit token (`test/live/credits.ts`): the funding account issued it on the first run, the way `credits:create` does, keeps its supply and reuses it. Each run sends its share to a fresh FX account, serves the FX service on a local port with its metadata published, and uses a fresh settlement account for the control plane. The sweep returns the credits along with the USDC and KTA.
 
 | File | What only the network can show |
 | --- | --- |

@@ -151,6 +151,11 @@ export class Funder {
 		return account;
 	}
 
+	/** Run `fn` with the funding account's client, in turn with its sends (one account cannot publish two at once). */
+	withClient<T>(fn: (client: UserClient) => Promise<T>): Promise<T> {
+		return this.queue.run('funder', () => fn(this.client));
+	}
+
 	/** Send from the funding account; sends are serialized because one account cannot publish two at once. */
 	send(to: string, amount: bigint, asset: 'usdc' | 'kta' | (string & {}), reference?: string): Promise<void> {
 		return this.queue.run('funder', async () => {
