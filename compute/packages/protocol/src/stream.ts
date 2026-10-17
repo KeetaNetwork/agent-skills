@@ -127,6 +127,9 @@ function parseEvent(raw: string): RelayEvent | null {
 export async function aggregateCompletion(events: AsyncIterable<RelayEvent>, model: string) {
 	let content = '';
 	let reasoning = '';
+	/* Every field chunkText bills is kept: a buyer that does not stream pays for the same text. */
+	let reasoningContent = '';
+	let refusal = '';
 	let finishReason: string | null = null;
 	let usage: Record<string, unknown> | undefined;
 	let id = '';
@@ -150,7 +153,7 @@ export async function aggregateCompletion(events: AsyncIterable<RelayEvent>, mod
 		const chunk = event.data as {
 			id?: string;
 			created?: number;
-			choices?: Array<{ delta?: { content?: string; reasoning?: string; tool_calls?: Array<{ index?: number; id?: string; function?: { name?: string; arguments?: string } } | null> }; finish_reason?: string | null }>;
+			choices?: Array<{ delta?: { content?: string; reasoning?: string; reasoning_content?: string; refusal?: string; tool_calls?: Array<{ index?: number; id?: string; function?: { name?: string; arguments?: string } } | null> }; finish_reason?: string | null }>;
 			usage?: Record<string, unknown>;
 		};
 		id ||= chunk.id ?? '';
@@ -158,6 +161,8 @@ export async function aggregateCompletion(events: AsyncIterable<RelayEvent>, mod
 		for (const choice of chunk.choices ?? []) {
 			content += choice.delta?.content ?? '';
 			reasoning += choice.delta?.reasoning ?? '';
+			reasoningContent += choice.delta?.reasoning_content ?? '';
+			refusal += choice.delta?.refusal ?? '';
 			for (const call of Array.isArray(choice.delta?.tool_calls) ? choice.delta.tool_calls : []) {
 				const index = call?.index ?? 0;
 				const entry = toolCalls.get(index) ?? { id: '', type: 'function', function: { name: '', arguments: '' } };
@@ -180,7 +185,7 @@ export async function aggregateCompletion(events: AsyncIterable<RelayEvent>, mod
 			object: 'chat.completion',
 			created,
 			model,
-			choices: [{ index: 0, message: { role: 'assistant', content, ...(reasoning ? { reasoning } : {}), ...(toolCalls.size ? { tool_calls: [...toolCalls.values()] } : {}) }, finish_reason: finishReason ?? 'stop' }],
+			choices: [{ index: 0, message: { role: 'assistant', content, ...(reasoning ? { reasoning } : {}), ...(reasoningContent ? { reasoning_content: reasoningContent } : {}), ...(refusal ? { refusal } : {}), ...(toolCalls.size ? { tool_calls: [...toolCalls.values()] } : {}) }, finish_reason: finishReason ?? 'stop' }],
 			...(usage ? { usage } : {})
 		}
 	};

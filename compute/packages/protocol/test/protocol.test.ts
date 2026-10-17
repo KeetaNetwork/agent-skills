@@ -216,6 +216,14 @@ test('a tool call is metered like the same text sent as an answer, and a complet
 	assert.deepEqual(completion.choices, [
 		{ index: 0, message: { role: 'assistant', content: 'Sure. ', tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'write', arguments: args } }] }, finish_reason: 'tool_calls' }
 	]);
+	const reasoned = await aggregateCompletion(
+		(async function* (): AsyncGenerator<RelayEvent> {
+			yield { type: 'chunk', data: { choices: [{ index: 0, delta: { reasoning_content: 'Think. ' }, finish_reason: null }] } };
+			yield { type: 'chunk', data: { choices: [{ index: 0, delta: { refusal: 'No.' }, finish_reason: 'stop' }] } };
+		})(),
+		'qwen3-8b'
+	);
+	assert.deepEqual(reasoned.completion.choices[0]?.message, { role: 'assistant', content: '', reasoning_content: 'Think. ', refusal: 'No.' }, 'billed reasoning and refusals reach a buyer that does not stream');
 });
 
 test('catalog.json is in sync with catalog.ts (run npm run catalog:export)', async () => {
