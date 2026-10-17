@@ -123,6 +123,11 @@ export class ProviderChannel {
 			}
 			return Response.json({ error: { code: 'provider_offline', message: 'the provider is not connected' } }, { status: 503, headers: { 'retry-after': '2' } });
 		}
+		/* A ticket runs once at a time: the provider would refuse a second run, and the record for that empty run could stand for the job instead of the real one. */
+		const jobId = envelope.ticket.ticket.jobId;
+		if ([...this.pending.values()].some((e) => e.jobId === jobId)) {
+			return Response.json({ error: { code: 'ticket_used', message: 'this ticket is already running' } }, { status: 409 });
+		}
 		const id = crypto.randomUUID();
 		const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
 		const writer = writable.getWriter();
@@ -130,7 +135,7 @@ export class ProviderChannel {
 			writer,
 			timer: setTimeout(() => this.finish(id, 'timeout', 'the provider did not respond in time'), FIRST_FRAME_TIMEOUT_MS),
 			closed: false,
-			jobId: envelope.ticket.ticket.jobId,
+			jobId,
 			delivered: envelope.ticket.ticket.paymentMode === 'escrow' ? '' : null,
 			presentedAt: Date.now(),
 			attesting: null
@@ -235,10 +240,9 @@ export class ProviderChannel {
 		}
 		entry.closed = true;
 		clearTimeout(entry.timer);
-		this.pending.delete(id);
 		void entry.writer.close().catch(() => undefined);
-		/* A buyer hang-up or a provider error still bills what was forwarded, so record it too. */
-		this.state.waitUntil(this.attest(entry));
+		/* A buyer hang-up or a provider error still bills what was forwarded, so record it too; the entry stays until then, so the ticket cannot run again meanwhile. */
+		this.state.waitUntil(this.attest(entry).finally(() => this.pending.delete(id)));
 	}
 
 	/** Report the hash of the text forwarded for an app job to the control plane, once, retrying until it is accepted. */

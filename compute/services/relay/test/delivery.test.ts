@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { sha256Hex, type JobEnvelope, type ProviderFrame, type RelayFrame, type SignedReceipt } from '@keeta-compute/protocol';
+import { readRelayEvents, sha256Hex, type JobEnvelope, type ProviderFrame, type RelayFrame, type SignedReceipt } from '@keeta-compute/protocol';
 import { HANG_UP_GRACE_MS, ProviderChannel } from '../src/channel.ts';
 import { postDelivery, postProviderOffline } from '../src/delivery.ts';
 
@@ -119,4 +119,24 @@ test('after a hang-up, the delivery record stops counting HANG_UP_GRACE_MS later
 	const records = await channel.records();
 	assert.equal(records.length, 1);
 	assert.equal(records[0]!.body.outputHash, await sha256Hex('Hello from'));
+});
+
+test('a ticket runs once at a time: running it again while it runs is refused before the provider sees it, and records nothing', async (t) => {
+	const channel = await openChannel(t);
+	const first = await channel.run('job_1', new AbortController().signal);
+	const id = (channel.toProvider[0] as { id: string }).id;
+	channel.fromProvider({ type: 'chunk', id, data: piece('Hello') });
+	const again = await channel.run('job_1', new AbortController().signal);
+	assert.equal(again.status, 409);
+	assert.equal(((await again.json()) as { error: { code: string } }).error.code, 'ticket_used');
+	assert.deepEqual(channel.toProvider.map((f) => f.type), ['job'], 'only the first run reached the provider');
+	channel.fromProvider({ type: 'chunk', id, data: piece(' from') });
+	channel.fromProvider({ type: 'receipt', id, receipt });
+	const events: string[] = [];
+	for await (const event of readRelayEvents(first.body!)) {
+		events.push(event.type);
+	}
+	assert.deepEqual(events, ['chunk', 'chunk', 'receipt']);
+	const records = await channel.records();
+	assert.deepEqual(records.map((r) => r.body.outputHash), [await sha256Hex('Hello from')], 'one record, for the run the provider made');
 });
