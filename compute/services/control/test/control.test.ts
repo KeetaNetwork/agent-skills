@@ -967,6 +967,43 @@ test('router quotes are prepaid to the provider over x402 in the default stablec
 	assert.equal(h.payouts.published, 0, 'router jobs never touch the settlement account');
 });
 
+test('router quotes nobody paid, and receipts filed on them, never hold up the sweep settling app jobs', async () => {
+	const h = harness();
+	const { node } = await registerMac(h);
+	await h.call(node, 'POST', '/v1/providers/heartbeat', { status: 'online', offers: [offer('qwen3-8b')], load: { active: 0, capacity: 4 } });
+	const routerTicket = async () => {
+		const res = await h.call(null, 'POST', '/v1/router/quote', { network: 'test', model: 'qwen3-8b', ...LIMITS }, ROUTER);
+		assert.equal(res.status, 200, JSON.stringify(res.body));
+		return (res.body as { ticket: SignedTicket }).ticket.ticket;
+	};
+
+	/* What is left behind for free: a quote nobody pays (any caller of the public router), and one its provider filed a receipt on with no payment reported. */
+	const unpaid = (await h.store.getJob((await routerTicket()).jobId))!;
+	const filed = await routerTicket();
+	assert.equal((await fileReceipt(h, node, receiptFor(filed, h.coordinator.publicKey))).status, 200);
+	const receipted = (await h.store.getJob(filed.jobId))!;
+	assert.equal(receipted.status, 'completed');
+	for (let i = 0; i < 250; i++) {
+		await h.store.putJob({ ...unpaid, jobId: `job_unpaid${i}` });
+		await h.store.putJob({ ...receipted, jobId: `job_receipted${i}` });
+	}
+
+	/* App jobs after them: a ticket never brought to the relay, and a receipt the relay never recorded a delivery for. */
+	h.advance(1);
+	const buyer = newBuyer();
+	const unused = await escrowedJob(h, buyer);
+	const undelivered = await escrowedJob(h, buyer);
+	await fileReceipt(h, node, receiptFor(undelivered.ticket, buyer.address));
+	h.advance(SETTLE_LAPSE_MS + 1);
+	assert.equal((await h.service.sweep()).settled, 2, 'both settle in the first sweep after their lapse');
+	assert.equal((await h.store.getJob(unused.jobId))!.settlement!.reason, 'no-show');
+	assert.equal((await h.store.getJob(undelivered.jobId))!.settlement!.reason, 'no-delivery');
+
+	/* The router jobs expire in passes of their own; a receipt with no payment does not stay completed. */
+	await h.service.sweep();
+	assert.deepEqual([...h.store.jobs.values()].filter((j) => j.paymentMode === 'prepaid' && j.status !== 'expired'), []);
+});
+
 test('router quotes fall back to OpenRouter only when no provider is free', async () => {
 	const house = newSigner();
 	const fallback = fallbackFromEnv({

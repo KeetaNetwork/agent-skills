@@ -1145,9 +1145,9 @@ export class ControlService {
 	}
 
 	/**
-	 * Housekeeping, run on a schedule: expire quotes nobody escrowed and
-	 * router quotes nobody paid, free providers from app tickets that went
-	 * unused, settle escrowed jobs at their lapse, and retry payouts.
+	 * Housekeeping, run on a schedule: expire quotes nobody escrowed, free
+	 * providers from app tickets that went unused, settle escrowed jobs at
+	 * their lapse, retry payouts, and then expire router quotes nobody paid.
 	 */
 	async sweep() {
 		const now = this.now();
@@ -1160,19 +1160,15 @@ export class ControlService {
 				await step(job).catch((error: Error) => console.warn(`sweeping ${job.jobId} failed; the next run retries`, error.message));
 			}
 		};
-		await each(await this.store.listJobsByStatus('quoted', now - QUOTE_TTL_MS, 200), async (job) => {
+		await each(await this.store.listJobsByStatus('quoted', 'escrow', now - QUOTE_TTL_MS, 200), async (job) => {
 			const updated = await this.store.updateJob(job.jobId, (current) =>
 				current.status !== 'quoted' || current.escrow || (current.quoteExpiresAt ?? 0) > now ? current : { ...current, status: 'expired', completedAt: now }
 			);
 			expired += updated.status === 'expired' ? 1 : 0;
 		});
+		/* App jobs are listed apart from router jobs, so no number of router quotes (anyone can ask for one) holds up a refund. */
 		const ticketLapse = now - TICKET_TTL_MS - 5 * 60_000;
-		await each(await this.store.listJobsByStatus('scheduled', ticketLapse, 200), async (job) => {
-			if (job.paymentMode === 'prepaid') {
-				await this.store.updateJob(job.jobId, (current) => (current.status === 'scheduled' ? { ...current, status: 'expired' } : current));
-				expired++;
-				return;
-			}
+		await each(await this.store.listJobsByStatus('scheduled', 'escrow', ticketLapse, 200), async (job) => {
 			/* An app ticket that drew no receipt frees its provider; the job stays open until it settles at the lapse. */
 			if (!job.handedBackAt && (job.ticketIssuedAt ?? job.createdAt) < ticketLapse) {
 				await this.handBack(job.jobId, 'the ticket went unused').catch(() => undefined);
@@ -1180,14 +1176,25 @@ export class ControlService {
 			settled += (await this.serially(() => this.settle(job.jobId))).settlement ? 1 : 0;
 		});
 		/* Receipts the relay has not recorded a delivery for within the grace period. */
-		await each(await this.store.listJobsByStatus('completed', now - DELIVERY_GRACE_MS, 200), async (job) => {
-			if (job.paymentMode === 'escrow' && !job.settlement) {
+		await each(await this.store.listJobsByStatus('completed', 'escrow', now - DELIVERY_GRACE_MS, 200), async (job) => {
+			if (!job.settlement) {
 				settled += (await this.serially(() => this.settle(job.jobId))).settlement ? 1 : 0;
 			}
 		});
 		await each(await this.store.listPayoutsDue(200), async (job) => {
 			paidOut += (await this.serially(() => this.payout(job))).settlement?.blockHash ? 1 : 0;
 		});
+		/*
+		 * Router jobs last: tickets that drew no receipt (mostly quotes nobody
+		 * paid), and receipts no payment was reported for (a reported payment
+		 * makes the job paid). Their tickets expired long ago.
+		 */
+		for (const status of ['scheduled', 'completed'] as const) {
+			await each(await this.store.listJobsByStatus(status, 'prepaid', ticketLapse, 200), async (job) => {
+				const updated = await this.store.updateJob(job.jobId, (current) => (current.status === status ? { ...current, status: 'expired' } : current));
+				expired += updated.status === 'expired' ? 1 : 0;
+			});
+		}
 		return { expired, settled, paidOut };
 	}
 

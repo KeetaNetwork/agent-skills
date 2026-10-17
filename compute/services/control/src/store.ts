@@ -3,7 +3,7 @@
  * (firestore-store.ts); an in-memory store for local runs and tests.
  */
 
-import type { JobRecord, JobStatus, NetworkName, PairingRecord, ProviderRecord } from '@keeta-compute/protocol';
+import type { JobRecord, JobStatus, NetworkName, PairingRecord, PaymentMode, ProviderRecord } from '@keeta-compute/protocol';
 
 /** Stored provider record, with the derived field Firestore queries on. */
 export interface StoredProvider extends ProviderRecord {
@@ -38,7 +38,8 @@ export interface Store {
 	listJobsByNode(nodeKey: string, limit: number): Promise<JobRecord[]>;
 	/** A node's jobs still scheduled whose tickets were issued after `ticketIssuedAfter`: every ticket that can still hold one of its slots, uncapped. */
 	listScheduledByNode(nodeKey: string, ticketIssuedAfter: number): Promise<JobRecord[]>;
-	listJobsByStatus(status: JobStatus, createdBefore: number, limit: number): Promise<JobRecord[]>;
+	/** Jobs in a status, paid one way, created before `createdBefore`: oldest first, up to `limit`. */
+	listJobsByStatus(status: JobStatus, paymentMode: PaymentMode, createdBefore: number, limit: number): Promise<JobRecord[]>;
 	/** Escrowed jobs whose settlement is decided but not yet paid out (`payoutDue`). */
 	listPayoutsDue(limit: number): Promise<JobRecord[]>;
 
@@ -147,8 +148,12 @@ export class MemoryStore implements Store {
 		return [...this.jobs.values()].filter((j) => j.nodeKey === nodeKey && j.status === 'scheduled' && (j.ticketIssuedAt ?? 0) > ticketIssuedAfter).map(clone);
 	}
 
-	async listJobsByStatus(status: JobStatus, createdBefore: number, limit: number) {
-		return [...this.jobs.values()].filter((j) => j.status === status && j.createdAt < createdBefore).slice(0, limit).map(clone);
+	async listJobsByStatus(status: JobStatus, paymentMode: PaymentMode, createdBefore: number, limit: number) {
+		return [...this.jobs.values()]
+			.filter((j) => j.status === status && j.paymentMode === paymentMode && j.createdAt < createdBefore)
+			.sort((a, b) => a.createdAt - b.createdAt)
+			.slice(0, limit)
+			.map(clone);
 	}
 
 	async listPayoutsDue(limit: number) {

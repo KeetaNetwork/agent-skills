@@ -185,7 +185,7 @@ Nothing is deployed by CI. Each step below is run by hand by someone with access
 5. **Control plane** (Firebase project with Firestore in native mode):
    - Set secrets: `firebase functions:secrets:set COORDINATOR_SEED RELAY_SECRET ROUTER_SECRET SETTLEMENT_SEED`. Fund the settlement account with KTA for fees. App jobs stay off on a network until it has a credit token and `SETTLEMENT_SEED` is set.
    - Before the test-network credit pin lands, the `TEST_CREDIT_TOKEN` and `TEST_FX_ACCOUNT` parameters name the token and FX account; the main network only ever uses its pin.
-   - `cd services/control && npm run build && firebase deploy --only functions,firestore,hosting`. The scheduled `sweep` function settles jobs whose background settlement did not finish. A job it cannot settle or pay is logged and retried on the next run, without holding up the jobs after it.
+   - `cd services/control && npm run build && firebase deploy --only functions,firestore,hosting`. The scheduled `sweep` function settles jobs whose background settlement did not finish. A job it cannot settle or pay is logged and retried on the next run, without holding up the jobs after it. It lists app jobs apart from router jobs and expires router quotes nobody paid only after the app jobs, so no number of unpaid quotes delays a refund.
    - Point `control.keeta.ai` at the Hosting site; `/v1/**` rewrites to the `api` function.
 6. **Relay and router** (Cloudflare):
    - `cd services/relay && wrangler secret put RELAY_SECRET && wrangler secret put ROUTER_SECRET`.

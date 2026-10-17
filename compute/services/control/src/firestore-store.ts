@@ -6,7 +6,7 @@
  */
 
 import type { Firestore } from 'firebase-admin/firestore';
-import type { JobRecord, JobStatus, NetworkName, PairingRecord } from '@keeta-compute/protocol';
+import type { JobRecord, JobStatus, NetworkName, PairingRecord, PaymentMode } from '@keeta-compute/protocol';
 import { sha256Hex } from '@keeta-compute/protocol';
 import { NotFoundError, RECENT_JOBS_LIMIT, type Store, type StoredProvider } from './store.ts';
 
@@ -121,8 +121,8 @@ export class FirestoreStore implements Store {
 		return snap.docs.map((doc) => doc.data() as JobRecord);
 	}
 
-	async listJobsByStatus(status: JobStatus, createdBefore: number, limit: number) {
-		const snap = await this.jobs().where('status', '==', status).where('createdAt', '<', createdBefore).orderBy('createdAt', 'asc').limit(limit).get();
+	async listJobsByStatus(status: JobStatus, paymentMode: PaymentMode, createdBefore: number, limit: number) {
+		const snap = await this.jobs().where('status', '==', status).where('paymentMode', '==', paymentMode).where('createdAt', '<', createdBefore).orderBy('createdAt', 'asc').limit(limit).get();
 		return snap.docs.map((doc) => doc.data() as JobRecord);
 	}
 
