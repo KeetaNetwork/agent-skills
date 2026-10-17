@@ -1,0 +1,23 @@
+{
+  "name": "@keeta-compute/fx",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "keeta.ai FX provider for Keeta Compute Credits: swaps the Keeta stablecoins (KUSD, KEUR, KJPY, KMXN, KCAD, KAED, KGBP) and USDC with credits, both ways, as a Keeta anchor FX service.",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "node --import tsx --test test/*.test.ts",
+    "start": "node --import tsx src/main.ts",
+    "publish-metadata": "node --import tsx scripts/publish-metadata.ts",
+    "create-credits": "node --import tsx scripts/create-credits.ts",
+    "pin-assets": "node --import tsx scripts/pin-assets.ts"
+  },
+  "dependencies": {
+    "@keeta-compute/protocol": "0.1.0",
+    "@keetanetwork/anchor": "0.0.102",
+    "@keetanetwork/keetanet-client": "0.18.7"
+  }
+}

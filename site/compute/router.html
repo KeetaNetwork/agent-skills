@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#ffffff" />
+    <meta name="color-scheme" content="light" />
+    <title>Public API router | Keeta Compute</title>
+    <meta name="description" content="The Keeta Compute public API router: OpenAI-compatible endpoints paid per request with x402 on Keeta." />
+    <link rel="canonical" href="https://keeta.ai/compute/router" />
+    <link rel="alternate" type="text/markdown" href="/compute/router.md" title="This page as Markdown" />
+    <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png" />
+    <link rel="preload" href="/assets/fonts/Geist-Regular.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="/assets/fonts/Geist-Medium.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/compute/compute.css" />
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <header class="nav">
+      <a class="brand" href="/" aria-label="Keeta AI home">
+        <img class="wordmark" src="/assets/keeta-wordmark.svg" alt="Keeta" width="84" height="20" />
+        <span class="brand-divider" aria-hidden="true"></span>
+        <span class="brand-product">Compute</span>
+      </a>
+      <nav id="site-menu" aria-label="Primary navigation">
+        <a href="/#how">How it works</a>
+        <a href="/compute/">Compute docs</a>
+        <a href="/compute/router">API</a>
+        <a href="/#skills">Agent skills</a>
+        <a href="https://github.com/KeetaNetwork/agent-skills">GitHub</a>
+      </nav>
+      <a class="nav-cta" href="/#start">Get started</a>
+      <button class="menu-toggle" type="button" aria-expanded="false" aria-controls="site-menu" aria-label="Open menu">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path class="menu-open-icon" d="M4 7h16M4 12h16M4 17h16" />
+          <path class="menu-close-icon" d="M6 6l12 12M18 6L6 18" />
+        </svg>
+      </button>
+    </header>
+
+    <main id="main" class="docs">
+      <aside class="docs-nav">
+        <p class="section-kicker">Keeta Compute</p>
+        <nav aria-label="Keeta Compute pages">
+          <a href="/compute/">Compute</a>
+          <a href="/compute/app">macOS app</a>
+          <a href="/compute/models">Models</a>
+          <a href="/compute/router" aria-current="page">API router</a>
+          <a href="/compute/helper">Linux</a>
+          <a href="/compute/protocol">Protocol</a>
+        </nav>
+      </aside>
+      <article class="docs-body">
+        <p class="eyebrow"><span aria-hidden="true"></span>Test-network preview</p>
+<h1 id="public-api-router">Public API router</h1>
+<p>Status: test-network preview. <code>https://api.keeta.ai/v1</code> is the planned production base URL.</p>
+<p>The router serves Keeta Compute to clients without the macOS app: servers, other platforms, any HTTP client. It speaks the OpenAI chat API and charges per request with x402 on Keeta, in KUSD (in USDC until KUSD is live on the network). There is no account, API key or invoice: the payment is the authorization.</p>
+<pre><code class="language-text">Base URL: https://api.keeta.ai/v1</code></pre>
+<h2 id="endpoints">Endpoints</h2>
+<h3 id="get-v1-models">GET /v1/models</h3>
+<p>Free. Lists models with at least one online provider, plus any model the router can serve through its fallback, in the OpenAI list format. Each entry has an extra <code>keeta</code> object: how many providers serve the model, and the lowest price per million input and output tokens in Keeta Compute Credit base units (one credit is one US dollar, with 6 decimals, so <code>50000</code> is $0.05).</p>
+<pre><code class="language-json">{
+  "object": "list",
+  "data": [
+    {
+      "id": "qwen3-8b",
+      "object": "model",
+      "keeta": {
+        "providers": 3,
+        "lowestPrice": { "inputPerMillion": "50000", "outputPerMillion": "100000" }
+      }
+    }
+  ]
+}</code></pre>
+<h3 id="post-v1-chat-completions">POST /v1/chat/completions</h3>
+<p>Paid. OpenAI request and response format; <code>stream: true</code> is supported. Set <code>max_tokens</code>: it bounds what the request can cost.</p>
+<h2 id="payment-x402-in-keeta-stablecoins">Payment: x402 in Keeta stablecoins</h2>
+<ol>
+<li>Send the request with no payment. The router picks a provider and answers <code>402 Payment Required</code> with a <code>PAYMENT-REQUIRED</code> header: base64 JSON, x402 version 2.</li>
+<li>Your client signs one Keeta send block for <code>amount</code> to <code>payTo</code> and retries the same request with the <code>PAYMENT-SIGNATURE</code> header. The block is signed, not published.</li>
+<li>The router has the x402 facilitator verify the block. The provider checks the quote and reserves a slot for the job, the facilitator settles the payment on Keeta, and only then does the provider run the job. If the provider is offline, busy or refuses the quote, nothing is settled and you are not charged. A payment that does not send the quoted amount to <code>payTo</code> with the job id as the send's external reference (<code>extra.external</code>) is refused before it is settled, so you are not charged for it either.</li>
+</ol>
+<p>The payment goes to keeta.ai's settlement account, with the job id written into the send. When the provider's signed receipt bills the job, one Keeta transaction from the settlement account pays the provider what it billed, less the 0.25% network fee, and sends the rest of your payment back to the address that paid. If the job fails or no receipt arrives, the whole payment comes back.</p>
+<p>Example 402:</p>
+<pre><code class="language-bash">curl -i https://api.keeta.ai/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model": "qwen3-8b", "messages": [{"role": "user", "content": "Say hello."}], "max_tokens": 256}'</code></pre>
+<pre><code class="language-text">HTTP/2 402
+content-type: application/json
+payment-required: eyJ4NDAyVmVyc2lvbiI6Mi...</code></pre>
+<p>The <code>PAYMENT-REQUIRED</code> header, decoded:</p>
+<pre><code class="language-json">{
+  "x402Version": 2,
+  "resource": { "url": "https://api.keeta.ai/v1/chat/completions" },
+  "accepts": [
+    {
+      "scheme": "exact",
+      "network": "keeta:1413829460",
+      "asset": "keeta_&lt;the KUSD token address&gt;",
+      "amount": "27",
+      "payTo": "keeta_&lt;keeta.ai's settlement address&gt;",
+      "maxTimeoutSeconds": 60,
+      "extra": {
+        "jobId": "job_&lt;id&gt;",
+        "external": "job_&lt;id&gt;",
+        "assetSymbol": "KUSD",
+        "model": "qwen3-8b",
+        "maxInputTokens": 20,
+        "maxOutputTokens": 256,
+        "price": { "inputPerMillion": "50000", "outputPerMillion": "100000" }
+      }
+    }
+  ]
+}</code></pre>
+<table>
+<thead><tr><th>Field</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>network</code></td><td class="wrap"><code>keeta:1413829460</code> on the test network, <code>keeta:21378</code> on the main network</td></tr>
+<tr><td><code>asset</code></td><td class="wrap">The KUSD token address on that network, or USDC's until KUSD is live there. <code>extra.assetSymbol</code> names it.</td></tr>
+<tr><td><code>amount</code></td><td class="wrap">The maximum cost in the asset's base units: estimated input tokens plus <code>max_tokens</code>, at the provider's price in credits, one US dollar per credit, rounded up</td></tr>
+<tr><td><code>payTo</code></td><td class="wrap">keeta.ai's settlement address, which pays the serving provider once the job is billed</td></tr>
+<tr><td><code>extra</code></td><td class="wrap">The job id (also as <code>external</code>, which the Keeta x402 client writes into the send), the asset's symbol, the model, token limits and price the amount was computed from</td></tr>
+</tbody>
+</table>
+<p>In the example, 20 × 50000 + 256 × 100000 = 26600000, divided by one million and rounded up: 27 base units, or 0.000027 KUSD.</p>
+<p>You pay the maximum up front. After the job, what the receipt did not bill comes back to the paying address in the same transaction that pays the provider.</p>
+<h2 id="when-the-network-is-full">When the network is full</h2>
+<p>When no provider can take a request, keeta.ai may answer it from its own capacity so paid requests still get an answer. keeta.ai turns this on per model and sets its price.</p>
+<ul>
+<li>The 402 quote then shows keeta.ai's own address as <code>payTo</code>. Network providers are always tried first.</li>
+<li>The payment settles before keeta.ai starts the request. If the upstream provider then fails, the payment stays settled.</li>
+<li>keeta.ai may run these requests through an upstream inference provider. It forwards only the standard chat fields and asks for upstream providers that do not collect prompt data.</li>
+<li>These responses have no provider receipt, because no network provider ran the job.</li>
+</ul>
+<h2 id="receipts">Receipts</h2>
+<p>Every completion served by a network provider carries the provider's signed receipt: model, weights hash, runtime, token counts, price and amount (<a href="/compute/protocol">fields</a>).</p>
+<ul>
+<li>Non-streaming: the <code>X-Keeta-Receipt</code> response header, base64 JSON <code>{"receipt": {...}, "signature": "..."}</code>.</li>
+<li>Streaming: a final server-sent event after the completion chunks:</li>
+</ul>
+<pre><code class="language-text">event: keeta.receipt
+data: {"receipt": {...}, "signature": "..."}</code></pre>
+<h2 id="typescript-buyer">TypeScript buyer</h2>
+<p>Uses the same packages as the <a href="https://keeta.md/skills/x402-payments/SKILL.md">x402-payments skill</a> (verified there with <code>@x402/*</code> 2.28.0 and <code>@keetanetwork/keetanet-client</code> 0.18.7).</p>
+<pre><code class="language-bash">npm install @keetanetwork/keetanet-client @x402/core @x402/keeta @x402/fetch</code></pre>
+<pre><code class="language-ts">import * as KeetaNet from "@keetanetwork/keetanet-client";
+import { x402Client } from "@x402/core/client";
+import { wrapFetchWithPayment } from "@x402/fetch";
+import { ExactKeetaScheme, KEETA_TESTNET_CAIP2, toClientKeetaSigner } from "@x402/keeta";
+
+// Load the seed from your secret store. Never print, log or commit it.
+const account = KeetaNet.lib.Account.fromSeed(process.env.KEETA_SEED!, 0);
+const signer = toClientKeetaSigner(account); // opens a UserClient; destroy it when done
+const model = "qwen3-8b";
+// The router's test-network USDC (6 decimals). @x402 only allows its own default assets unless you opt in.
+const TEST_USDC = "keeta_aosjk5tgpgxr3qazd2abxyhj4srqua5c3xgz4lmgxuyrrwzryiqng4vacgwai";
+
+try {
+  const client = new x402Client()
+    .register(KEETA_TESTNET_CAIP2, new ExactKeetaScheme(signer))
+    .setSpendControls({
+      maxAmountPerPayment: "$0.05", // cap per request on @x402's default assets
+      allowedAssets: [{ network: KEETA_TESTNET_CAIP2, asset: TEST_USDC, maxAmountPerPayment: "50000" }], // 0.05 USDC
+    })
+    .onBeforePaymentCreation(async ({ selectedRequirements: req }) =&gt; {
+      const extra = req.extra as { model?: string; assetSymbol?: string } | undefined;
+      const stablecoin = extra?.assetSymbol === "KUSD" || extra?.assetSymbol === "USDC";
+      if (req.network !== KEETA_TESTNET_CAIP2 || extra?.model !== model || !stablecoin) {
+        return { abort: true, reason: "unexpected payment request" };
+      }
+    });
+
+  const fetchWithPayment = wrapFetchWithPayment(fetch, client);
+  const response = await fetchWithPayment("https://api.keeta.ai/v1/chat/completions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model,
+      messages: [{ role: "user", content: "Say hello." }],
+      max_tokens: 256,
+    }),
+  });
+  if (!response.ok) throw new Error(`router answered ${response.status}`);
+
+  const completion = await response.json();
+  const header = response.headers.get("X-Keeta-Receipt");
+  const receipt = header ? JSON.parse(Buffer.from(header, "base64").toString("utf8")) : undefined;
+  console.log(completion.choices[0].message.content, receipt?.receipt.amount);
+} finally {
+  await signer.destroy();
+}</code></pre>
+<ul>
+<li>The spend cap and the <code>onBeforePaymentCreation</code> check run in your client. The chain does not enforce them.</li>
+<li>Without the <code>allowedAssets</code> entry, <code>@x402/fetch</code> refuses the 402 with "All payment requirements were rejected by spendControls": the router's test stablecoin is not one of the library's default assets. List KUSD the same way once the router quotes in it.</li>
+<li>Pay sequentially from each account. Keeta account chains are ordered, so one account cannot sign two payments at once. Queue requests, or spread them over several funded accounts when you need parallel requests.</li>
+<li>Fund the paying account with the stablecoin the 402 asks for: KUSD, or USDC where KUSD is not live yet. On the main network use <code>KEETA_MAINNET_CAIP2</code> and main-network stablecoins.</li>
+</ul>
+<h2 id="errors">Errors</h2>
+<table>
+<thead><tr><th>Status</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td>400</td><td class="wrap">Invalid request: malformed JSON or fields the router does not accept</td></tr>
+<tr><td>402</td><td class="wrap">Payment required, or the payment failed verification or settlement</td></tr>
+<tr><td>404</td><td class="wrap">Unknown model</td></tr>
+<tr><td>502</td><td class="wrap">The provider failed. If it failed before it accepted the job, the payment is not settled and the message says so. If it failed after the job started, the payment was settled, and the <code>PAYMENT-RESPONSE</code> header shows it; the whole payment comes back once the job is settled as failed.</td></tr>
+<tr><td>503</td><td class="wrap">No provider is available for the model now. Retry after the <code>Retry-After</code> header.</td></tr>
+</tbody>
+</table>
+        <p class="docs-source">This page as Markdown: <a href="/compute/router.md">router.md</a>. Every Compute page for agents: <a href="/llms.txt">llms.txt</a>.</p>
+      </article>
+    </main>
+
+    <footer class="site-footer">
+      <div class="footer-top">
+        <div class="footer-intro">
+          <a class="brand footer-brand" href="/" aria-label="Keeta AI home">
+            <img class="wordmark" src="/assets/keeta-wordmark.svg" alt="Keeta" width="84" height="20" />
+            <span class="brand-divider" aria-hidden="true"></span>
+            <span class="brand-product">Compute</span>
+          </a>
+          <p>AI inference paid per request on Keeta Network. Agent skills for moving money live at keeta.md.</p>
+        </div>
+        <nav class="footer-links" aria-label="Footer">
+          <div>
+            <h2>Keeta</h2>
+            <a href="https://keeta.com/">keeta.com</a>
+            <a href="https://docs.keeta.com/">Docs</a>
+            <a href="https://explorer.keeta.com/">Explorer</a>
+          </div>
+          <div>
+            <h2>Compute</h2>
+            <a href="/compute/">Docs</a>
+            <a href="/compute/app">macOS app</a>
+            <a href="/compute/router">API router</a>
+            <a href="/compute/models">Models</a>
+          </div>
+          <div>
+            <h2>For agents</h2>
+            <a href="/llms.txt">llms.txt</a>
+            <a href="/compute/index.md">Compute as Markdown</a>
+            <a href="https://keeta.md/">Keeta skills (keeta.md)</a>
+            <a href="https://keeta.md/SKILL.md">SKILL.md</a>
+          </div>
+          <div>
+            <h2>Open source</h2>
+            <a href="https://github.com/KeetaNetwork/agent-skills">GitHub</a>
+            <a href="https://github.com/KeetaNetwork/keeta.md">Skills on GitHub</a>
+            <a href="https://agentskills.io/">Agent Skills spec</a>
+            <a href="https://github.com/KeetaNetwork/agent-skills/blob/main/LICENSE">Apache-2.0 license</a>
+          </div>
+        </nav>
+      </div>
+      <p class="footer-bottom">Open source under Apache-2.0.</p>
+    </footer>
+  </body>
+</html>

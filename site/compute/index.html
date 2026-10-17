@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#ffffff" />
+    <meta name="color-scheme" content="light" />
+    <title>Keeta Compute</title>
+    <meta name="description" content="Keeta Compute: spare compute sells AI inference and is paid per request in USDC on Keeta Network." />
+    <link rel="canonical" href="https://keeta.ai/compute/" />
+    <link rel="alternate" type="text/markdown" href="/compute/index.md" title="This page as Markdown" />
+    <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png" />
+    <link rel="preload" href="/assets/fonts/Geist-Regular.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="/assets/fonts/Geist-Medium.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/compute/compute.css" />
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <header class="nav">
+      <a class="brand" href="/" aria-label="Keeta AI home">
+        <img class="wordmark" src="/assets/keeta-wordmark.svg" alt="Keeta" width="84" height="20" />
+        <span class="brand-divider" aria-hidden="true"></span>
+        <span class="brand-product">Compute</span>
+      </a>
+      <nav id="site-menu" aria-label="Primary navigation">
+        <a href="/#how">How it works</a>
+        <a href="/compute/">Compute docs</a>
+        <a href="/compute/router">API</a>
+        <a href="/#skills">Agent skills</a>
+        <a href="https://github.com/KeetaNetwork/agent-skills">GitHub</a>
+      </nav>
+      <a class="nav-cta" href="/#start">Get started</a>
+      <button class="menu-toggle" type="button" aria-expanded="false" aria-controls="site-menu" aria-label="Open menu">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path class="menu-open-icon" d="M4 7h16M4 12h16M4 17h16" />
+          <path class="menu-close-icon" d="M6 6l12 12M18 6L6 18" />
+        </svg>
+      </button>
+    </header>
+
+    <main id="main" class="docs">
+      <aside class="docs-nav">
+        <p class="section-kicker">Keeta Compute</p>
+        <nav aria-label="Keeta Compute pages">
+          <a href="/compute/" aria-current="page">Compute</a>
+          <a href="/compute/app">macOS app</a>
+          <a href="/compute/models">Models</a>
+          <a href="/compute/router">API router</a>
+          <a href="/compute/helper">Linux</a>
+          <a href="/compute/protocol">Protocol</a>
+        </nav>
+      </aside>
+      <article class="docs-body">
+        <p class="eyebrow"><span aria-hidden="true"></span>Test-network preview</p>
+<h1 id="keeta-compute">Keeta Compute</h1>
+<p>Status: test-network preview. Nothing on these pages runs on the Keeta main network yet. Hostnames such as <code>api.keeta.ai</code> are the planned production endpoints.</p>
+<p>Keeta Compute is a market for AI inference from spare compute (Apple Silicon Macs and Linux GPU machines), paid with Keeta stablecoins on Keeta Network.</p>
+<ul>
+<li><strong>Pay with Keeta stablecoins.</strong> KUSD first, then KEUR, KJPY, KMXN, KCAD, KAED, KGBP and USDC. In the app you swap them for Keeta Compute Credits, a token on the Keeta ledger worth one US dollar each, and cash credits back out to any of them.</li>
+<li><strong>Providers.</strong> A Mac or a Linux machine sells its spare inference capacity. It runs open-weight models and earns credits for each completed request, paid on the ledger to its own wallet.</li>
+<li><strong>Buyers on a Mac.</strong> The same macOS app buys inference for the agents running on that Mac, through a local OpenAI-compatible endpoint, within spend limits you set.</li>
+<li><strong>Everyone else.</strong> A public API router at <code>https://api.keeta.ai/v1</code> serves the same models to servers and other platforms. It speaks the OpenAI chat API and charges per request with x402 in KUSD (in USDC until KUSD is live on the network).</li>
+</ul>
+<p>Payments settle on Keeta. Prompts and outputs never go on chain.</p>
+<h2 id="how-it-works">How it works</h2>
+<ol>
+<li>A provider installs the macOS app. The app creates a passkey wallet and checks the hardware.</li>
+<li>The provider installs models that fit, sets a price in credits per million tokens for each, and offers them to everyone or only to listed buyer addresses.</li>
+<li>A buyer sends an OpenAI-style chat request: an agent through the app's local endpoint, or any client through the public router.</li>
+<li>The scheduler picks an online provider that has the model, accepts that buyer and fits the price, and quotes the most the job can cost.</li>
+<li>The app escrows that much in credits with keeta.ai's settlement account on the Keeta ledger, and gets a ticket for that one job, which reserves a slot on the provider.</li>
+<li>The provider runs the job, streams the tokens back through the relay, and signs a receipt. The relay records what it forwarded.</li>
+<li>When the receipt matches the relay's record, one Keeta transaction pays the provider what it billed, less a 0.25% network fee, and returns the rest to the buyer. A ticket not brought to the relay within 10 seconds, or cancelled before any text, pays the provider a 0.001-credit no-show fee. Anything else returns the whole escrow. The result feeds the provider's reputation.</li>
+</ol>
+<h2 id="trust-and-privacy">Trust and privacy</h2>
+<ul>
+<li>A provider can see the prompts it serves and the text it generates. Running a request on someone else's Mac is not private from that Mac's operator.</li>
+<li>For sensitive work, use your own machines or an allowlist. A provider can serve only listed buyer addresses, such as your own other machines or your company.</li>
+<li>Every response comes with a receipt signed by the provider. It names the model, the weights hash, the runtime and its version, the input and output tokens, the price and the amount. Check it against what you asked for.</li>
+<li>A receipt is a signed statement by the provider. It is not a cryptographic proof that the work was done as described. A provider is paid only when its receipt matches what the relay forwarded.</li>
+<li>The network never stores prompts or outputs. The relay passes them through, and job records keep the receipt, which holds only a sha256 hash of the output.</li>
+<li>Balances and earnings live only on the Keeta ledger. Job records keep the hashes of the escrow and payout transactions, not balances.</li>
+</ul>
+<h2 id="pages">Pages</h2>
+<ul>
+<li><a href="/compute/app">macOS app</a>: install, buy credits with Keeta stablecoins, provide capacity, get paid, buy for local agents.</li>
+<li><a href="/compute/models">Models</a>: the catalog, memory needs, licenses and suggested prices.</li>
+<li><a href="/compute/router">Public API router</a>: endpoints, x402 payment flow, receipts, errors.</li>
+<li><a href="/compute/helper">Linux</a>: run a full node from the command line with its own wallet, or add a machine to a fleet as a helper.</li>
+<li><a href="/compute/protocol">Protocol</a>: identities, signed requests, credits, escrow and settlement, receipts, pricing math.</li>
+</ul>
+<p>Each page is also served as Markdown: add <code>.md</code> to its path, for example <code>https://keeta.ai/compute/router.md</code>.</p>
+<p>Keeta Compute builds on the <a href="https://keeta.md/">Keeta agent skills</a>, which cover wallets, payments and <a href="https://keeta.md/skills/x402-payments/SKILL.md">x402</a>.</p>
+        <p class="docs-source">This page as Markdown: <a href="/compute/index.md">index.md</a>. Every Compute page for agents: <a href="/llms.txt">llms.txt</a>.</p>
+      </article>
+    </main>
+
+    <footer class="site-footer">
+      <div class="footer-top">
+        <div class="footer-intro">
+          <a class="brand footer-brand" href="/" aria-label="Keeta AI home">
+            <img class="wordmark" src="/assets/keeta-wordmark.svg" alt="Keeta" width="84" height="20" />
+            <span class="brand-divider" aria-hidden="true"></span>
+            <span class="brand-product">Compute</span>
+          </a>
+          <p>AI inference paid per request on Keeta Network. Agent skills for moving money live at keeta.md.</p>
+        </div>
+        <nav class="footer-links" aria-label="Footer">
+          <div>
+            <h2>Keeta</h2>
+            <a href="https://keeta.com/">keeta.com</a>
+            <a href="https://docs.keeta.com/">Docs</a>
+            <a href="https://explorer.keeta.com/">Explorer</a>
+          </div>
+          <div>
+            <h2>Compute</h2>
+            <a href="/compute/">Docs</a>
+            <a href="/compute/app">macOS app</a>
+            <a href="/compute/router">API router</a>
+            <a href="/compute/models">Models</a>
+          </div>
+          <div>
+            <h2>For agents</h2>
+            <a href="/llms.txt">llms.txt</a>
+            <a href="/compute/index.md">Compute as Markdown</a>
+            <a href="https://keeta.md/">Keeta skills (keeta.md)</a>
+            <a href="https://keeta.md/SKILL.md">SKILL.md</a>
+          </div>
+          <div>
+            <h2>Open source</h2>
+            <a href="https://github.com/KeetaNetwork/agent-skills">GitHub</a>
+            <a href="https://github.com/KeetaNetwork/keeta.md">Skills on GitHub</a>
+            <a href="https://agentskills.io/">Agent Skills spec</a>
+            <a href="https://github.com/KeetaNetwork/agent-skills/blob/main/LICENSE">Apache-2.0 license</a>
+          </div>
+        </nav>
+      </div>
+      <p class="footer-bottom">Open source under Apache-2.0.</p>
+    </footer>
+  </body>
+</html>

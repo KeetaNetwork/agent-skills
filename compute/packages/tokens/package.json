@@ -1,0 +1,20 @@
+{
+  "name": "@keeta-compute/tokens",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Counts a chat request's prompt tokens exactly with a catalog model's pinned tokenizer and chat template, so tickets price the real prompt and providers cannot bill more than it.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./testing": "./src/testing.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "node --import tsx --test test/*.test.ts"
+  },
+  "dependencies": {
+    "@huggingface/jinja": "0.5.10",
+    "@huggingface/tokenizers": "0.2.0",
+    "@keeta-compute/protocol": "0.1.0"
+  }
+}

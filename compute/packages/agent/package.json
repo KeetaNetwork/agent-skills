@@ -1,0 +1,22 @@
+{
+  "name": "@keeta-compute/agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "The Keeta Compute node agent: ties the wallet, provider and buyer together behind the JSON-RPC contract the macOS app drives, and keeps the node's saved state.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "node --import tsx --test test/*.test.ts"
+  },
+  "dependencies": {
+    "@keeta-compute/buyer": "0.1.0",
+    "@keeta-compute/protocol": "0.1.0",
+    "@keeta-compute/provider": "0.1.0",
+    "@keeta-compute/runtime-mlx": "0.1.0",
+    "@keeta-compute/tokens": "0.1.0",
+    "@keeta-compute/wallet": "0.1.0"
+  }
+}

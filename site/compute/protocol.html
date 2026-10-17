@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#ffffff" />
+    <meta name="color-scheme" content="light" />
+    <title>Protocol | Keeta Compute</title>
+    <meta name="description" content="Keeta Compute protocol: identities, signed requests, job lifecycle, tickets, receipts and pricing math." />
+    <link rel="canonical" href="https://keeta.ai/compute/protocol" />
+    <link rel="alternate" type="text/markdown" href="/compute/protocol.md" title="This page as Markdown" />
+    <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png" />
+    <link rel="preload" href="/assets/fonts/Geist-Regular.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="/assets/fonts/Geist-Medium.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/compute/compute.css" />
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <header class="nav">
+      <a class="brand" href="/" aria-label="Keeta AI home">
+        <img class="wordmark" src="/assets/keeta-wordmark.svg" alt="Keeta" width="84" height="20" />
+        <span class="brand-divider" aria-hidden="true"></span>
+        <span class="brand-product">Compute</span>
+      </a>
+      <nav id="site-menu" aria-label="Primary navigation">
+        <a href="/#how">How it works</a>
+        <a href="/compute/">Compute docs</a>
+        <a href="/compute/router">API</a>
+        <a href="/#skills">Agent skills</a>
+        <a href="https://github.com/KeetaNetwork/agent-skills">GitHub</a>
+      </nav>
+      <a class="nav-cta" href="/#start">Get started</a>
+      <button class="menu-toggle" type="button" aria-expanded="false" aria-controls="site-menu" aria-label="Open menu">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path class="menu-open-icon" d="M4 7h16M4 12h16M4 17h16" />
+          <path class="menu-close-icon" d="M6 6l12 12M18 6L6 18" />
+        </svg>
+      </button>
+    </header>
+
+    <main id="main" class="docs">
+      <aside class="docs-nav">
+        <p class="section-kicker">Keeta Compute</p>
+        <nav aria-label="Keeta Compute pages">
+          <a href="/compute/">Compute</a>
+          <a href="/compute/app">macOS app</a>
+          <a href="/compute/models">Models</a>
+          <a href="/compute/router">API router</a>
+          <a href="/compute/helper">Linux</a>
+          <a href="/compute/protocol" aria-current="page">Protocol</a>
+        </nav>
+      </aside>
+      <article class="docs-body">
+        <p class="eyebrow"><span aria-hidden="true"></span>Test-network preview</p>
+<h1 id="protocol">Protocol</h1>
+<p>Status: test-network preview. Version 1 of the formats below; field names match the shared protocol package in the <a href="https://github.com/KeetaNetwork/agent-skills">source repository</a>.</p>
+<h2 id="identities">Identities</h2>
+<p>Every party is a Keeta public key (<code>keeta_…</code>). Every signature is a Keeta account signature (<code>Account.sign</code>), hex encoded, so a key can live in the Secure Enclave, in a software keyfile or in any Keeta wallet.</p>
+<table>
+<thead><tr><th>Key</th><th>Held by</th><th>Used for</th></tr></thead>
+<tbody>
+<tr><td>Node key</td><td>Each Mac, Linux node or Linux helper</td><td class="wrap">Signs requests to the network and the receipts for its jobs. Cannot move funds.</td></tr>
+<tr><td>Payout address (<code>payTo</code>)</td><td>The operator's wallet (passkey on the Mac, an encrypted wallet file on a Linux node)</td><td class="wrap">Receives every payment for the operator's machines, including paired Linux helpers</td></tr>
+<tr><td>Buyer key</td><td>The paying account (the Agent budget in the app)</td><td class="wrap">Escrows credits for app jobs, or pays the router; is what provider allowlists list</td></tr>
+<tr><td>Settlement account</td><td>keeta.ai</td><td class="wrap">Receives app escrows and pays them out: the provider's bill and the buyer's refund</td></tr>
+<tr><td>FX account</td><td>keeta.ai</td><td class="wrap">Holds the credit supply and swaps credits with the Keeta stablecoins</td></tr>
+</tbody>
+</table>
+<p>At onboarding the operator signs a link message tying each node key to its payout address.</p>
+<h2 id="signed-requests">Signed requests</h2>
+<p>Calls from apps and helpers to the control plane and relay carry four headers:</p>
+<table>
+<thead><tr><th>Header</th><th>Value</th></tr></thead>
+<tbody>
+<tr><td><code>x-kc-key</code></td><td class="wrap">The caller's Keeta public key</td></tr>
+<tr><td><code>x-kc-ts</code></td><td class="wrap">Unix time in milliseconds</td></tr>
+<tr><td><code>x-kc-nonce</code></td><td class="wrap">12 random bytes, hex</td></tr>
+<tr><td><code>x-kc-sig</code></td><td class="wrap">Hex signature by <code>x-kc-key</code> over the message below</td></tr>
+</tbody>
+</table>
+<p>The signed message is UTF-8, lines joined with <code>\n</code>, no trailing newline:</p>
+<pre><code class="language-text">keeta-compute-request-v1
+METHOD
+PATH
+TIMESTAMP
+NONCE
+sha256hex(body)</code></pre>
+<p><code>METHOD</code> is upper case, <code>TIMESTAMP</code> and <code>NONCE</code> are the header values, and the last line is the lowercase hex SHA-256 of the exact body bytes (of the empty string when there is no body). Requests more than 2 minutes from server time are rejected, and nonces are not accepted twice.</p>
+<p>Other signed messages use the same pattern, a version line followed by canonical JSON (object keys sorted recursively, no whitespace, undefined fields dropped):</p>
+<ul>
+<li>Receipt: <code>keeta-compute-receipt-v1\n</code> + canonical JSON of the receipt.</li>
+<li>Ticket: <code>keeta-compute-ticket-v1\n</code> + canonical JSON of the ticket.</li>
+<li>Buyer job authorization: <code>keeta-compute-job-v1\n</code> + job id + <code>\n</code> + sha256 hex of the canonical JSON of the request.</li>
+</ul>
+<h2 id="credits-and-stablecoins">Credits and stablecoins</h2>
+<p>Keeta Compute Credits are a token on the Keeta ledger: one credit is one US dollar, with 6 decimals, so one credit is <code>1000000</code> base units. Prices, quotes, receipts and payouts for app jobs are in credits. The token address of each network is published by the control plane (<code>GET /v1/config</code>, field <code>credits</code>), with the settlement account and the FX account.</p>
+<p>Buyers get credits with Keeta stablecoins, in this order: KUSD, KEUR, KJPY, KMXN, KCAD, KAED, KGBP, USDC. keeta.ai's FX account sells and buys credits for each of them as a Keeta anchor FX service, published in the FX account's metadata so the anchor SDK's resolver finds it. KUSD and USDC trade one to one; the others at a US dollar rate with a small spread. <code>GET /v1/config</code> also lists the stablecoins of each network (field <code>assets</code>) and which are available yet.</p>
+<p>Balances are only ever read from the ledger. The network's job records keep the hashes of the escrow and payout blocks, never balances or amounts owed.</p>
+<h2 id="job-lifecycle">Job lifecycle</h2>
+<ol>
+<li><strong>Schedule.</strong> The buyer asks the control plane for a provider for a model, with its token limits and optionally the most it will pay (<code>maxCost</code>, credit base units) (<code>POST /v1/jobs</code>). The scheduler picks an online provider (heartbeat in the last 90 seconds) that offers the model, accepts the buyer, has a free slot and whose escrow is no more than <code>maxCost</code>. The request can also name the providers to use (<code>allowedProviders</code>: node keys or payout addresses) or to skip (<code>excludeProviders</code>), at most 100 of each. A provider's allowlists name at most 1000 buyer keys in total: its own list, plus the lists of models that set their own. A quote does not hold the slot. A buyer has at most 4 quotes waiting for escrow and 8 jobs in flight; past that it gets 429.</li>
+<li><strong>Escrow quote.</strong> For an app job the control plane answers with a quote instead of a ticket: <code>maxCost</code> (the credits to escrow, in base units: the most the job can cost, and never less than the no-show fee of <code>1000</code>, 0.001 credits), the credit <code>token</code>, the <code>settlement</code> account and <code>expiresAt</code>, 60 seconds out.</li>
+<li><strong>Escrow.</strong> The buyer sends <code>maxCost</code> of the credit token to the settlement account in one Keeta send whose external reference is the job id, and reports the block hash (<code>POST /v1/jobs/{jobId}/escrow</code>). The control plane reads the block from the ledger: it must be signed by the buyer and send at least <code>maxCost</code> of the credit token to the settlement account with this job's reference. Until the ledger shows the block the answer is <code>pending</code>; a block that does not escrow the job gets 402. A buyer escrows each job once, and reports the same block again on a retry. An escrow that arrives after the quote expired or was cancelled is refunded in full.</li>
+<li><strong>Ticket.</strong> Once the escrow is confirmed, the control plane signs a ticket for that one job and provider, valid for 60 seconds, and the ticket takes a slot on the provider. If the quoted provider filled up since the quote, the ticket goes to another that fits the same request and whose escrow is no larger; if none has a free slot, the escrow is refunded in full and the answer is 409 <code>no_provider</code>. Router jobs get their ticket in the quote and pay with x402 instead (<a href="/compute/router">router</a>).</li>
+<li><strong>Relay.</strong> The buyer sends the ticket, the request and its job authorization to the relay, which forwards them over the provider's open connection. If the provider is not connected, the relay answers 503 and records that for the job. A ticket that is already running gets 409 <code>ticket_used</code>.</li>
+<li><strong>Provider.</strong> The provider checks the ticket signature, its own key, the expiry and its allowlist, then runs the model and streams tokens back through the relay.</li>
+<li><strong>Signed receipt.</strong> The provider signs a receipt with the actual token counts and the amount. If the buyer hangs up, the provider bills the text it sent. A job runs for at most 10 minutes; then the provider stops the model and bills the text it sent, with finish reason <code>length</code>.</li>
+<li><strong>Delivery record.</strong> For app jobs the relay records a sha256 hash of the text it forwarded and the job's output limit, when the buyer brought the ticket, and when the buyer hung up if that was before any text. After a hang-up the relay tells the provider to stop, and the record also counts the text the provider sent before that reached it, for at most 5 seconds, so it covers what the receipt bills.</li>
+<li><p><strong>Settlement.</strong> The relay's record decides how the escrow is paid out, in one Keeta block from the settlement account whose sends reference the job:</p>
+<ul>
+<li>The receipt's <code>outputHash</code> matches the record and its output tokens fit in that text: <code>amount</code> less the network fee to <code>payTo</code>, the rest of the escrow back to the buyer. The fee stays in the settlement account.</li>
+<li>The receipt bills other text: the whole escrow back to the buyer, and the dispute counts against the provider.</li>
+<li>A receipt with no record yet waits up to a minute for one, then the whole escrow goes back to the buyer.</li>
+<li>The provider fails the job, or no receipt arrives within 15 minutes of a ticket the buyer brought to the relay: the whole escrow goes back to the buyer.</li>
+<li>A ticket holds a slot on its provider, so it must be brought to the relay within 10 seconds of being issued and not hung up on within 10 seconds of arriving before any text. A ticket the relay never saw, or hung up on that early, is a no-show: the provider gets the no-show fee, <code>1000</code> base units (0.001 credits), and the rest of the escrow goes back to the buyer. A ticket brought late that runs pays the fee on top of its <code>amount</code>. A buyer that waited longer than 10 seconds for text gets the whole escrow back.</li>
+</ul>
+<p>Before paying, the settlement account looks for a block of its own that references the job, so a job is never paid out twice.</p>
+<p>Router jobs settle from the x402 payment instead of an escrow. It goes to the settlement account with the job id as the send's external reference. Once the receipt bills the job, one block pays <code>payTo</code> the receipt's <code>amount</code> in the payment's stablecoin (never more than the prepayment) less the network fee, and sends the rest back to the payer. A job the provider fails, or one with no receipt within 15 minutes of its ticket, is refunded in full. The payment block is read from the ledger before anything is paid.</p></li>
+<li><strong>Reputation.</strong> Completed, failed and disputed jobs update the provider's record, which the scheduler reads. A router job counts as completed only once the router has reported its payment.</li>
+</ol>
+<p>Structured output is compiled before the first token, so requests are bounded: <code>response_format</code> JSON schemas (and tool parameters when a tool call is forced) must be at most 8 KB, nest at most 8 levels and avoid <code>anyOf</code>, <code>oneOf</code>, <code>allOf</code>, <code>not</code>, <code>$ref</code>, <code>pattern</code> and conditionals; <code>stop</code> takes at most 4 sequences of 256 bytes. Counting a prompt's tokens takes time in proportion to its size, so a provider refuses a request whose size bound (the one tickets use without a pinned tokenizer) is more than 16 times its ticket's input limit plus 65,536, before counting it.</p>
+<p>What providers report is bounded too, so every client can show it: an offer's <code>contextLength</code> is at most 16,777,216 tokens, and a machine's <code>memoryBytes</code> at most 1 PiB (2^50 bytes). Free disk above 1 PiB is recorded as 1 PiB.</p>
+<h2 id="tickets">Tickets</h2>
+<table>
+<thead><tr><th>Field</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>v</code></td><td class="wrap"><code>1</code></td></tr>
+<tr><td><code>jobId</code></td><td class="wrap">Job id</td></tr>
+<tr><td><code>network</code></td><td class="wrap"><code>test</code> or <code>main</code></td></tr>
+<tr><td><code>nodeKey</code></td><td class="wrap">The provider chosen</td></tr>
+<tr><td><code>modelId</code></td><td class="wrap">Model id</td></tr>
+<tr><td><code>buyer</code></td><td class="wrap">The paying key</td></tr>
+<tr><td><code>maxInputTokens</code>, <code>maxOutputTokens</code></td><td class="wrap">Token limits for the job. For a catalog model with a pinned tokenizer, the input limit is the prompt's exact token count plus 16 tokens and 1%; the provider recounts the prompt and refuses a ticket below its count. Otherwise it is a bound from the prompt's size.</td></tr>
+<tr><td><code>price</code></td><td class="wrap"><code>{inputPerMillion, outputPerMillion}</code>, credit base units</td></tr>
+<tr><td><code>asset</code></td><td class="wrap">The credit token (app jobs), or the stablecoin the router was paid in</td></tr>
+<tr><td><code>payTo</code></td><td class="wrap">Where payment goes</td></tr>
+<tr><td><code>paymentMode</code></td><td class="wrap"><code>escrow</code> (app) or <code>prepaid</code> (router)</td></tr>
+<tr><td><code>prepaidAmount</code></td><td class="wrap">Amount already paid, prepaid jobs only</td></tr>
+<tr><td><code>issuedAt</code>, <code>expiresAt</code></td><td class="wrap">Unix milliseconds</td></tr>
+</tbody>
+</table>
+<p>A signed ticket is <code>{ticket, coordinatorSig, relayMac}</code>: <code>coordinatorSig</code> is checked by the provider, <code>relayMac</code> by the relay.</p>
+<h2 id="receipts">Receipts</h2>
+<p>A signed receipt is <code>{receipt, signature}</code>, where <code>signature</code> is by <code>receipt.nodeKey</code> over the receipt message above. The control plane keeps only those two fields and refuses a signed receipt larger than 8 KB of JSON.</p>
+<table>
+<thead><tr><th>Field</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>v</code></td><td class="wrap"><code>1</code></td></tr>
+<tr><td><code>jobId</code></td><td class="wrap">Job id from the ticket</td></tr>
+<tr><td><code>network</code></td><td class="wrap"><code>test</code> or <code>main</code></td></tr>
+<tr><td><code>nodeKey</code></td><td class="wrap">The provider's node key, which signs the receipt</td></tr>
+<tr><td><code>payTo</code></td><td class="wrap">Where payment goes</td></tr>
+<tr><td><code>buyer</code></td><td class="wrap">The paying key</td></tr>
+<tr><td><code>modelId</code></td><td class="wrap">Model id</td></tr>
+<tr><td><code>weightsHash</code></td><td class="wrap">sha256 over the installed weight files</td></tr>
+<tr><td><code>runtime</code></td><td class="wrap"><code>{kind, build}</code>: <code>mlx</code> or <code>openai-compatible</code>, and the runtime name and version, such as <code>mlx-lm 0.26.0</code></td></tr>
+<tr><td><code>inputTokens</code>, <code>outputTokens</code></td><td class="wrap">Tokens actually processed and generated</td></tr>
+<tr><td><code>price</code></td><td class="wrap"><code>{inputPerMillion, outputPerMillion}</code>, credit base units</td></tr>
+<tr><td><code>amount</code></td><td class="wrap">Credit base units billed, paid from the escrow (app jobs), or consumed of the prepayment (router)</td></tr>
+<tr><td><code>asset</code></td><td class="wrap">The ticket's <code>asset</code></td></tr>
+<tr><td><code>startedAt</code>, <code>finishedAt</code></td><td class="wrap">Unix milliseconds</td></tr>
+<tr><td><code>outputHash</code></td><td class="wrap">sha256 of the generated text: each streamed chunk's answer, reasoning and refusal, then the name and arguments of each tool call in it, in stream order. The text itself is never stored.</td></tr>
+<tr><td><code>finishReason</code></td><td class="wrap">As in the OpenAI response, such as <code>stop</code> or <code>length</code></td></tr>
+</tbody>
+</table>
+<p>To check a receipt: verify the signature with the Keeta SDK against <code>nodeKey</code>, then compare <code>modelId</code>, <code>price</code>, <code>payTo</code> and the token limits with your ticket or 402 challenge, and <code>outputHash</code> with the sha256 of the text you received.</p>
+<h2 id="pricing-math">Pricing math</h2>
+<p>Prices are integer credit base units per million tokens. Credits have 6 decimals, so 1 credit (one US dollar) is <code>1000000</code> base units and 0.05 credits per million tokens is <code>50000</code>. All arithmetic is integer.</p>
+<pre><code class="language-text">raw    = inputTokens × inputPerMillion + outputTokens × outputPerMillion
+amount = ceil(raw / 1000000)</code></pre>
+<p>Any job that processed at least one token costs at least 1 base unit. An escrow quote (<code>maxCost</code>) or x402 challenge uses the same formula with <code>maxInputTokens</code> and <code>maxOutputTokens</code>. The router converts the result to its stablecoin's decimals, one US dollar per credit, rounding up.</p>
+<p>The buyer pays <code>amount</code>. The network keeps a 0.25% fee from it, and the provider receives the rest:</p>
+<pre><code class="language-text">fee      = ceil(amount × 25 / 10000)
+provider = amount − fee</code></pre>
+<p>The fee applies to app and router jobs alike, and not to the no-show fee. For a router job it is computed on <code>amount</code> after conversion to the stablecoin.</p>
+<p>Example: 1200 input and 300 output tokens at <code>50000</code> / <code>100000</code> gives raw = 60000000 + 30000000 = 90000000, so amount = 90 base units (0.00009 credits, or $0.00009).</p>
+<h2 id="on-chain-and-off-chain">On-chain and off-chain</h2>
+<ul>
+<li><strong>On-chain (Keeta Network):</strong> all money and every balance. The credit token, swaps between credits and stablecoins, each app job's escrow to the settlement account and its payout block, and each router payment to the settlement account and its payout block.</li>
+<li><strong>Off-chain (app backend):</strong> the provider registry (node keys, hardware, offers, prices, access lists, heartbeats), job records (routing state, the receipt, the relay's delivery record, and the hashes of the escrow and payout blocks), pairing records for Linux helpers, and reputation counters. No balances, amounts owed or earnings.</li>
+<li><strong>Never stored:</strong> prompts and outputs. They pass through the relay to the provider and back. Job records hold the receipt, which holds only the output's hash.</li>
+</ul>
+        <p class="docs-source">This page as Markdown: <a href="/compute/protocol.md">protocol.md</a>. Every Compute page for agents: <a href="/llms.txt">llms.txt</a>.</p>
+      </article>
+    </main>
+
+    <footer class="site-footer">
+      <div class="footer-top">
+        <div class="footer-intro">
+          <a class="brand footer-brand" href="/" aria-label="Keeta AI home">
+            <img class="wordmark" src="/assets/keeta-wordmark.svg" alt="Keeta" width="84" height="20" />
+            <span class="brand-divider" aria-hidden="true"></span>
+            <span class="brand-product">Compute</span>
+          </a>
+          <p>AI inference paid per request on Keeta Network. Agent skills for moving money live at keeta.md.</p>
+        </div>
+        <nav class="footer-links" aria-label="Footer">
+          <div>
+            <h2>Keeta</h2>
+            <a href="https://keeta.com/">keeta.com</a>
+            <a href="https://docs.keeta.com/">Docs</a>
+            <a href="https://explorer.keeta.com/">Explorer</a>
+          </div>
+          <div>
+            <h2>Compute</h2>
+            <a href="/compute/">Docs</a>
+            <a href="/compute/app">macOS app</a>
+            <a href="/compute/router">API router</a>
+            <a href="/compute/models">Models</a>
+          </div>
+          <div>
+            <h2>For agents</h2>
+            <a href="/llms.txt">llms.txt</a>
+            <a href="/compute/index.md">Compute as Markdown</a>
+            <a href="https://keeta.md/">Keeta skills (keeta.md)</a>
+            <a href="https://keeta.md/SKILL.md">SKILL.md</a>
+          </div>
+          <div>
+            <h2>Open source</h2>
+            <a href="https://github.com/KeetaNetwork/agent-skills">GitHub</a>
+            <a href="https://github.com/KeetaNetwork/keeta.md">Skills on GitHub</a>
+            <a href="https://agentskills.io/">Agent Skills spec</a>
+            <a href="https://github.com/KeetaNetwork/agent-skills/blob/main/LICENSE">Apache-2.0 license</a>
+          </div>
+        </nav>
+      </div>
+      <p class="footer-bottom">Open source under Apache-2.0.</p>
+    </footer>
+  </body>
+</html>

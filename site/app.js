@@ -41,22 +41,6 @@ for (const button of document.querySelectorAll("[data-copy]")) {
   });
 }
 
-const filters = document.querySelectorAll("[data-filter]");
-const cards = document.querySelectorAll("[data-category]");
-
-for (const filter of filters) {
-  filter.addEventListener("click", () => {
-    for (const candidate of filters) {
-      candidate.setAttribute("aria-pressed", String(candidate === filter));
-    }
-
-    const selected = filter.dataset.filter;
-    for (const card of cards) {
-      card.classList.toggle("hidden", selected !== "all" && card.dataset.category !== selected);
-    }
-  });
-}
-
 const header = document.querySelector(".nav");
 const menuToggle = document.querySelector(".menu-toggle");
 

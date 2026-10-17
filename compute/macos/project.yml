@@ -1,0 +1,118 @@
+# XcodeGen spec for the Keeta Compute macOS app.
+# Generate the project with `make project` (runs `xcodegen generate`).
+
+name: KeetaCompute
+
+options:
+  bundleIdPrefix: ai.keeta
+  deploymentTarget:
+    macOS: "15.0"
+  createIntermediateGroups: true
+  developmentLanguage: en
+  xcodeVersion: "16.0"
+
+settings:
+  base:
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    MACOSX_DEPLOYMENT_TARGET: "15.0"
+    # Swift 6 compiler, Swift 5 language mode.
+    SWIFT_VERSION: "5.0"
+    SWIFT_STRICT_CONCURRENCY: minimal
+    # Apple Silicon only.
+    ARCHS: arm64
+    EXCLUDED_ARCHS: x86_64
+    # The bundle-agent run script reads ../packages/cli, outside the project folder.
+    ENABLE_USER_SCRIPT_SANDBOXING: NO
+    DEAD_CODE_STRIPPING: YES
+    CODE_SIGN_STYLE: Automatic
+    # Set your team here, or pass DEVELOPMENT_TEAM=XXXXXXXXXX to xcodebuild / make.
+    DEVELOPMENT_TEAM: ""
+  configs:
+    Debug:
+      ONLY_ACTIVE_ARCH: YES
+    Release:
+      ONLY_ACTIVE_ARCH: NO
+
+targets:
+  KeetaComputeKit:
+    type: framework
+    platform: macOS
+    sources:
+      - path: Sources/KeetaComputeKit
+    settings:
+      base:
+        PRODUCT_NAME: KeetaComputeKit
+        PRODUCT_BUNDLE_IDENTIFIER: ai.keeta.compute.kit
+        GENERATE_INFOPLIST_FILE: YES
+        DEFINES_MODULE: YES
+        SKIP_INSTALL: YES
+        ENABLE_HARDENED_RUNTIME: YES
+        LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks @loader_path/Frameworks"
+
+  KeetaCompute:
+    type: application
+    platform: macOS
+    sources:
+      - path: KeetaCompute
+    dependencies:
+      - target: KeetaComputeKit
+        embed: true
+        codeSign: true
+    settings:
+      base:
+        PRODUCT_NAME: "Keeta Compute"
+        PRODUCT_MODULE_NAME: KeetaCompute
+        PRODUCT_BUNDLE_IDENTIFIER: ai.keeta.compute
+        INFOPLIST_FILE: Config/Info.plist
+        CODE_SIGN_ENTITLEMENTS: Config/KeetaCompute.entitlements
+        # Not sandboxed (the agent downloads models and runs a Python MLX runtime); hardened runtime on.
+        ENABLE_APP_SANDBOX: NO
+        ENABLE_HARDENED_RUNTIME: YES
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        COMBINE_HIDPI_IMAGES: YES
+        LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks"
+        ENABLE_PREVIEWS: YES
+    postBuildScripts:
+      # Places the TypeScript agent, compiled with bun, at
+      # Contents/Resources/keeta-compute-agent (and signs it). The script lives in
+      # scripts/bundle-agent.sh; Debug builds tolerate its absence so the UI can be
+      # worked on without the agent (set KEETA_COMPUTE_AGENT_PATH to a local build).
+      - name: Bundle keeta-compute-agent
+        shell: /bin/bash
+        basedOnDependencyAnalysis: false
+        script: |
+          set -euo pipefail
+          BUNDLE_SCRIPT="${SRCROOT}/scripts/bundle-agent.sh"
+          if [ -f "${BUNDLE_SCRIPT}" ]; then
+            if [ -x "${BUNDLE_SCRIPT}" ]; then
+              "${SRCROOT}/scripts/bundle-agent.sh"
+            else
+              /bin/bash "${SRCROOT}/scripts/bundle-agent.sh"
+            fi
+          elif [ "${CONFIGURATION}" = "Debug" ]; then
+            echo "warning: scripts/bundle-agent.sh not found; this Debug build has no bundled keeta-compute-agent. Set KEETA_COMPUTE_AGENT_PATH in the scheme to run a local agent."
+          else
+            echo "error: scripts/bundle-agent.sh not found; ${CONFIGURATION} builds must bundle keeta-compute-agent."
+            exit 1
+          fi
+    scheme:
+      testTargets:
+        - KeetaComputeKitTests
+      gatherCoverageData: true
+
+  KeetaComputeKitTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: Tests/KeetaComputeKitTests
+    dependencies:
+      - target: KeetaComputeKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: ai.keeta.compute.kit-tests
+        GENERATE_INFOPLIST_FILE: YES
+    scheme:
+      testTargets:
+        - KeetaComputeKitTests

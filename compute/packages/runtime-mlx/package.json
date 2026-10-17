@@ -1,0 +1,18 @@
+{
+  "name": "@keeta-compute/runtime-mlx",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "The MLX runtime for Apple Silicon Macs: a pinned Python environment with mlx-lm, and one mlx_lm.server per offered model on 127.0.0.1.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "node --import tsx --test test/*.test.ts"
+  },
+  "dependencies": {
+    "@keeta-compute/protocol": "0.1.0",
+    "@keeta-compute/runtime-openai": "0.1.0"
+  }
+}

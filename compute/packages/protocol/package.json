@@ -1,0 +1,25 @@
+{
+  "name": "@keeta-compute/protocol",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Shared contracts for Keeta Compute: types, model catalog, pricing, signed envelopes, tickets and receipts, credits and stablecoin pins, the control-plane client and the app-to-agent RPC contract.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./keeta": "./src/keeta.ts",
+    "./client": "./src/control-client.ts",
+    "./rpc": "./src/app-rpc.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "node --import tsx --test test/*.test.ts",
+    "catalog:export": "node --import tsx scripts/export-catalog.ts"
+  },
+  "dependencies": {
+    "@keetanetwork/keetanet-client": "0.18.7"
+  },
+  "devDependencies": {
+    "@noble/curves": "^1.9.7",
+    "@scure/bip39": "^1.6.0"
+  }
+}

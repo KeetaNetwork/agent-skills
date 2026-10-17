@@ -1,0 +1,21 @@
+{
+  "name": "@keeta-compute/provider",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "The provider side of a Keeta Compute node: registers with the control plane, keeps a relay connection, checks tickets, runs jobs on a local model server and signs receipts. Also installs and hash-verifies catalog models.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "node --import tsx --test test/*.test.ts",
+    "catalog:pin": "node --import tsx scripts/pin-catalog.ts"
+  },
+  "dependencies": {
+    "@keeta-compute/protocol": "0.1.0",
+    "@keeta-compute/runtime-mlx": "0.1.0",
+    "@keeta-compute/runtime-openai": "0.1.0",
+    "@keeta-compute/tokens": "0.1.0"
+  }
+}
