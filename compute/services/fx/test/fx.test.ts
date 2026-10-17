@@ -120,6 +120,19 @@ test('live rates: a feed tick outside its range or far from the last rate is nev
 		clock += 5 * 60_000 + 1;
 		assert.equal(quotes(rates, 'EUR'), null);
 		rates.stop();
+
+		/* One answer is one read, however it spells a currency: case variants neither confirm a first rate nor step the rate more than once. */
+		const fresh = open({ EUR: '1.08', eur: '1.08', JPY: '0.0067' });
+		await settle();
+		await fresh.read({ EUR: '1.08', eur: '1.08', JPY: '0.0067' });
+		assert.equal(quotes(fresh.rates, 'JPY'), 0.0067);
+		assert.equal(quotes(fresh.rates, 'EUR'), null, 'a currency given twice in one answer is not read');
+		await fresh.read({ EUR: '1.08' });
+		await fresh.read({ EUR: '1.08' });
+		assert.equal(quotes(fresh.rates, 'EUR'), 1.08);
+		await fresh.read({ EUR: '1.1', eur: '1.12', Eur: '1.14', eUr: '1.16' });
+		assert.equal(quotes(fresh.rates, 'EUR'), 1.08, 'case variants do not walk the rate in one answer');
+		fresh.rates.stop();
 	} finally {
 		console.warn = warn;
 	}

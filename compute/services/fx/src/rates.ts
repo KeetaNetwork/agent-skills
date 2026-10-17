@@ -159,9 +159,19 @@ export function httpRates(
 			throw new Error(`the rate source answered ${response.status}`);
 		}
 		const body = (await response.json()) as Record<string, unknown>;
-		for (const [currency, value] of Object.entries(body)) {
+		/* One read per currency per answer: "EUR" and "eur" are different JSON keys, and reading both would step the rate twice, or confirm a first rate, from one answer. */
+		const reads = new Map<string, string | null>();
+		for (const [key, value] of Object.entries(body)) {
 			if (typeof value === 'string') {
-				accept(currency.toUpperCase(), value);
+				const currency = key.toUpperCase();
+				reads.set(currency, reads.has(currency) ? null : value);
+			}
+		}
+		for (const [currency, value] of reads) {
+			if (value === null) {
+				console.warn(`rate for ${currency} ignored: the source gave it more than once`);
+			} else {
+				accept(currency, value);
 			}
 		}
 	};
