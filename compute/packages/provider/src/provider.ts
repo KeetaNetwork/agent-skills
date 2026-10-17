@@ -559,7 +559,7 @@ export class Provider {
 					this.send({ type: 'chunk', id, data });
 				}
 			});
-			/* A server that reports no usage leaves the prompt to an estimate; the exact count replaces it when there is one. */
+			/* A server that reports no usage leaves the prompt to its size bound; the exact count replaces it when there is one. */
 			const inputTokens = result.exactUsage || promptTokens === null ? result.inputTokens : promptTokens;
 			await bill({ ...result, inputTokens, finishReason: controller.signal.aborted ? 'cancelled' : result.finishReason });
 		} catch (error) {

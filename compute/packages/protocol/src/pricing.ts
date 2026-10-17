@@ -74,8 +74,3 @@ export function parseAmount(text: string, decimals: number): bigint {
 	}
 	return BigInt(match[1] ?? '0') * 10n ** BigInt(decimals) + BigInt(fraction.padEnd(decimals, '0') || '0');
 }
-
-/** Rough token estimate for quoting before the provider tokenizes (4 chars ≈ 1 token, rounded up generously). */
-export function estimateTokens(text: string): number {
-	return Math.ceil(text.length / 3) + 8;
-}

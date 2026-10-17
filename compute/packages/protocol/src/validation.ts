@@ -200,18 +200,3 @@ export function promptTokenBound(request: ChatCompletionRequest): number {
 	const schema = request.response_format ? bytes(request.response_format) : 0;
 	return bytes(request.messages) + (tools ? 2 * bytes(request.tools) + bytes(request.tool_choice) + 512 : 0) + schema + 16 * request.messages.length + 128;
 }
-
-/** Text the model will read, for token estimates. */
-export function promptText(request: ChatCompletionRequest): string {
-	return request.messages
-		.map((message) => {
-			if (typeof message.content === 'string') {
-				return message.content;
-			}
-			if (Array.isArray(message.content)) {
-				return message.content.map((part) => (typeof part.text === 'string' ? part.text : '')).join('\n');
-			}
-			return '';
-		})
-		.join('\n');
-}

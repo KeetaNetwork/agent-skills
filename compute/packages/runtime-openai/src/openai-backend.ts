@@ -4,7 +4,7 @@
  * returns what a receipt needs: usage, output text, finish reason.
  */
 
-import { MODEL_REQUEST_FIELDS, chunkText, estimateTokens, promptText, type ChatCompletionRequest } from '@keeta-compute/protocol';
+import { MODEL_REQUEST_FIELDS, chunkText, promptTokenBound, type ChatCompletionRequest } from '@keeta-compute/protocol';
 
 export interface Backend {
 	/** e.g. http://127.0.0.1:8081/v1 */
@@ -18,7 +18,7 @@ export interface StreamResult {
 	inputTokens: number;
 	outputTokens: number;
 	finishReason: string;
-	/** True when the server reported usage; false when it was estimated. */
+	/** True when the server reported usage; false when output was counted by chunks and input is the prompt's size bound. */
 	exactUsage: boolean;
 }
 
@@ -99,7 +99,8 @@ export async function streamChat(
 	const exactUsage = typeof usage?.prompt_tokens === 'number' && typeof usage?.completion_tokens === 'number';
 	return {
 		text,
-		inputTokens: exactUsage ? usage!.prompt_tokens! : estimateTokens(promptText(request)),
+		/* Without the server's count, input is the prompt's size bound, as a ticket prices it without a pinned tokenizer: an estimate from the messages' text would leave out the tools and response format the server prefilled too. */
+		inputTokens: exactUsage ? usage!.prompt_tokens! : promptTokenBound(request),
 		/* Streaming servers emit one chunk per generated token when usage is missing. */
 		outputTokens: exactUsage ? usage!.completion_tokens! : contentChunks,
 		finishReason,

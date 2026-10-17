@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, type IncomingMessage, type Server } from 'node:http';
-import type { ChatCompletionRequest } from '@keeta-compute/protocol';
+import { promptTokenBound, type ChatCompletionRequest } from '@keeta-compute/protocol';
 import { streamChat, waitForServer } from '../src/index.ts';
 
 /** A model server that streams `chunks` as server-sent events and records each request body. */
@@ -47,13 +47,17 @@ test('a stream is forwarded under the network model id, with only known request 
 	assert.ok(forwarded.every((chunk) => chunk.model === 'qwen3-8b'));
 });
 
-test('without server usage, output is counted by chunks and input is estimated', async (t) => {
+test('without server usage, output is counted by chunks and input is the prompt\'s size bound, tools included', async (t) => {
 	const server = await modelServer(t, [delta('a'), delta('b'), delta('c', 'length')]);
-	const result = await streamChat({ baseUrl: server.baseUrl, servedName: 'm' }, request, { networkModelId: 'm', maxOutputTokens: 3, signal: new AbortController().signal, onChunk: () => undefined });
+	/* One word of message and 50 KB of tools, which the server prefills too. */
+	const tools = [{ type: 'function', function: { name: 'lookup', description: 'x'.repeat(50_000), parameters: { type: 'object' } } }];
+	const withTools = { ...request, messages: [{ role: 'user', content: 'hi' }], tools } as ChatCompletionRequest;
+	const result = await streamChat({ baseUrl: server.baseUrl, servedName: 'm' }, withTools, { networkModelId: 'm', maxOutputTokens: 3, signal: new AbortController().signal, onChunk: () => undefined });
 	assert.equal(result.exactUsage, false);
 	assert.equal(result.outputTokens, 3);
 	assert.equal(result.finishReason, 'length');
-	assert.ok(result.inputTokens > 0);
+	assert.equal(result.inputTokens, promptTokenBound(withTools), 'the bound a ticket prices without a pinned tokenizer, not an estimate from the message text');
+	assert.ok(result.inputTokens > 50_000);
 });
 
 test('waitForServer gives up when nothing answers, and stops when cancelled', async () => {
