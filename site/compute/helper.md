@@ -126,4 +126,5 @@ For a helper, use `helper run` in `ExecStart`. Adjust `User` and the `ExecStart`
 - Each machine has its own node key in a `0600` keyfile. It signs receipts and requests; it cannot move funds.
 - On a full node, the operator wallet is encrypted at rest and decrypted only for a send or a link, then wiped from memory. The agent budget key is a `0600` keyfile holding only what you moved into it.
 - Revoking a helper on its master (Fleet, or `fleet revoke`) cuts it off: its credentials stop working and it gets no more jobs.
+- A helper stays in its master's fleet until that master revokes it. To move it to another master, revoke it there first, then pair it again.
 - If a machine is lost or compromised, revoke it from its master (for a helper), move funds out with the recovery phrase on another machine (for a full node), then delete the keyfiles.

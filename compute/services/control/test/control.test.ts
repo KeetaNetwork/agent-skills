@@ -1023,3 +1023,45 @@ test('Linux nodes with their own wallet register with a link proof and can pair 
 	assert.equal(stillHelper.masterNodeKey, node.publicKey);
 	assert.equal(stillHelper.payTo, operator.publicKey);
 });
+
+test('a paired helper cannot pair with another master until its master revokes it', async () => {
+	const h = harness();
+	const a = await registerMac(h);
+	const b = await registerMac(h);
+	const helper = newSigner();
+	const descriptor = { ...hardware(128, 'linux'), name: 'gpu-box' };
+	const create = async (master: Signer) => {
+		const code = generatePairingCode();
+		const created = await h.call(master, 'POST', '/v1/pairing', { codeHash: await pairingCodeHash(code) });
+		assert.equal(created.status, 200, JSON.stringify(created.body));
+		return { code, pairingId: (created.body as { pairingId: string }).pairingId };
+	};
+	const claim = async (code: string) => h.call(helper, 'POST', '/v1/pairing/claim', { codeHash: await pairingCodeHash(code), descriptor });
+	const approve = async (master: { node: Signer; operator: Signer }, pairingId: string) => {
+		const approvalSig = await master.node.sign(pairingApprovalMessage({ pairingId, helperNodeKey: helper.publicKey, masterNodeKey: master.node.publicKey, payTo: master.operator.publicKey }));
+		return h.call(master.node, 'POST', `/v1/pairing/${pairingId}/approve`, { approvalSig });
+	};
+
+	/* The helper claims both codes while unpaired; A approves first, so B's approval must not re-home it. */
+	const fromA = await create(a.node);
+	const fromB = await create(b.node);
+	assert.equal((await claim(fromA.code)).status, 200);
+	assert.equal((await claim(fromB.code)).status, 200);
+	assert.equal((await approve(a, fromA.pairingId)).status, 200);
+	assert.equal((await approve(b, fromB.pairingId)).status, 403, 'another master cannot approve a bound helper');
+	assert.equal((await claim((await create(b.node)).code)).status, 403, 'nor can a bound helper claim its code');
+	const bound = (await h.store.getProvider(helper.publicKey))!;
+	assert.equal(bound.masterNodeKey, a.node.publicKey);
+	assert.equal(bound.payTo, a.operator.publicKey);
+	assert.equal(((await h.call(a.node, 'GET', '/v1/fleet')).body as { helpers: unknown[] }).helpers.length, 1);
+
+	/* Its own master can pair it again, and once it revokes the helper, another master can. */
+	const again = await create(a.node);
+	assert.equal((await claim(again.code)).status, 200);
+	assert.equal((await approve(a, again.pairingId)).status, 200);
+	assert.equal((await h.call(a.node, 'DELETE', `/v1/fleet/${helper.publicKey}`)).status, 200);
+	const moved = await create(b.node);
+	assert.equal((await claim(moved.code)).status, 200);
+	assert.equal((await approve(b, moved.pairingId)).status, 200);
+	assert.equal((await h.store.getProvider(helper.publicKey))!.payTo, b.operator.publicKey);
+});

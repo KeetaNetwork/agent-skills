@@ -149,6 +149,7 @@ WantedBy=multi-user.target</code></pre>
 <li>Each machine has its own node key in a <code>0600</code> keyfile. It signs receipts and requests; it cannot move funds.</li>
 <li>On a full node, the operator wallet is encrypted at rest and decrypted only for a send or a link, then wiped from memory. The agent budget key is a <code>0600</code> keyfile holding only what you moved into it.</li>
 <li>Revoking a helper on its master (Fleet, or <code>fleet revoke</code>) cuts it off: its credentials stop working and it gets no more jobs.</li>
+<li>A helper stays in its master's fleet until that master revokes it. To move it to another master, revoke it there first, then pair it again.</li>
 <li>If a machine is lost or compromised, revoke it from its master (for a helper), move funds out with the recovery phrase on another machine (for a full node), then delete the keyfiles.</li>
 </ul>
         <p class="docs-source">This page as Markdown: <a href="/compute/helper.md">helper.md</a>. Every Compute page for agents: <a href="/llms.txt">llms.txt</a>.</p>

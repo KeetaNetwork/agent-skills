@@ -1210,6 +1210,7 @@ export class ControlService {
 		if (!pairing || pairing.status !== 'waiting' || pairing.expiresAt < this.now()) {
 			throw new NotFoundError('pairing code is invalid, used, or expired');
 		}
+		await this.assertNotHelperOfAnother(helperNodeKey, pairing.masterNodeKey);
 		const checkString = await pairingCheckString(helperNodeKey);
 		const updated = await this.store.updatePairing(pairing.pairingId, (current) => {
 			if (current.status !== 'waiting') {
@@ -1245,6 +1246,8 @@ export class ControlService {
 		if (!this.config.verify(masterNodeKey, message, approval)) {
 			throw new AuthError('approval signature does not verify');
 		}
+		/* Again here: another master may have approved this node since it claimed the code. */
+		await this.assertNotHelperOfAnother(claim.nodeKey, masterNodeKey);
 		await this.store.updatePairing(pairingId, (current) => ({ ...current, status: 'approved' }));
 		const master = await this.store.getProvider(masterNodeKey);
 		const { name, ...hardware } = claim.descriptor;
@@ -1289,6 +1292,14 @@ export class ControlService {
 				status: helper.lastHeartbeat >= now - PROVIDER_STALE_MS ? helper.status : 'offline'
 			}))
 		};
+	}
+
+	/** A paired helper stays bound to its master (its wallet and allowlist) until the master revokes it, so it cannot pair with another. */
+	private async assertNotHelperOfAnother(nodeKey: string, masterNodeKey: string): Promise<void> {
+		const existing = await this.store.getProvider(nodeKey);
+		if (existing?.kind === 'linux-helper' && existing.masterNodeKey !== masterNodeKey) {
+			throw new ForbiddenError('this node is paired as a helper of another node; its master must revoke it before it can pair again');
+		}
 	}
 
 	async revokeHelper(masterNodeKey: string, helperNodeKey: string) {
