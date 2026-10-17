@@ -50,7 +50,7 @@ keeta-compute-agent run
 - `--weights` is hashed, and the hash appears on every receipt the node signs.
 - Keep the server bound to `127.0.0.1`. The agent refuses servers on other hosts.
 - `models offer ID --price-in 0.10 --price-out 0.40` sets prices in credits (one credit is one US dollar) per million tokens; `--off` stops offering a model; `--access allowlist --allow KEY,...` limits it to listed buyers.
-- `provide --access allowlist --allow KEY,...` sets the default for every model; `--max-jobs N` sets concurrency.
+- `provide --access allowlist --allow KEY,...` sets the default for every model (a node's lists hold up to 1000 addresses in total, counting this one and the models' own); `--max-jobs N` sets concurrency.
 
 ### Buy inference
 

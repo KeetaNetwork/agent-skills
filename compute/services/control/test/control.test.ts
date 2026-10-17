@@ -24,6 +24,7 @@ import {
 	signRequest,
 	ticketMac,
 	ticketMessage,
+	type AccessPolicy,
 	type EscrowQuote,
 	type HardwareProfile,
 	type JobRecord,
@@ -849,6 +850,36 @@ test('allowlisted offers only serve listed buyers and never router traffic', asy
 	assert.equal((await h.call(friend, 'POST', '/v1/jobs', { network: 'test', model: 'qwen3-14b', maxInputTokens: 10, maxOutputTokens: 10 })).status, 200);
 	const routerQuote = await h.call(null, 'POST', '/v1/router/quote', { network: 'test', model: 'qwen3-14b', maxInputTokens: 10, maxOutputTokens: 10 }, ROUTER);
 	assert.equal(routerQuote.status, 503);
+});
+
+test('a node\'s allowlists hold at most 1000 addresses in total, and a list its offers repeat is stored once', async () => {
+	const h = harness();
+	const { node } = await registerMac(h);
+	const friend = newSigner();
+	/* An address only needs the right shape to be listed. */
+	const filler = (count: number, salt: string) => Array.from({ length: count }, (_, i) => `keeta_${salt}${i.toString(2).padStart(52, '0').replaceAll('0', 'a').replaceAll('1', 'b')}`);
+	const beat = (offers: Offer[], access: AccessPolicy) => h.call(node, 'POST', '/v1/providers/heartbeat', { status: 'online', offers, access, load: { active: 0, capacity: 4 } });
+	const listed = (record: { access: AccessPolicy; offers: Offer[] }) => record.access.allow.length + record.offers.reduce((sum, o) => sum + o.access.allow.length, 0);
+
+	/* A node sends its own list with every offer that sets none: three models under a 900-address list. */
+	const own: AccessPolicy = { mode: 'allowlist', allow: [friend.publicKey, ...filler(899, 'c')] };
+	const honest = await beat([offer('qwen3-8b', { access: own }), offer('qwen3-14b', { access: own }), offer('house-model', { access: own })], own);
+	assert.equal(honest.status, 200, JSON.stringify(honest.body));
+	const stored = (await h.store.getProvider(node.publicKey))!;
+	assert.equal(listed(stored), 900, 'the list is stored once');
+	assert.equal((await h.call(friend, 'POST', '/v1/jobs', { network: 'test', model: 'qwen3-14b', ...LIMITS })).status, 200, 'and still admits the listed buyer');
+	assert.equal((await h.call(newSigner(), 'POST', '/v1/jobs', { network: 'test', model: 'qwen3-14b', ...LIMITS })).status, 503, 'and only listed buyers');
+
+	/* Lists of the models' own add up, so a node cannot make its record large with many different lists. A list kept with a public policy admits no one and is not stored. */
+	const padded = await beat(
+		[offer('qwen3-8b', { access: { mode: 'allowlist', allow: filler(600, 'd') } }), offer('qwen3-14b', { access: { mode: 'allowlist', allow: filler(600, 'e') } })],
+		{ mode: 'public', allow: filler(1000, 'f') }
+	);
+	assert.equal(padded.status, 400, JSON.stringify(padded.body));
+	assert.match(JSON.stringify(padded.body), /at most 1000 addresses/);
+	assert.deepEqual(await h.store.getProvider(node.publicKey), stored, 'the refused heartbeat changed nothing');
+	assert.equal((await beat([offer('qwen3-8b', { access: { mode: 'allowlist', allow: filler(1000, 'd') } })], { mode: 'public', allow: filler(1000, 'f') })).status, 200);
+	assert.equal(listed((await h.store.getProvider(node.publicKey))!), 1000);
 });
 
 test('scheduler respects max price, context length, capacity and staleness', async () => {

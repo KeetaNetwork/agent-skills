@@ -92,7 +92,7 @@ keeta-compute-agent run</code></pre>
 <li><code>--weights</code> is hashed, and the hash appears on every receipt the node signs.</li>
 <li>Keep the server bound to <code>127.0.0.1</code>. The agent refuses servers on other hosts.</li>
 <li><code>models offer ID --price-in 0.10 --price-out 0.40</code> sets prices in credits (one credit is one US dollar) per million tokens; <code>--off</code> stops offering a model; <code>--access allowlist --allow KEY,...</code> limits it to listed buyers.</li>
-<li><code>provide --access allowlist --allow KEY,...</code> sets the default for every model; <code>--max-jobs N</code> sets concurrency.</li>
+<li><code>provide --access allowlist --allow KEY,...</code> sets the default for every model (a node's lists hold up to 1000 addresses in total, counting this one and the models' own); <code>--max-jobs N</code> sets concurrency.</li>
 </ul>
 <h3 id="buy-inference">Buy inference</h3>
 <p>While <code>run</code> is running, agents on the machine can call <code>http://127.0.0.1:11435/v1</code> with the token from <code>keeta-compute-agent token</code>. Requests are paid in Keeta Compute Credits from the agent budget, a separate local key: each request escrows its most possible cost on the Keeta ledger, and what the provider does not bill comes back.</p>

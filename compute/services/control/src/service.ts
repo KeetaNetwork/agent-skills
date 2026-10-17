@@ -199,6 +199,9 @@ const MAX_IN_FLIGHT = 8;
 const MAX_PROVIDER_LIST = 100;
 /** A signed receipt as the job record keeps it, in bytes of JSON; a real one is under 2 KB. */
 const MAX_RECEIPT_BYTES = 8_192;
+/** Addresses a node's stored allowlists may hold, its own and its offers' together: as many as one list may. */
+const MAX_ALLOWLISTED = 1000;
+const PUBLIC_ACCESS: AccessPolicy = { mode: 'public', allow: [] };
 /** A payout attempt that has not recorded its block this long after it started may be retried (after checking the ledger). */
 const PAYOUT_RETRY_MS = 5 * 60_000;
 
@@ -330,11 +333,13 @@ export class ControlService {
 
 	async heartbeat(nodeKey: string, body: Record<string, unknown>) {
 		const status = body.status === 'online' ? 'online' : 'paused';
-		const offers = Array.isArray(body.offers) ? body.offers.map((offer, i) => assertOffer(offer, i)) : [];
-		if (offers.length > 64) {
+		if (Array.isArray(body.offers) && body.offers.length > 64) {
 			throw new ValidationError('too many offers');
 		}
-		const access = body.access ? assertAccess(body.access) : undefined;
+		const offers = Array.isArray(body.offers) ? body.offers.map((offer, i) => assertOffer(offer, i)) : [];
+		const sent = body.access ? assertAccess(body.access) : undefined;
+		/* A public policy admits anyone, so a list kept with it (the app keeps it for later) is not stored. */
+		const access = sent?.mode === 'public' ? PUBLIC_ACCESS : sent;
 		const load = body.load as { active?: unknown; capacity?: unknown } | undefined;
 		const reported = Number.isInteger(load?.active) ? Math.max(0, Number(load?.active)) : 0;
 		const capacity = Number.isInteger(load?.capacity) ? Math.min(64, Math.max(1, Number(load?.capacity))) : 1;
@@ -345,14 +350,27 @@ export class ControlService {
 
 		const record = await this.store.updateProvider(nodeKey, (current) => {
 			const eligible = this.isEligible(current);
-			const pinned = offers.filter((offer) => pinnedOfferOk(offer, current.network));
+			/* A helper's access is its master's; the scheduler reads it from there. */
+			const own = current.kind !== 'linux-helper';
+			const policy = access && own ? access : current.access;
+			/*
+			 * The scheduler reads a public offer as the node's policy, so an offer
+			 * repeating that policy (a node sends it with every offer that sets no
+			 * list of its own) is stored as public, and each list is stored once.
+			 */
+			const pinned = offers
+				.filter((offer) => pinnedOfferOk(offer, current.network))
+				.map((offer) => (offer.access.mode === 'public' || samePolicy(offer.access, policy) ? { ...offer, access: PUBLIC_ACCESS } : offer));
+			const listed = pinned.reduce((sum, offer) => sum + offer.access.allow.length, own && policy.mode === 'allowlist' ? policy.allow.length : 0);
+			if (listed > MAX_ALLOWLISTED) {
+				throw new ValidationError(`a node's allowlists may hold at most ${MAX_ALLOWLISTED} addresses in total: its own list and the lists its models set for themselves`);
+			}
 			return {
 				...current,
 				status: eligible ? status : 'paused',
 				offers: pinned,
 				offeredModels: [...new Set(pinned.map((o) => o.modelId))],
-				/* A helper's access is its master's; the scheduler reads it from there. */
-				...(access && current.kind !== 'linux-helper' ? { access } : {}),
+				...(access && own ? { access } : {}),
 				load: { active, capacity },
 				lastHeartbeat: now
 			};
@@ -1468,6 +1486,10 @@ function validateReceipt(job: JobRecord, receipt: SignedReceipt['receipt']): str
 		return 'receipt exceeds the job\'s maximum cost';
 	}
 	return null;
+}
+
+function samePolicy(a: AccessPolicy, b: AccessPolicy): boolean {
+	return a.mode === b.mode && a.allow.length === b.allow.length && a.allow.every((key, i) => key === b.allow[i]);
 }
 
 /** The scheduler's counters, dropping anything else an older record carried (such as a stored earnings total). */
