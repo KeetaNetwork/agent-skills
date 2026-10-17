@@ -25,8 +25,12 @@ import {
 	assertChatRequest,
 	promptTokenBound,
 	assertOffer,
+	aggregateCompletion,
+	chunkText,
+	maxOutputTokensFor,
 	type HardwareProfile,
-	type Receipt
+	type Receipt,
+	type RelayEvent
 } from '../src/index.ts';
 import { Account, accountFromPasskeyEntropy, accountSigner, externalP256Account, verifyKeetaSignature } from '../src/keeta.ts';
 
@@ -184,6 +188,34 @@ test('the prompt bound covers dense scripts and tool definitions', () => {
 	assert.ok(promptTokenBound({ ...base, messages: [{ role: 'user', content: cjk }] }) >= 1000);
 	const tools = [{ type: 'function', function: { name: 'f', description: 'x'.repeat(5000), parameters: {} } }];
 	assert.ok(promptTokenBound({ ...base, tools }) > promptTokenBound(base) + 10_000, 'tools count toward the prompt');
+});
+
+test('a tool call is metered like the same text sent as an answer, and a completion keeps it', async () => {
+	const args = '{"text": "' + 'a long answer '.repeat(40) + '"}';
+	const call = (piece: Record<string, unknown>) => ({ choices: [{ index: 0, delta: { tool_calls: [{ index: 0, ...piece }] }, finish_reason: null }] });
+	/* As vLLM, llama.cpp and mlx_lm.server stream a forced call: the id and name first, then the arguments in pieces. */
+	const chunks = [
+		{ choices: [{ index: 0, delta: { role: 'assistant', content: 'Sure. ' }, finish_reason: null }] },
+		call({ id: 'call_1', type: 'function', function: { name: 'write', arguments: '' } }),
+		call({ function: { arguments: args.slice(0, 100) } }),
+		call({ function: { arguments: args.slice(100) } }),
+		{ choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] }
+	];
+	const delivered = chunks.map(chunkText).join('');
+	assert.equal(delivered, `Sure. write${args}`, 'the delivered text holds the call\'s name and arguments');
+	assert.equal(maxOutputTokensFor(delivered), maxOutputTokensFor(`Sure. write${args}`), 'so its output can be billed as if it were the answer');
+	assert.equal(chunkText({ choices: [{ index: 0, delta: { refusal: 'I cannot help with that.' } }] }), 'I cannot help with that.');
+	assert.equal(chunkText({ choices: [{ index: 0, delta: { tool_calls: 'call' } }, { delta: { tool_calls: [null, { function: { arguments: 1 } }] } }] }), '', 'malformed calls add nothing');
+
+	const events = (async function* (): AsyncGenerator<RelayEvent> {
+		for (const data of chunks) {
+			yield { type: 'chunk', data };
+		}
+	})();
+	const { completion } = await aggregateCompletion(events, 'qwen3-8b');
+	assert.deepEqual(completion.choices, [
+		{ index: 0, message: { role: 'assistant', content: 'Sure. ', tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'write', arguments: args } }] }, finish_reason: 'tool_calls' }
+	]);
 });
 
 test('catalog.json is in sync with catalog.ts (run npm run catalog:export)', async () => {

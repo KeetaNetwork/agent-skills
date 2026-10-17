@@ -116,7 +116,7 @@ A signed receipt is `{receipt, signature}`, where `signature` is by `receipt.nod
 | `amount` | Credit base units billed, paid from the escrow (app jobs), or consumed of the prepayment (router) |
 | `asset` | The ticket's `asset` |
 | `startedAt`, `finishedAt` | Unix milliseconds |
-| `outputHash` | sha256 of the generated text. The text itself is never stored. |
+| `outputHash` | sha256 of the generated text: each streamed chunk's answer, reasoning and refusal, then the name and arguments of each tool call in it, in stream order. The text itself is never stored. |
 | `finishReason` | As in the OpenAI response, such as `stop` or `length` |
 
 To check a receipt: verify the signature with the Keeta SDK against `nodeKey`, then compare `modelId`, `price`, `payTo` and the token limits with your ticket or 402 challenge, and `outputHash` with the sha256 of the text you received.

@@ -16,9 +16,11 @@ export function sseData(data: unknown): Uint8Array {
 }
 
 /**
- * The generated text in one OpenAI stream chunk: answer plus any reasoning,
- * in that order per choice. Providers hash exactly this text into the
- * receipt's outputHash, and buyers rebuild it from what they received.
+ * The generated text in one OpenAI stream chunk: answer, reasoning and
+ * refusal, then the name and arguments of each tool call, in that order per
+ * choice. Providers hash exactly this text into the receipt's outputHash,
+ * and the relay and buyers rebuild it from what they forwarded and received,
+ * so a tool call is billed like the same text sent as an answer.
  */
 export function chunkText(chunk: unknown): string {
 	const choices = (chunk as { choices?: unknown } | null)?.choices;
@@ -28,9 +30,18 @@ export function chunkText(chunk: unknown): string {
 	let text = '';
 	for (const choice of choices as Array<{ delta?: Record<string, unknown> } | null>) {
 		const delta = choice?.delta ?? {};
-		for (const key of ['content', 'reasoning', 'reasoning_content']) {
+		for (const key of ['content', 'reasoning', 'reasoning_content', 'refusal']) {
 			if (typeof delta[key] === 'string') {
 				text += delta[key];
+			}
+		}
+		if (Array.isArray(delta.tool_calls)) {
+			for (const call of delta.tool_calls as Array<{ function?: { name?: unknown; arguments?: unknown } } | null>) {
+				for (const piece of [call?.function?.name, call?.function?.arguments]) {
+					if (typeof piece === 'string') {
+						text += piece;
+					}
+				}
 			}
 		}
 	}
@@ -122,6 +133,8 @@ export async function aggregateCompletion(events: AsyncIterable<RelayEvent>, mod
 	let created = Math.floor(Date.now() / 1000);
 	let receipt: SignedReceipt | undefined;
 	let error: string | undefined;
+	/* Tool calls stream in pieces under their index: the id and name first, then the arguments. */
+	const toolCalls = new Map<number, { id: string; type: 'function'; function: { name: string; arguments: string } }>();
 	for await (const event of events) {
 		if (event.type === 'receipt') {
 			receipt = event.receipt;
@@ -134,12 +147,25 @@ export async function aggregateCompletion(events: AsyncIterable<RelayEvent>, mod
 		if (event.type === 'accepted') {
 			continue;
 		}
-		const chunk = event.data as { id?: string; created?: number; choices?: Array<{ delta?: { content?: string; reasoning?: string }; finish_reason?: string | null }>; usage?: Record<string, unknown> };
+		const chunk = event.data as {
+			id?: string;
+			created?: number;
+			choices?: Array<{ delta?: { content?: string; reasoning?: string; tool_calls?: Array<{ index?: number; id?: string; function?: { name?: string; arguments?: string } } | null> }; finish_reason?: string | null }>;
+			usage?: Record<string, unknown>;
+		};
 		id ||= chunk.id ?? '';
 		created = chunk.created ?? created;
 		for (const choice of chunk.choices ?? []) {
 			content += choice.delta?.content ?? '';
 			reasoning += choice.delta?.reasoning ?? '';
+			for (const call of Array.isArray(choice.delta?.tool_calls) ? choice.delta.tool_calls : []) {
+				const index = call?.index ?? 0;
+				const entry = toolCalls.get(index) ?? { id: '', type: 'function', function: { name: '', arguments: '' } };
+				toolCalls.set(index, entry);
+				entry.id ||= call?.id ?? '';
+				entry.function.name += call?.function?.name ?? '';
+				entry.function.arguments += call?.function?.arguments ?? '';
+			}
 			finishReason = choice.finish_reason ?? finishReason;
 		}
 		if (chunk.usage) {
@@ -154,7 +180,7 @@ export async function aggregateCompletion(events: AsyncIterable<RelayEvent>, mod
 			object: 'chat.completion',
 			created,
 			model,
-			choices: [{ index: 0, message: { role: 'assistant', content, ...(reasoning ? { reasoning } : {}) }, finish_reason: finishReason ?? 'stop' }],
+			choices: [{ index: 0, message: { role: 'assistant', content, ...(reasoning ? { reasoning } : {}), ...(toolCalls.size ? { tool_calls: [...toolCalls.values()] } : {}) }, finish_reason: finishReason ?? 'stop' }],
 			...(usage ? { usage } : {})
 		}
 	};
