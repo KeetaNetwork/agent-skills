@@ -97,7 +97,7 @@ public enum PasskeyWalletError: LocalizedError, Equatable {
         case .unexpectedCredential:
             return "The system returned an unexpected credential."
         case .busy:
-            return "Another passkey request is already open."
+            return "Another passkey request is already open. Finish or cancel it, then try again."
         case .associationUnverified:
             return "macOS couldn't confirm this app with keeta.ai yet, so passkeys aren't available. Check the internet connection and try again in a minute."
         case .authorization(let message):
@@ -119,6 +119,9 @@ public enum PasskeyWalletError: LocalizedError, Equatable {
         let text = [nsError.localizedDescription, nsError.localizedFailureReason ?? ""].joined(separator: " ")
         if text.localizedCaseInsensitiveContains("webcredentials association") || text.localizedCaseInsensitiveContains("not associated with domain") {
             return .associationUnverified
+        }
+        if text.localizedCaseInsensitiveContains("already in progress") {
+            return .busy
         }
         return .authorization(nsError.localizedDescription)
     }

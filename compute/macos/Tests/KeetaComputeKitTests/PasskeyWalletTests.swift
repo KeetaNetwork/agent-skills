@@ -143,6 +143,12 @@ final class PasskeyWalletTests: XCTestCase {
         authenticator.assertionResult = .failure(association)
         await XCTAssertThrowsWalletError(try await wallet.assertEntropy(), .associationUnverified)
 
+        let systemBusy = NSError(domain: "com.apple.AuthenticationServices.AuthorizationError", code: 1004, userInfo: [
+            NSLocalizedFailureReasonErrorKey: "Request already in progress for specified application identifier."
+        ])
+        authenticator.assertionResult = .failure(systemBusy)
+        await XCTAssertThrowsWalletError(try await wallet.assertEntropy(), .busy)
+
         let other = NSError(domain: "com.apple.AuthenticationServices.AuthorizationError", code: 1004, userInfo: [NSLocalizedDescriptionKey: "Something else"])
         authenticator.assertionResult = .failure(other)
         await XCTAssertThrowsWalletError(try await wallet.assertEntropy(), .authorization("Something else"))

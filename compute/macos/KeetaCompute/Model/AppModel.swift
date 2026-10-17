@@ -202,6 +202,7 @@ final class AppModel: ObservableObject {
     }
 
     func shutdown() async {
+        passkeys.cancelPending()
         await client.stop()
     }
 

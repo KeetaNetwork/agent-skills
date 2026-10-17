@@ -11,9 +11,11 @@ final class PasskeyWallet {
     typealias WalletError = PasskeyWalletError
 
     private let core: PasskeyWalletCore
+    private let authenticator: PasskeyAuthenticator
     private let log = Logger(subsystem: "ai.keeta.compute", category: "passkey")
 
     init(authenticator: PasskeyAuthenticator, store: PasskeyCredentialStore) {
+        self.authenticator = authenticator
         core = PasskeyWalletCore(authenticator: authenticator, store: store)
     }
 
@@ -49,6 +51,12 @@ final class PasskeyWallet {
     func forget() {
         core.forget()
     }
+
+    /// Cancels an open system prompt. Called on quit: a request left open by an
+    /// exited app blocks this app's next one ("Request already in progress").
+    func cancelPending() {
+        (authenticator as? SystemPasskeyAuthenticator)?.cancel()
+    }
 }
 
 /// Runs passkey requests with ASAuthorizationController, anchored to the
@@ -57,6 +65,11 @@ final class PasskeyWallet {
 final class SystemPasskeyAuthenticator: PasskeyAuthenticator {
     /// Overrides the window the system prompt attaches to.
     var anchorOverride: NSWindow?
+    private var current: AuthorizationSession?
+
+    func cancel() {
+        current?.cancel()
+    }
 
     func register(_ request: PasskeyRegistrationRequest) async throws -> PasskeyRegistrationResult {
         let provider = ASAuthorizationPlatformPublicKeyCredentialProvider(relyingPartyIdentifier: request.relyingParty)
@@ -91,6 +104,8 @@ final class SystemPasskeyAuthenticator: PasskeyAuthenticator {
         NSApp.activate()
         let anchor = anchorOverride ?? NSApp.keyWindow ?? NSApp.windows.first(where: { $0.isVisible }) ?? NSWindow()
         let session = AuthorizationSession(anchor: anchor)
+        current = session
+        defer { current = nil }
         // The popover is the key window; keep it open while the system prompt has focus.
         PopoverHold.begin()
         defer { PopoverHold.end() }
@@ -123,6 +138,11 @@ private final class AuthorizationSession: NSObject, ASAuthorizationControllerDel
             self.controller = controller
             controller.performRequests()
         }
+    }
+
+    @MainActor
+    func cancel() {
+        controller?.cancel()
     }
 
     func authorizationController(controller: ASAuthorizationController, didCompleteWithAuthorization authorization: ASAuthorization) {
