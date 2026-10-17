@@ -18,7 +18,7 @@ keeta-compute-agent --help                 # every command
 
 Every command takes `--data-dir DIR` (default `$KEETA_COMPUTE_HOME` or `~/.keeta-compute`). The wallet passphrase comes from `$KEETA_COMPUTE_PASSPHRASE` or a hidden prompt.
 
-Build the binaries with [bun](https://bun.sh); they land in `dist/`:
+Build the binaries with the [bun](https://bun.sh) pinned in `compute/package.json` (`npm ci` installs it); they land in `dist/`. `keeta-compute-agent self-test` checks a build can run the agent (it initializes it as the app does, without the network):
 
 ```bash
 npm run build:mac -w @keeta-compute/cli

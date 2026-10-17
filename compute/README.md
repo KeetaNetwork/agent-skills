@@ -113,15 +113,17 @@ node --import tsx packages/cli/src/main.ts wallet
 node --import tsx packages/cli/src/main.ts wallet buy-credits 1 --with KUSD
 ```
 
-Build the agent binaries (needs [bun](https://bun.sh)):
+Build the agent binaries with the [bun](https://bun.sh) pinned in `package.json` (`npm ci` installs it), then check one with its self-test:
 
 ```bash
 npm run build:mac -w @keeta-compute/cli          # bundled into the app by macos/
 npm run build:linux-x64 -w @keeta-compute/cli
 npm run build:linux-arm64 -w @keeta-compute/cli
+packages/cli/dist/linux-x64/keeta-compute-agent self-test
+KEETA_COMPUTE_AGENT_BINARY=packages/cli/dist/linux-x64/keeta-compute-agent npm run test:agent-binary
 ```
 
-The binaries land in `packages/cli/dist/`.
+The binaries land in `packages/cli/dist/`. `self-test` initializes the agent as the app does, without the network; `test:agent-binary` drives a binary over stdin and stdout the way the app does.
 
 ## Live tests
 

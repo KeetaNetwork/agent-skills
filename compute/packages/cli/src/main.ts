@@ -20,6 +20,7 @@ import { AGENT_VERSION, AgentApp, RpcPeer } from '@keeta-compute/agent';
 import type { Log } from '@keeta-compute/protocol';
 import * as cli from './cli.ts';
 import { addHelperModel, helperStatus, pairHelper, runHelper } from './helper.ts';
+import { selfTest } from './self-test.ts';
 
 const USAGE = `usage: keeta-compute-agent COMMAND [--data-dir DIR]
 
@@ -57,6 +58,7 @@ macOS app:
   app
 
   version
+  self-test                                checks this build can run the agent (no network)
 
 Prices and limits are in Keeta Compute Credits per million tokens; one credit is one US dollar.
 The passphrase is read from KEETA_COMPUTE_PASSPHRASE or asked for on the terminal.`;
@@ -450,6 +452,10 @@ async function main(argv: string[]): Promise<void> {
 		case '--version':
 			process.stdout.write(`${AGENT_VERSION}\n`);
 			return;
+		case 'self-test':
+			await selfTest((line) => process.stdout.write(`${line}\n`));
+			/* initialize starts the provider loop and timers; the check is done. */
+			process.exit(0);
 		default:
 			if (command && NODE_COMMANDS.has(command)) {
 				await runNodeCommand(command, rest);

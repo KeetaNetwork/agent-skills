@@ -43,9 +43,10 @@ Opening the folder or `Package.swift` in Xcode instead shows only
   identity), then run the `KeetaCompute` scheme. There is no window or Dock
   icon: click the Keeta mark in the menu bar. On a MacBook with a full menu
   bar the icon can sit behind the camera notch; quit a few menu bar apps to
-  bring it into view. A Debug build made without bun has no bundled agent, so the
-  popover says it doesn't include the background service (see "The bundled
-  agent" below).
+  bring it into view. The build bundles the agent with the bun pinned in
+  `compute/package.json`, running `npm ci` in `compute/` first if needed. A
+  Debug build that can't install it has no bundled agent, so the popover says
+  it doesn't include the background service (see "The bundled agent" below).
 
 ## Requirements
 
@@ -68,7 +69,6 @@ Opening the folder or `Package.swift` in Xcode instead shows only
 | `KeetaCompute/Model/AppModel.swift` | Observable state driven by `event.state` and call results |
 | `KeetaCompute/Views/` | The popover (`RootView`): Onboarding, Home, Wallet, Models, Provide, Use, Fleet, Settings; panels that stand in for sheets; Logs |
 | `Config/` | `Info.plist`, app entitlements, entitlements for signing the agent helper |
-| `apple-app-site-association.json` | Template for the keeta.ai associated-domain file |
 
 ## Build and run
 
@@ -100,9 +100,20 @@ CI does this on every change and uploads the images as the
 ### The bundled agent
 
 A Run Script phase calls `scripts/bundle-agent.sh`, which compiles the agent
-from `compute/packages/cli` with bun and places it at
-`Keeta Compute.app/Contents/Resources/keeta-compute-agent`. In Debug builds a
-missing bun only prints a warning; Release builds fail without it.
+from `compute/packages/cli` and places it at
+`Keeta Compute.app/Contents/Resources/keeta-compute-agent`. It compiles with
+the bun pinned in `compute/package.json` (npm installs it into
+`compute/node_modules`), never with a bun installed on the Mac: older releases
+build an agent that can't derive Keeta keys, so the app's first call never
+answers. If the pinned bun isn't installed, the script runs `npm ci` in
+`compute/`. When that isn't possible, a Debug build only prints a warning and
+has no agent, and a Release build fails.
+
+The script then runs the compiled agent's `self-test`, which initializes it as
+the app does, signs with a stand-in node key and derives an operator account,
+all without the network. A binary that fails it is not bundled, and the build
+fails. CI also drives the bundled agent over stdin and stdout as the app does
+(`npm run test:agent-binary` in `compute/`).
 
 The script must also sign the helper, because Xcode does not sign executables
 in `Resources`:
@@ -166,20 +177,20 @@ keeta-compute-agent app --data-dir "~/Library/Application Support/Keeta Compute"
 ### Associated domain (passkeys)
 
 Passkeys for `keeta.ai` only work if `https://keeta.ai/.well-known/apple-app-site-association`
-lists this app. `apple-app-site-association.json` in this folder is the
-template:
+lists this app. Until it does, creating or using the wallet passkey fails with
+`ASAuthorizationError` 1004. The keeta.ai site serves that file from
+`site/.well-known/apple-app-site-association` (as `application/json`, with no
+redirect), listing the app signed by team `2BG69HN56W`:
 
 ```json
-{ "webcredentials": { "apps": ["TEAMID.ai.keeta.compute"] } }
+{ "webcredentials": { "apps": ["2BG69HN56W.ai.keeta.compute"] } }
 ```
 
-Replace `TEAMID` with the real Apple Developer Team ID and serve the file at
-that URL over HTTPS with `Content-Type: application/json`, no redirects. If the
-site already serves an apple-app-site-association file (for example for the web
-wallet), merge the `webcredentials.apps` entry into it. Apple's CDN caches the
-file, so changes can take a while to reach devices. For local testing you can
-use the `?mode=developer` suffix on the associated domain together with
-`swcutil developer-mode -e true`.
+A build signed by another team needs its `TEAMID.ai.keeta.compute` added to
+that list. Apple's CDN caches the file, so a change can take a while to reach
+Macs. To fetch it straight from keeta.ai while testing, add `?mode=developer`
+to the associated domain in `Config/KeetaCompute.entitlements` and run
+`sudo swcutil developer-mode -e true`.
 
 ## Keys
 

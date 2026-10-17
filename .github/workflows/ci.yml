@@ -25,6 +25,7 @@ jobs:
           test -s _site/assets/og-image.png && test -s _site/assets/fonts/Geist-Regular.woff2
           test -s _site/llms.txt && test -s _site/_headers && test -s _site/_redirects
           test -s _site/compute/compute.css
+          python3 -c "import json; apps = json.load(open('_site/.well-known/apple-app-site-association'))['webcredentials']['apps']; assert apps == ['2BG69HN56W.ai.keeta.compute'], apps"
           for page in index app models router helper protocol; do
             test -s "_site/compute/$page.html" && test -s "_site/compute/$page.md" || { echo "missing compute page $page"; exit 1; }
           done
@@ -47,7 +48,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - name: Serve the build as Pages does, and check the old skill URLs redirect to keeta.md
+      - name: Serve the build as Pages does, and check the old skill URLs and the passkey file
         env:
           DISABLE_TELEMETRY: "1"
         run: |
@@ -62,6 +63,8 @@ jobs:
             echo "$headers" | grep -qix "location: https://keeta.md$path" || { echo "$path: wrong location"; echo "$headers"; exit 1; }
             echo "$headers" | grep -qix 'access-control-allow-origin: \*' || { echo "$path: no CORS header"; echo "$headers"; exit 1; }
           done
+          # The Mac app's passkeys need this file as JSON, with no redirect.
+          curl -fsS -D - -o /dev/null http://127.0.0.1:8788/.well-known/apple-app-site-association | tr -d '\r' | grep -qix 'content-type: application/json'
 
   compute:
     runs-on: ubuntu-latest
@@ -85,6 +88,11 @@ jobs:
         run: npm run test:e2e
       - name: Relay Worker under wrangler dev
         run: npm run test:worker
+      - name: Agent compiled with the pinned bun answers the app over stdio
+        run: |
+          npm run build:linux-x64 -w @keeta-compute/cli
+          packages/cli/dist/linux-x64/keeta-compute-agent self-test
+          KEETA_COMPUTE_AGENT_BINARY=packages/cli/dist/linux-x64/keeta-compute-agent npm run test:agent-binary
 
   macos:
     runs-on: macos-15
@@ -93,6 +101,14 @@ jobs:
         working-directory: compute/macos
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: compute/package-lock.json
+      - name: Install compute/ (the build bundles the agent with the bun it pins)
+        working-directory: compute
+        run: npm ci
       - name: Unit tests (KeetaComputeKit)
         run: swift test
       - name: Build the app (unsigned)
@@ -102,6 +118,12 @@ jobs:
           xcodebuild -project KeetaCompute.xcodeproj -scheme KeetaCompute -configuration Debug \
             -destination 'platform=macOS,arch=arm64' -derivedDataPath build/DerivedData \
             CODE_SIGNING_ALLOWED=NO build
+      - name: The bundled agent answers the app over stdio
+        working-directory: compute
+        run: |
+          AGENT="macos/build/DerivedData/Build/Products/Debug/Keeta Compute.app/Contents/Resources/keeta-compute-agent"
+          test -x "$AGENT"
+          KEETA_COMPUTE_AGENT_BINARY="$AGENT" npm run test:agent-binary
       - name: Draw the menu bar popover with sample data
         timeout-minutes: 5
         run: |
