@@ -54,6 +54,13 @@ export function assertModelId(value: unknown, field = 'model'): string {
 	return value;
 }
 
+/**
+ * Longest context an offer may advertise: above any model served today, and
+ * small enough that every client (the macOS app decodes it as an Int) can
+ * represent it.
+ */
+export const MAX_CONTEXT_LENGTH = 16_777_216;
+
 export function assertOffer(value: unknown, index: number): Offer {
 	const offer = value as Offer;
 	const field = `offers[${index}]`;
@@ -61,7 +68,7 @@ export function assertOffer(value: unknown, index: number): Offer {
 	assert(typeof offer.weightsHash === 'string' && /^[0-9a-f]{64}$/.test(offer.weightsHash), `${field}.weightsHash must be a sha256 hex digest`);
 	assert(offer.runtime && (offer.runtime.kind === 'mlx' || offer.runtime.kind === 'openai-compatible'), `${field}.runtime.kind is invalid`);
 	assert(typeof offer.runtime.build === 'string' && offer.runtime.build.length <= 200, `${field}.runtime.build is invalid`);
-	assert(Number.isInteger(offer.contextLength) && offer.contextLength > 0, `${field}.contextLength is invalid`);
+	assert(Number.isInteger(offer.contextLength) && offer.contextLength > 0 && offer.contextLength <= MAX_CONTEXT_LENGTH, `${field}.contextLength must be between 1 and ${MAX_CONTEXT_LENGTH}`);
 	return {
 		modelId: assertModelId(offer.modelId, `${field}.modelId`),
 		weightsHash: offer.weightsHash,

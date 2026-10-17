@@ -76,6 +76,8 @@ Balances are only ever read from the ledger. The network's job records keep the 
 
 Structured output is compiled before the first token, so requests are bounded: `response_format` JSON schemas (and tool parameters when a tool call is forced) must be at most 8 KB, nest at most 8 levels and avoid `anyOf`, `oneOf`, `allOf`, `not`, `$ref`, `pattern` and conditionals; `stop` takes at most 4 sequences of 256 bytes. Counting a prompt's tokens takes time in proportion to its size, so a provider refuses a request whose size bound (the one tickets use without a pinned tokenizer) is more than 16 times its ticket's input limit plus 65,536, before counting it.
 
+What providers report is bounded too, so every client can show it: an offer's `contextLength` is at most 16,777,216 tokens, and a machine's `memoryBytes` at most 1 PiB (2^50 bytes). Free disk above 1 PiB is recorded as 1 PiB.
+
 ## Tickets
 
 | Field | Meaning |

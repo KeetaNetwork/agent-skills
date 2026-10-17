@@ -122,6 +122,7 @@ sha256hex(body)</code></pre>
 <li><strong>Reputation.</strong> Completed, failed and disputed jobs update the provider's record, which the scheduler reads.</li>
 </ol>
 <p>Structured output is compiled before the first token, so requests are bounded: <code>response_format</code> JSON schemas (and tool parameters when a tool call is forced) must be at most 8 KB, nest at most 8 levels and avoid <code>anyOf</code>, <code>oneOf</code>, <code>allOf</code>, <code>not</code>, <code>$ref</code>, <code>pattern</code> and conditionals; <code>stop</code> takes at most 4 sequences of 256 bytes. Counting a prompt's tokens takes time in proportion to its size, so a provider refuses a request whose size bound (the one tickets use without a pinned tokenizer) is more than 16 times its ticket's input limit plus 65,536, before counting it.</p>
+<p>What providers report is bounded too, so every client can show it: an offer's <code>contextLength</code> is at most 16,777,216 tokens, and a machine's <code>memoryBytes</code> at most 1 PiB (2^50 bytes). Free disk above 1 PiB is recorded as 1 PiB.</p>
 <h2 id="tickets">Tickets</h2>
 <table>
 <thead><tr><th>Field</th><th>Meaning</th></tr></thead>

@@ -167,16 +167,18 @@ public enum ByteFormat {
     private static let gb = 1024.0 * 1024.0 * 1024.0
 
     /// Mirrors `formatBytes` in hardware.ts: "18 GB", "4.5 GB", "512 MB".
+    /// Byte counts can come from other machines (a helper's memory), so the
+    /// Double is formatted as is: converting one past Int.max to Int would trap.
     public static func string(_ bytes: Double) -> String {
         if bytes >= gb {
             let value = bytes / gb
-            return value >= 10 ? "\(Int(value.rounded())) GB" : String(format: "%.1f GB", value)
+            return value >= 10 ? String(format: "%.0f GB", value.rounded()) : String(format: "%.1f GB", value)
         }
-        return "\(Int((bytes / (1024 * 1024)).rounded())) MB"
+        return String(format: "%.0f MB", (bytes / (1024 * 1024)).rounded())
     }
 
-    /// Whole gigabytes rounded up, for "needs X GB more" messages.
+    /// Whole gigabytes rounded up, for "needs X GB more" messages; 0 when that is not a representable Int.
     public static func gigabytesRoundedUp(_ bytes: Double) -> Int {
-        Int((bytes / gb).rounded(.up))
+        Int(exactly: (bytes / gb).rounded(.up)) ?? 0
     }
 }

@@ -191,6 +191,16 @@ final class RPCCodecTests: XCTestCase {
         XCTAssertEqual(try AgentNotification.decode(method: "event.future", raw: line("{}")), .unknown(method: "event.future"))
     }
 
+    func testNetworkModelsSkipAnEntryThatDoesNotDecode() throws {
+        // Any provider can advertise a model; a contextLength past Int.max once emptied the whole list.
+        let raw = line(#"{"jsonrpc":"2.0","id":9,"result":[{"id":"bad","name":"Bad","providers":1,"lowestPrice":{"inputPerMillion":"1","outputPerMillion":"1"},"contextLength":1e+300},{"id":"qwen3-8b","name":"Qwen3 8B","providers":2,"lowestPrice":{"inputPerMillion":"100000","outputPerMillion":"400000"},"contextLength":131072,"license":"Apache-2.0"}]}"#)
+        guard case let .success(_, body) = try RPCCodec.parse(raw) else { return XCTFail("expected success") }
+        let models = try RPCCodec.decodeResult(AgentRPC.BuyerNetworkModels.Result.self, from: body).elements
+        XCTAssertEqual(models.map(\.id), ["qwen3-8b"])
+        XCTAssertEqual(models.first?.contextLength, 131072)
+        XCTAssertEqual(models.first?.license, "Apache-2.0")
+    }
+
     func testDecodesPairingRecordWithClaim() throws {
         let raw = line(#"{"jsonrpc":"2.0","id":8,"result":{"pairingId":"p1","codeHash":"h","masterNodeKey":"keeta_master","payTo":"keeta_operator","network":"test","createdAt":1,"expiresAt":2,"status":"claimed","claim":{"nodeKey":"keeta_helper","descriptor":{"name":"garage-box","os":"linux","osVersion":"Ubuntu 24.04","chip":"AMD Ryzen 9 + NVIDIA RTX 4090","memoryBytes":25769803776,"freeDiskBytes":500000000000},"checkString":"ABC-DEF","claimedAt":3}}}"#)
         guard case let .success(_, body) = try RPCCodec.parse(raw) else { return XCTFail() }

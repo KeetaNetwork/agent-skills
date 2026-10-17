@@ -997,6 +997,35 @@ test('Linux helpers pair by code with check string and master approval', async (
 	assert.equal((await h.call(helper, 'POST', '/v1/providers/heartbeat', { status: 'online', offers: [] })).status, 404, 'revoked helper is cut off');
 });
 
+test('no provider can report hardware or offers its master\'s app cannot show', async () => {
+	const h = harness();
+	const { node: master, operator } = await registerMac(h);
+	const code = generatePairingCode();
+	const { pairingId } = (await h.call(master, 'POST', '/v1/pairing', { codeHash: await pairingCodeHash(code) })).body as { pairingId: string };
+	const helper = newSigner();
+	const huge = { ...hardware(128, 'linux'), memoryBytes: 1e30 };
+	assert.equal((await h.call(helper, 'POST', '/v1/pairing/claim', { codeHash: await pairingCodeHash(code), descriptor: { ...huge, name: 'box' } })).status, 400);
+	assert.equal((await h.call(helper, 'POST', '/v1/pairing/claim', { codeHash: await pairingCodeHash(code), descriptor: { ...hardware(128, 'linux'), name: 'box' } })).status, 200);
+	const approvalSig = await master.sign(pairingApprovalMessage({ pairingId, helperNodeKey: helper.publicKey, masterNodeKey: master.publicKey, payTo: operator.publicKey }));
+	assert.equal((await h.call(master, 'POST', `/v1/pairing/${pairingId}/approve`, { approvalSig })).status, 200);
+
+	/* A paired helper re-registers whenever it likes; 1e30 bytes of memory crashed the master's Fleet view, where revoking happens. */
+	assert.equal((await h.call(helper, 'POST', '/v1/providers/register', { network: 'test', kind: 'linux-helper', hardware: huge })).status, 400);
+	const odd = await h.call(helper, 'POST', '/v1/providers/register', { network: 'test', kind: 'linux-helper', hardware: { ...hardware(128, 'linux'), freeDiskBytes: 2 ** 63, gpuCores: 1e300 } });
+	assert.equal(odd.status, 200, JSON.stringify(odd.body));
+	const { helpers } = (await h.call(master, 'GET', '/v1/fleet')).body as { helpers: Array<{ hardware: HardwareProfile }> };
+	assert.equal(helpers[0]!.hardware.memoryBytes, 128 * GB);
+	assert.equal(helpers[0]!.hardware.freeDiskBytes, 2 ** 50, 'free disk is clamped');
+	assert.equal(helpers[0]!.hardware.gpuCores, undefined, 'a core count that does not fit an integer is dropped');
+
+	/* Nor can a provider advertise a context length the app cannot decode: one such offer blanked every app's model list. */
+	const beat = (contextLength: number) => h.call(master, 'POST', '/v1/providers/heartbeat', { status: 'online', offers: [offer('qwen3-8b', { contextLength })] });
+	assert.equal((await beat(1e300)).status, 400);
+	assert.equal((await beat(131072)).status, 200);
+	const { models } = (await h.call(null, 'GET', '/v1/models?network=test')).body as { models: Array<{ id: string; contextLength: number }> };
+	assert.deepEqual(models.map((m) => [m.id, m.contextLength]), [['qwen3-8b', 131072]]);
+});
+
 test('Linux nodes with their own wallet register with a link proof and can pair helpers', async () => {
 	const h = harness();
 	const node = newSigner();

@@ -288,3 +288,28 @@ public struct NetworkModel: Codable, Sendable, Equatable, Identifiable {
     public var contextLength: Int
     public var license: String?
 }
+
+/// A JSON array that drops the entries that don't decode, for lists built from
+/// what many providers report: one malformed entry must not hide the others.
+public struct LossyList<Element: Decodable & Sendable>: Decodable, Sendable {
+    public var elements: [Element]
+
+    public init(from decoder: Decoder) throws {
+        var container = try decoder.unkeyedContainer()
+        var elements: [Element] = []
+        while !container.isAtEnd {
+            if let element = try? container.decode(Element.self) {
+                elements.append(element)
+            } else {
+                // A failed decode leaves the container where it was; step over the entry.
+                _ = try container.decode(SkippedEntry.self)
+            }
+        }
+        self.elements = elements
+    }
+}
+
+/// Decodes any JSON value without reading it.
+private struct SkippedEntry: Decodable {
+    init(from decoder: Decoder) throws {}
+}

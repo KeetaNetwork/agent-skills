@@ -298,7 +298,7 @@ final class AppModel: ObservableObject {
 
     func refreshNetworkModels() async {
         do {
-            networkModels = try await client.call(AgentRPC.BuyerNetworkModels.self, EmptyParams())
+            networkModels = try await client.call(AgentRPC.BuyerNetworkModels.self, EmptyParams()).elements
         } catch {
             appendLog(.app, .warn, "Network models unavailable: \(error.localizedDescription)")
         }

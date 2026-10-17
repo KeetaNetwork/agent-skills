@@ -28,6 +28,7 @@ import {
 	aggregateCompletion,
 	chunkText,
 	maxOutputTokensFor,
+	MAX_CONTEXT_LENGTH,
 	type HardwareProfile,
 	type Receipt,
 	type RelayEvent
@@ -156,6 +157,23 @@ test('validation rejects malformed offers and requests', () => {
 	assert.throws(() => assertOffer({ modelId: 'x', weightsHash: 'nope' }, 0));
 	assert.throws(() => assertChatRequest({ model: 'qwen3-8b', messages: [{ role: 'user', content: [{ type: 'image_url', image_url: { url: 'data:' } }] }] }), /text content/);
 	assert.throws(() => assertChatRequest({ model: 'qwen3-8b', messages: [{ role: 'user', content: 'hi' }], n: 4 }), /n must be 1/);
+});
+
+test('an offer\'s context length must fit what every client can represent', () => {
+	const offer = (contextLength: number) => ({
+		modelId: 'qwen3-8b',
+		weightsHash: 'c'.repeat(64),
+		runtime: { kind: 'mlx', build: 'mlx-lm 0.26.0' },
+		price: { inputPerMillion: '100000', outputPerMillion: '400000' },
+		access: { mode: 'public', allow: [] },
+		contextLength
+	});
+	assert.equal(assertOffer(offer(1_000_000), 0).contextLength, 1_000_000);
+	assert.equal(assertOffer(offer(MAX_CONTEXT_LENGTH), 0).contextLength, MAX_CONTEXT_LENGTH);
+	/* Number.isInteger holds for 1e300, which the macOS app cannot decode as an Int: one such offer blanked its model list. */
+	for (const bad of [1e300, 1e19, 2 ** 31, MAX_CONTEXT_LENGTH + 1, 0, 1.5]) {
+		assert.throws(() => assertOffer(offer(bad), 0), /contextLength/, String(bad));
+	}
 });
 
 test('structured output and stop lists are bounded before anything is paid', () => {

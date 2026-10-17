@@ -490,7 +490,7 @@ public enum AgentRPC {
 
     public enum BuyerNetworkModels: RPCMethod {
         public typealias Params = EmptyParams
-        public typealias Result = [NetworkModel]
+        public typealias Result = LossyList<NetworkModel>
         public static let name = "buyer.networkModels"
     }
 

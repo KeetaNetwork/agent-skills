@@ -76,6 +76,9 @@ final class AmountTests: XCTestCase {
         XCTAssertEqual(ByteFormat.string(16 * gb), "16 GB")
         XCTAssertEqual(ByteFormat.string(512 * 1024 * 1024), "512 MB")
         XCTAssertEqual(ByteFormat.gigabytesRoundedUp(1.2 * gb), 2)
+        // A paired helper chooses its own memoryBytes; Int(Double) traps past Int.max.
+        XCTAssertEqual(ByteFormat.string(1e30), "931322574615478534144 GB")
+        XCTAssertEqual(ByteFormat.gigabytesRoundedUp(1e30), 0)
     }
 
     func testAddressShape() {

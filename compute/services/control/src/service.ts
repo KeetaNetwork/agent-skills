@@ -1361,6 +1361,14 @@ function assertTokenCount(value: unknown, field: string, max: number): number {
 	return value as number;
 }
 
+/**
+ * Most memory or free disk a machine may report (1 PiB). A master's app shows
+ * its helpers' hardware, so every number must stay one it can decode and
+ * format. Some network filesystems report more free space than this, so disk
+ * is clamped rather than refused.
+ */
+const MAX_HARDWARE_BYTES = 2 ** 50;
+
 function assertHardware(value: unknown): HardwareProfile {
 	const hw = value as HardwareProfile;
 	if (!hw || typeof hw !== 'object' || (hw.os !== 'macos' && hw.os !== 'linux')) {
@@ -1369,13 +1377,16 @@ function assertHardware(value: unknown): HardwareProfile {
 	if (!Number.isFinite(hw.memoryBytes) || hw.memoryBytes <= 0 || !Number.isFinite(hw.freeDiskBytes)) {
 		throw new ValidationError('hardware memory and disk are required');
 	}
+	if (hw.memoryBytes > MAX_HARDWARE_BYTES) {
+		throw new ValidationError(`hardware.memoryBytes must be at most ${MAX_HARDWARE_BYTES}`);
+	}
 	return {
 		os: hw.os,
 		osVersion: String(hw.osVersion ?? '').slice(0, 40),
 		chip: String(hw.chip ?? '').slice(0, 120),
 		memoryBytes: Math.floor(hw.memoryBytes),
-		freeDiskBytes: Math.floor(hw.freeDiskBytes),
-		...(Number.isInteger(hw.gpuCores) ? { gpuCores: hw.gpuCores } : {}),
+		freeDiskBytes: Math.min(MAX_HARDWARE_BYTES, Math.max(0, Math.floor(hw.freeDiskBytes))),
+		...(Number.isSafeInteger(hw.gpuCores) ? { gpuCores: hw.gpuCores } : {}),
 		...(typeof hw.machineModel === 'string' ? { machineModel: hw.machineModel.slice(0, 60) } : {}),
 		...(typeof hw.rdmaCapable === 'boolean' ? { rdmaCapable: hw.rdmaCapable } : {})
 	};
