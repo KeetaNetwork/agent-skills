@@ -313,14 +313,39 @@ export function createRouter(deps: RouterDeps) {
 
 		/** Settle the x402 payment; returns the payment-response header, or an error response. */
 		async function settle(): Promise<string | Response> {
+			/*
+			 * The control plane records the payer's signed block before it settles:
+			 * one it would not count (another destination or stablecoin, too little,
+			 * or no job id as the send's reference) is never settled, and a payment
+			 * whose settled report below is lost is still found on the ledger.
+			 */
+			const block = typeof payload.payload?.block === 'string' ? payload.payload.block : null;
+			if (!block) {
+				return errorResponse(402, 'invalid_payment', 'the payment carries no signed block');
+			}
+			const recorded = await control(`/v1/router/jobs/${ticket.jobId}/paying`, { method: 'POST', body: { payer: verified.payer ?? '', block } }).catch(() => null);
+			if (!recorded?.ok) {
+				if (recorded && recorded.status < 500) {
+					const reason = ((await recorded.json().catch(() => null)) as { error?: { message?: string } } | null)?.error?.message ?? 'the payment was refused';
+					return recorded.status === 409 ? errorResponse(409, 'quote_used', `${reason}; you were not charged`) : errorResponse(402, 'payment_invalid', `${reason}; you were not charged`);
+				}
+				return errorResponse(503, 'control_unavailable', 'the payment could not be recorded right now; you were not charged', { 'retry-after': '2' });
+			}
 			const settlement = await deps.gateway.settle(payload, requirements).catch(() => ({ success: false as const, errorReason: 'the payment service could not settle the payment; you were not charged' }));
 			if (!settlement.success) {
 				return errorResponse(402, 'settlement_failed', settlement.errorReason ?? 'the payment could not be settled');
 			}
 			const payer = settlement.payer ?? verified.payer;
-			/* The payer's signed block too: the settlement's transaction names the vote staple, and the control plane reads the block itself. */
-			const block = typeof payload.payload?.block === 'string' ? payload.payload.block : undefined;
-			void control(`/v1/router/jobs/${ticket.jobId}/settled`, { method: 'POST', body: { payer, transaction: settlement.transaction ?? '', ...(block ? { block } : {}) } }).catch(() => undefined);
+			/* The settlement's transaction names the vote staple; the control plane reads the payer's block itself. */
+			for (const delay of [0, 250, 1_000]) {
+				if (delay) {
+					await new Promise((resolve) => setTimeout(resolve, delay));
+				}
+				const reported = await control(`/v1/router/jobs/${ticket.jobId}/settled`, { method: 'POST', body: { payer, transaction: settlement.transaction ?? '', block } }).catch(() => null);
+				if (reported && reported.status < 500) {
+					break;
+				}
+			}
 			return base64Json({ success: true, transaction: settlement.transaction, network: requirements.network, payer });
 		}
 	}

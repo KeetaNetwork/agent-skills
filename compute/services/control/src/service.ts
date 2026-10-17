@@ -70,7 +70,7 @@ import {
 	type Signer,
 	type Verifier
 } from '@keeta-compute/protocol';
-import { encodedBlockHash } from '@keeta-compute/protocol/keeta';
+import { checkEncodedPaymentBlock, encodedBlockHash } from '@keeta-compute/protocol/keeta';
 import { ConflictError, NotFoundError, type Store, type StoredProvider } from './store.ts';
 
 /**
@@ -832,6 +832,72 @@ export class ControlService {
 	}
 
 	/**
+	 * The router records the x402 payment's signed block before settling it.
+	 * A block that does not pay this job (its destination, stablecoin and
+	 * prepaid amount, with the job id as the send's reference) is refused, so
+	 * it is never settled; one that does is kept, so the sweep finds the
+	 * payment on the ledger even if the router's settled report is lost.
+	 */
+	async routerPaying(jobId: string, body: Record<string, unknown>) {
+		const payer = assertKeetaAddress(body.payer, 'payer');
+		if (typeof body.block !== 'string' || body.block.length > 16_384) {
+			throw new ValidationError('block must be the signed payment block');
+		}
+		const current = await this.store.getJob(jobId);
+		if (!current || current.paymentMode !== 'prepaid') {
+			throw new NotFoundError('job not found');
+		}
+		const check = checkEncodedPaymentBlock(body.block, {
+			from: payer,
+			to: current.paymentTo ?? current.payTo,
+			asset: current.asset,
+			minAmount: BigInt(current.prepaidAmount ?? '0'),
+			reference: jobId
+		});
+		if (check.status !== 'confirmed') {
+			throw new ValidationError(`the payment does not pay this job: ${check.reason}`);
+		}
+		const attempt = { blockHash: check.blockHash, payer, at: this.now() };
+		const job = await this.store.updateJob(jobId, (latest) => {
+			if (latest.payment || latest.status !== 'scheduled') {
+				throw new ConflictError('this quote can no longer be paid');
+			}
+			const attempts = latest.paymentAttempts ?? [];
+			if (attempts.some((a) => a.blockHash === attempt.blockHash)) {
+				return latest;
+			}
+			if (attempts.length >= 4) {
+				throw new ConflictError('too many payments were tried for this quote; request a new one');
+			}
+			return { ...latest, paymentAttempts: [...attempts, attempt] };
+		});
+		return { recorded: true, jobId: job.jobId };
+	}
+
+	/**
+	 * A router job past its ticket with no settled report: look for a payment
+	 * the router recorded before settling, on the ledger. Null when none is
+	 * there (or none was recorded).
+	 */
+	private async attemptedPayment(job: JobRecord): Promise<{ blockHash: string; payer: string } | null> {
+		for (const attempt of job.paymentAttempts ?? []) {
+			const check = await this.config.verifyPayment({
+				network: job.network,
+				blockHash: attempt.blockHash,
+				from: attempt.payer,
+				to: job.paymentTo ?? job.payTo,
+				asset: job.asset,
+				minAmount: BigInt(job.prepaidAmount ?? '0'),
+				reference: job.jobId
+			});
+			if (check.status === 'confirmed') {
+				return attempt;
+			}
+		}
+		return null;
+	}
+
+	/**
 	 * The router reports the x402 payment: the payer's signed block, whose
 	 * hash the job keeps, and the settlement's transaction (the vote staple),
 	 * kept only when the block is missing. Nothing is paid on the router's
@@ -1296,6 +1362,21 @@ export class ControlService {
 		 */
 		for (const status of ['scheduled', 'completed'] as const) {
 			await each(await this.store.listJobsByStatus(status, 'prepaid', ticketLapse, 200), async (job) => {
+				/* The router recorded a payment it settled but its report never came: settle from the ledger as the report would have. */
+				if (!job.payment && job.paymentAttempts?.length) {
+					const paid = await this.attemptedPayment(job);
+					if (paid) {
+						const reported = await this.routerSettled(job.jobId, { payer: paid.payer, transaction: paid.blockHash });
+						if (reported.payoutDue) {
+							paidOut += (await this.serially(() => this.payout(reported))).settlement?.blockHash ? 1 : 0;
+						}
+						return;
+					}
+					/* A payment block the ledger does not show yet may still land: look again until the lapse. */
+					if ((job.ticketIssuedAt ?? job.createdAt) > now - SETTLE_LAPSE_MS) {
+						return;
+					}
+				}
 				const updated = await this.store.updateJob(job.jobId, (current) => {
 					if (current.status !== status) {
 						return current;

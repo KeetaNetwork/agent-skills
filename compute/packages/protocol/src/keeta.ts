@@ -121,6 +121,22 @@ export function encodedBlockHash(encoded: string): string | null {
 }
 
 /**
+ * Check a signed payment block before it is published (an x402 payment's,
+ * in base64): the same test checkPaymentBlock applies on the ledger. The
+ * hash is the block's, to look it up once published.
+ */
+export function checkEncodedPaymentBlock(encoded: string, expected: Omit<ExpectedPayment, 'blockHash'>): { status: 'confirmed'; amount: bigint; blockHash: string } | { status: 'mismatch'; reason: string } {
+	let block: InstanceType<typeof KeetaNet.lib.Block>;
+	try {
+		block = new KeetaNet.lib.Block(encoded);
+	} catch {
+		return { status: 'mismatch', reason: 'not a signed Keeta block' };
+	}
+	const check = paymentInBlock(block, expected);
+	return check.status === 'confirmed' ? { ...check, blockHash: block.hash.toString().toUpperCase() } : check;
+}
+
+/**
  * Confirm a payment block on the ledger: a block signed by `from` sending
  * `asset` to `to` (for an app job's escrow, credits to the settlement
  * account), at least `minAmount` in total, counting only sends whose
@@ -131,6 +147,10 @@ export async function checkPaymentBlock(client: InstanceType<typeof KeetaNet.Cli
 	if (!block) {
 		return { status: 'not-found' };
 	}
+	return paymentInBlock(block, expected);
+}
+
+function paymentInBlock(block: InstanceType<typeof KeetaNet.lib.Block>, expected: Omit<ExpectedPayment, 'blockHash'>): { status: 'confirmed'; amount: bigint } | { status: 'mismatch'; reason: string } {
 	if (block.account.publicKeyString.get() !== expected.from) {
 		return { status: 'mismatch', reason: 'block was not signed by the buyer account' };
 	}

@@ -70,6 +70,7 @@ export function createApi(service: ControlService, deps: { store: Store; verify:
 	route('POST', '/v1/router/quote', 'router', async ({ body }) => service.routerQuote(body));
 	route('GET', '/v1/router/jobs/:jobId', 'router', async ({ params }) => service.routerJob(params.jobId!));
 	route('POST', '/v1/router/jobs/:jobId/claim', 'router', async ({ params }) => service.routerClaim(params.jobId!));
+	route('POST', '/v1/router/jobs/:jobId/paying', 'router', async ({ params, body }) => service.routerPaying(params.jobId!, body));
 	route('POST', '/v1/router/jobs/:jobId/settled', 'router', async ({ params, body }) => service.routerSettled(params.jobId!, body));
 
 	route('POST', '/v1/pairing', 'signed', async ({ caller, body }) => service.createPairing(caller, body));

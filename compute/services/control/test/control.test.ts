@@ -985,14 +985,25 @@ test('a node that moves to the main network leaves its test-network offers behin
 });
 
 /** A router quote's x402 payment: the payer's send of the quoted amount to where the ticket says, referencing the job. */
-async function payRouterQuote(h: Harness, ticket: JobTicket, payer = randomAccount()) {
-	const blockHash = await h.ledger.publish(payer, [{ to: ticket.paymentTo ?? ticket.payTo, amount: BigInt(ticket.prepaidAmount!), token: ticket.asset, external: ticket.jobId }]);
-	/* As the router reports it: the settlement's transaction is the vote staple's hash, and the payer's signed block comes with it. */
-	const staple = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('hex').toUpperCase();
-	const res = await h.call(null, 'POST', `/v1/router/jobs/${ticket.jobId}/settled`, { payer: payer.publicKeyString.get(), transaction: staple, block: h.ledger.encoded(blockHash) }, ROUTER);
-	assert.equal(res.status, 200, JSON.stringify(res.body));
-	assert.equal((res.body as JobRecord).payment?.blockHash, blockHash, "the job keeps the payer's block, which the payout reads from the ledger");
-	return { payer: payer.publicKeyString.get(), blockHash, job: res.body as JobRecord };
+/**
+ * Pay a router quote as the router does: record the payer's signed block,
+ * settle it (it lands on the ledger), then report the settlement, whose
+ * transaction is the vote staple's hash. `report: false` loses the report.
+ */
+async function payRouterQuote(h: Harness, ticket: JobTicket, payer = randomAccount(), options: { beforeSettle?: () => Promise<unknown>; beforeReport?: () => Promise<unknown>; report?: boolean } = {}) {
+	const blockHash = await h.ledger.publish(payer, [{ to: ticket.paymentTo ?? ticket.payTo, amount: BigInt(ticket.prepaidAmount!), token: ticket.asset, external: ticket.jobId }], { held: true });
+	const recorded = await h.call(null, 'POST', `/v1/router/jobs/${ticket.jobId}/paying`, { payer: payer.publicKeyString.get(), block: h.ledger.encoded(blockHash) }, ROUTER);
+	assert.equal(recorded.status, 200, JSON.stringify(recorded.body));
+	await options.beforeSettle?.();
+	h.ledger.release();
+	await options.beforeReport?.();
+	if (options.report !== false) {
+		const staple = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('hex').toUpperCase();
+		const res = await h.call(null, 'POST', `/v1/router/jobs/${ticket.jobId}/settled`, { payer: payer.publicKeyString.get(), transaction: staple, block: h.ledger.encoded(blockHash) }, ROUTER);
+		assert.equal(res.status, 200, JSON.stringify(res.body));
+		assert.equal((res.body as JobRecord).payment?.blockHash, blockHash, "the job keeps the payer's block, which the payout reads from the ledger");
+	}
+	return { payer: payer.publicKeyString.get(), blockHash, job: (await h.store.getJob(ticket.jobId))! };
 }
 
 test('router quotes are prepaid over x402 to the settlement account in the default stablecoin, at a credit to the dollar', async () => {
@@ -1045,12 +1056,13 @@ test('a router payment goes back to its payer when the job fails, lapses, or fai
 	assert.equal((await paidOut(h, failed.jobId)).settlement!.reason, 'failed');
 	refunded(failed, failedPayer);
 
-	/* The job failed first, then the payment was reported. */
+	/* The job failed while its payment was settling, and the payment was reported after. */
 	const early = await routerTicket();
-	await h.call(node, 'POST', `/v1/jobs/${early.jobId}/fail`, { error: 'busy' });
-	const earlyPayer = (await payRouterQuote(h, early)).payer;
+	const earlyPayer = (await payRouterQuote(h, early, undefined, { beforeSettle: () => h.call(node, 'POST', `/v1/jobs/${early.jobId}/fail`, { error: 'busy' }) })).payer;
 	assert.equal((await paidOut(h, early.jobId)).status, 'failed');
 	refunded(early, earlyPayer);
+	const refused = await h.call(null, 'POST', `/v1/router/jobs/${early.jobId}/paying`, { payer: earlyPayer, block: h.ledger.encoded((await h.store.getJob(early.jobId))!.payment!.blockHash) }, ROUTER);
+	assert.equal(refused.status, 409, 'a failed or paid job takes no further payment');
 
 	/* Paid, but no receipt ever came: the sweep refunds it once the job could no longer be running. */
 	const silent = await routerTicket();
@@ -1063,6 +1075,71 @@ test('a router payment goes back to its payer when the job fails, lapses, or fai
 	const lapsed = (await h.store.getJob(silent.jobId))!;
 	assert.deepEqual([lapsed.status, lapsed.settlement?.reason, Boolean(lapsed.settlement?.blockHash)], ['failed', 'no-receipt', true]);
 	refunded(silent, silentPayer);
+});
+
+test('the router records each payment before settling it: a block that does not pay the job is refused, and a payment whose report is lost is found on the ledger', async () => {
+	const h = harness();
+	const { node, operator } = await registerMac(h);
+	await h.call(node, 'POST', '/v1/providers/heartbeat', { status: 'online', offers: [offer('qwen3-8b')], load: { active: 0, capacity: 4 } });
+	const routerTicket = async () => {
+		/* Time moves on here, so the provider heartbeats before each quote to stay schedulable. */
+		await h.call(node, 'POST', '/v1/providers/heartbeat', { status: 'online', offers: [offer('qwen3-8b')], load: { active: 0, capacity: 4 } });
+		return ((await h.call(null, 'POST', '/v1/router/quote', { network: 'test', model: 'qwen3-8b', ...LIMITS }, ROUTER)).body as { ticket: SignedTicket }).ticket.ticket;
+	};
+	const stablecoin = defaultAsset('test');
+	const paying = async (ticket: JobTicket, payer: KeyPair, send: { to: string; amount: bigint; external: string }) => {
+		const hash = await h.ledger.publish(payer, [{ ...send, token: ticket.asset }], { held: true });
+		return h.call(null, 'POST', `/v1/router/jobs/${ticket.jobId}/paying`, { payer: payer.publicKeyString.get(), block: h.ledger.encoded(hash) }, ROUTER);
+	};
+
+	/* Blocks the payout could never count are refused before they are settled: no job id as the reference, too little, or paid to the provider. */
+	const delivered = await routerTicket();
+	const payer = randomAccount();
+	const due = BigInt(delivered.prepaidAmount!);
+	for (const send of [
+		{ to: h.settlement.account, amount: due, external: 'job_other' },
+		{ to: h.settlement.account, amount: due - 1n, external: delivered.jobId },
+		{ to: delivered.payTo, amount: due, external: delivered.jobId }
+	]) {
+		const refused = await paying(delivered, payer, send);
+		assert.equal(refused.status, 400, JSON.stringify(refused.body));
+		assert.match((refused.body as { error: { message: string } }).error.message, /does not pay this job/);
+	}
+	const forged = await h.call(null, 'POST', `/v1/router/jobs/${delivered.jobId}/paying`, { payer: payer.publicKeyString.get(), block: 'bm90IGEgYmxvY2s=' }, ROUTER);
+	assert.equal(forged.status, 400);
+
+	/* Settled and run, but the router's report never arrived: the sweep reads the recorded block from the ledger and settles as the report would have. */
+	await payRouterQuote(h, delivered, payer, { report: false });
+	const receipt = receiptFor(delivered, h.coordinator.publicKey);
+	assert.equal((await fileReceipt(h, node, receipt)).status, 200);
+	h.advance(TICKET_TTL_MS + 5 * 60_000 + 1);
+	await h.service.sweep();
+	const found = await paidOut(h, delivered.jobId);
+	assert.deepEqual([found.status, found.settlement!.reason, found.routerPayer], ['paid', 'delivered', payer.publicKeyString.get()]);
+	const billed = rescaleAmount(BigInt(receipt.amount), CREDIT_DECIMALS, stablecoin.decimals);
+	assert.deepEqual(h.ledger.payouts(h.settlement.account, delivered.jobId, stablecoin.address).to, { [operator.publicKey]: providerShare(billed), [payer.publicKeyString.get()]: due - billed });
+
+	/* Settled with no receipt and no report: refunded once the job could no longer be running. */
+	const silent = await routerTicket();
+	const silentPayer = (await payRouterQuote(h, silent, undefined, { report: false })).payer;
+	h.advance(TICKET_TTL_MS + 5 * 60_000 + 1);
+	await h.service.sweep();
+	const foundSilent = (await h.store.getJob(silent.jobId))!;
+	assert.deepEqual([foundSilent.status, foundSilent.routerPayer, foundSilent.settlement], ['scheduled', silentPayer, undefined], 'the payment is found, and the job may still be running');
+	h.advance(SETTLE_LAPSE_MS);
+	await h.service.sweep();
+	assert.deepEqual(h.ledger.payouts(h.settlement.account, silent.jobId, stablecoin.address).to, { [silentPayer]: BigInt(silent.prepaidAmount!) });
+
+	/* Recorded but never settled (the payment service refused it): nothing landed, so the quote expires with nothing to pay. */
+	const unsettled = await routerTicket();
+	assert.equal((await paying(unsettled, randomAccount(), { to: h.settlement.account, amount: BigInt(unsettled.prepaidAmount!), external: unsettled.jobId })).status, 200);
+	h.advance(TICKET_TTL_MS + 5 * 60_000 + 1);
+	await h.service.sweep();
+	assert.equal((await h.store.getJob(unsettled.jobId))!.status, 'scheduled', 'a recorded block may still land until the lapse');
+	h.advance(SETTLE_LAPSE_MS);
+	await h.service.sweep();
+	const expired = (await h.store.getJob(unsettled.jobId))!;
+	assert.deepEqual([expired.status, expired.settlement], ['expired', undefined]);
 });
 
 test('a receipt on a router quote counts for its provider only once the router reports the payment', async () => {
@@ -1078,14 +1155,25 @@ test('a receipt on a router quote counts for its provider only once the router r
 	assert.equal((await h.store.getJob(unpaid.jobId))!.status, 'completed');
 	assert.deepEqual(await stats(), { completed: 0, failed: 0, tokensOut: 0 }, 'a receipt with no payment reported counts for nothing');
 
-	/* A payment reported after the receipt counts it then, once. */
-	const payment = await payRouterQuote(h, unpaid);
+	const latePayer = randomAccount();
+	const unpaidBlock = await h.ledger.publish(latePayer, [{ to: unpaid.paymentTo!, amount: BigInt(unpaid.prepaidAmount!), token: unpaid.asset, external: unpaid.jobId }], { held: true });
+	const late = await h.call(null, 'POST', `/v1/router/jobs/${unpaid.jobId}/paying`, { payer: latePayer.publicKeyString.get(), block: h.ledger.encoded(unpaidBlock) }, ROUTER);
+	assert.equal(late.status, 409, 'and nobody can pay that quote afterwards');
+
+	/* A payment reported after the receipt (the report is slow) counts it then, once. */
+	const slow = await routerTicket();
+	const payment = await payRouterQuote(h, slow, undefined, {
+		beforeReport: async () => {
+			assert.equal((await fileReceipt(h, node, receiptFor(slow, h.coordinator.publicKey, { outputTokens: 7 }))).status, 200);
+			assert.deepEqual(await stats(), { completed: 0, failed: 0, tokensOut: 0 });
+		}
+	});
 	assert.equal(payment.job.status, 'paid');
 	assert.deepEqual(await stats(), { completed: 1, failed: 0, tokensOut: 7 });
-	const repeated = await h.call(null, 'POST', `/v1/router/jobs/${unpaid.jobId}/settled`, { payer: payment.payer, transaction: payment.blockHash }, ROUTER);
+	const repeated = await h.call(null, 'POST', `/v1/router/jobs/${slow.jobId}/settled`, { payer: payment.payer, transaction: payment.blockHash }, ROUTER);
 	assert.equal(repeated.status, 200);
 	assert.deepEqual(await stats(), { completed: 1, failed: 0, tokensOut: 7 }, 'a repeated report counts nothing more');
-	assert.equal((await paidOut(h, unpaid.jobId)).settlement!.reason, 'delivered');
+	assert.equal((await paidOut(h, slow.jobId)).settlement!.reason, 'delivered');
 
 	/* The usual order: the payment, then the receipt. */
 	const paid = await routerTicket();

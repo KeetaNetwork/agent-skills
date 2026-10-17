@@ -132,6 +132,12 @@ export interface JobRecord {
 	receipt?: SignedReceipt;
 	/** Router jobs: the x402 settlement. */
 	payment?: { blockHash: string; paidAt: number; verified: boolean };
+	/**
+	 * Router jobs: the signed payment blocks the router recorded before
+	 * settling each (at most 4), so a payment whose settled report never came
+	 * is still found on the ledger.
+	 */
+	paymentAttempts?: Array<{ blockHash: string; payer: string; at: number }>;
 	/** For router jobs: the account that paid through x402. */
 	routerPayer?: string;
 	fallback?: FallbackRoute;

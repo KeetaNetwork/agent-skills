@@ -82,7 +82,7 @@
 <ol>
 <li>Send the request with no payment. The router picks a provider and answers <code>402 Payment Required</code> with a <code>PAYMENT-REQUIRED</code> header: base64 JSON, x402 version 2.</li>
 <li>Your client signs one Keeta send block for <code>amount</code> to <code>payTo</code> and retries the same request with the <code>PAYMENT-SIGNATURE</code> header. The block is signed, not published.</li>
-<li>The router has the x402 facilitator verify the block. The provider checks the quote and reserves a slot for the job, the facilitator settles the payment on Keeta, and only then does the provider run the job. If the provider is offline, busy or refuses the quote, nothing is settled and you are not charged.</li>
+<li>The router has the x402 facilitator verify the block. The provider checks the quote and reserves a slot for the job, the facilitator settles the payment on Keeta, and only then does the provider run the job. If the provider is offline, busy or refuses the quote, nothing is settled and you are not charged. A payment that does not send the quoted amount to <code>payTo</code> with the job id as the send's external reference (<code>extra.external</code>) is refused before it is settled, so you are not charged for it either.</li>
 </ol>
 <p>The payment goes to keeta.ai's settlement account, with the job id written into the send. When the provider's signed receipt bills the job, one Keeta transaction from the settlement account pays the provider what it billed, less the 0.25% network fee, and sends the rest of your payment back to the address that paid. If the job fails or no receipt arrives, the whole payment comes back.</p>
 <p>Example 402:</p>

@@ -54,7 +54,7 @@ function heldProvider(...output: Uint8Array[]) {
 
 const answer = () => [sseData(chunk('Hel')), sseData(chunk('lo', { usage: { prompt_tokens: 5, completion_tokens: 2 } })), sseEvent('keeta.receipt', receipt)];
 
-function setup(options: { runJob?: (envelope: unknown, signal: AbortSignal) => Promise<Response>; startJob?: () => Promise<boolean>; gateway?: Partial<PaymentGateway>; ticket?: SignedTicket; openRouter?: (body: Record<string, unknown>) => Response; fallback?: { via: 'openrouter'; model: string } } = {}) {
+function setup(options: { runJob?: (envelope: unknown, signal: AbortSignal) => Promise<Response>; startJob?: () => Promise<boolean>; gateway?: Partial<PaymentGateway>; ticket?: SignedTicket; openRouter?: (body: Record<string, unknown>) => Response; fallback?: { via: 'openrouter'; model: string }; paying?: () => Response } = {}) {
 	const calls: string[] = [];
 	const provider = options.runJob ? { runJob: options.runJob, startJob: options.startJob ?? (async () => true) } : heldProvider(...answer());
 	const upstreamBodies: Array<Record<string, unknown>> = [];
@@ -95,6 +95,9 @@ function setup(options: { runJob?: (envelope: unknown, signal: AbortSignal) => P
 				}
 				return claims++ === 0 ? Response.json({ fallback: options.fallback }) : Response.json({ error: { message: 'used' } }, { status: 409 });
 			}
+			if (url.endsWith('/paying') && options.paying) {
+				return options.paying();
+			}
 			return Response.json({ ok: true });
 		}) as typeof fetch
 	});
@@ -132,6 +135,8 @@ test('paid non-streaming request aggregates output, settles and returns the rece
 	assert.deepEqual(JSON.parse(atob(response.headers.get('x-keeta-receipt')!)), receipt);
 	assert.deepEqual(calls.filter((c) => c === 'settle' || c === 'start'), ['settle', 'start'], 'the provider starts only once the payment settled');
 	assert.ok(calls.some((c) => c.includes('/v1/router/jobs/job_abc/settled')));
+	const paying = calls.indexOf('POST http://control/v1/router/jobs/job_abc/paying');
+	assert.ok(paying >= 0 && paying < calls.indexOf('settle'), 'the signed block is recorded before it is settled');
 });
 
 test('streaming request passes chunks, receipt and [DONE]', async () => {
@@ -172,6 +177,25 @@ test('a payer who spends the payment elsewhere after it verified gets nothing ru
 		assert.ok(!calls.includes('start'), 'the provider never starts');
 		assert.equal(held.signal?.aborted, true, 'and the slot it held is released');
 		assert.ok(!calls.some((c) => c.includes('/settled')));
+	}
+});
+
+test('a payment the control plane would not count, or cannot record, is never settled', async () => {
+	const refusals = [
+		{ answer: () => Response.json({ error: { message: 'the payment does not pay this job: paid 0, due 36' } }, { status: 400 }), status: 402, says: /paid 0, due 36; you were not charged/ },
+		{ answer: () => Response.json({ error: { message: 'internal' } }, { status: 500 }), status: 503, says: /could not be recorded/ }
+	];
+	for (const refusal of refusals) {
+		const held = heldProvider(...answer());
+		const { router, calls } = setup({ runJob: held.runJob, startJob: held.startJob, paying: refusal.answer });
+		const header = await paymentFor(router);
+		const response = await router.chatCompletions(new Request('http://api/v1/chat/completions', { method: 'POST', body: chatBody(), headers: { 'payment-signature': header } }));
+		assert.equal(response.status, refusal.status);
+		assert.match(((await response.json()) as { error: { message: string } }).error.message, refusal.says);
+		assert.ok(calls.some((c) => c.endsWith('/v1/router/jobs/job_abc/paying')), 'the block goes to the control plane first');
+		assert.ok(!calls.includes('settle'), 'nothing is settled');
+		assert.ok(!calls.includes('start'));
+		assert.equal(held.signal?.aborted, true, 'and the slot the provider held is released');
 	}
 });
 
