@@ -1,10 +1,10 @@
 {
   "functions": [
     {
-      "source": ".",
+      "source": "dist",
       "codebase": "keeta-compute",
       "runtime": "nodejs22",
-      "ignore": ["node_modules", "src", "test", "*.log"]
+      "ignore": ["node_modules", "*.log"]
     }
   ],
   "firestore": {

@@ -506,8 +506,15 @@ final class AppModel: ObservableObject {
 
     // MARK: Fleet
 
+    /// The Linux pairing code on screen. Kept while the popover is closed (it
+    /// closes as soon as the operator clicks into a terminal), so reopening it
+    /// carries on with the code the machine was given.
+    var openPairing: PairingCreated?
+
     func createPairing() async throws -> PairingCreated {
-        try await client.call(AgentRPC.FleetCreatePairing.self, EmptyParams())
+        let created = try await client.call(AgentRPC.FleetCreatePairing.self, EmptyParams())
+        openPairing = created
+        return created
     }
 
     func pairingStatus(_ pairingId: String) async throws -> PairingRecord {
@@ -516,11 +523,13 @@ final class AppModel: ObservableObject {
 
     func approvePairing(_ pairingId: String) async throws {
         _ = try await client.call(AgentRPC.FleetApprove.self, PairingIDParams(pairingId: pairingId))
+        openPairing = nil
         await refreshFleet()
     }
 
     func rejectPairing(_ pairingId: String) async throws {
         _ = try await client.call(AgentRPC.FleetReject.self, PairingIDParams(pairingId: pairingId))
+        openPairing = nil
     }
 
     func revokeHelper(_ nodeKey: String) async {

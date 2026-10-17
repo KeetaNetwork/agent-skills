@@ -6,6 +6,7 @@
 
 import {
 	HEARTBEAT_INTERVAL_MS,
+	MAX_JOB_MS,
 	PREPAID_START_TIMEOUT_MS,
 	canonicalJSON,
 	findAsset,
@@ -69,6 +70,8 @@ export interface ProviderDeps {
 	countPrompt?: PromptCount;
 	/** Testing: skip battery/idle probes. */
 	localConditions?: () => Promise<{ onBattery: boolean; idleSeconds: number }>;
+	/** Testing: the longest one job runs; MAX_JOB_MS otherwise. */
+	maxJobMs?: number;
 }
 
 type ProviderState = ProviderStatus['state'];
@@ -564,6 +567,12 @@ export class Provider {
 			});
 			this.deps.onJob({ ...summary, inputTokens, outputTokens, amount: providerShare(amount).toString(), status: 'completed', at: Date.now() });
 		};
+		/* A job that runs too long is stopped and billed for what it sent, so it settles before the lapse would refund it unpaid. */
+		let overran = false;
+		const deadline = setTimeout(() => {
+			overran = true;
+			controller.abort();
+		}, this.deps.maxJobMs ?? MAX_JOB_MS);
 		try {
 			const requested = envelope.request.max_completion_tokens ?? envelope.request.max_tokens ?? ticket.maxOutputTokens;
 			const result = await streamChat(await this.backendFor(model), envelope.request, {
@@ -581,28 +590,28 @@ export class Provider {
 			});
 			/* A server that reports no usage leaves the prompt to its size bound; the exact count replaces it when there is one. */
 			const inputTokens = result.exactUsage || promptTokens === null ? result.inputTokens : promptTokens;
-			await bill({ ...result, inputTokens, finishReason: controller.signal.aborted ? 'cancelled' : result.finishReason });
+			await bill({ ...result, inputTokens, finishReason: overran ? 'length' : controller.signal.aborted ? 'cancelled' : result.finishReason });
 		} catch (error) {
 			if (controller.signal.aborted && delivered) {
 				/*
-				 * The buyer hung up after receiving text: bill what was sent instead of
-				 * failing the job unpaid. The model's prompt count only arrives at the end
+				 * The buyer hung up after receiving text, or the job reached MAX_JOB_MS:
+				 * bill what was sent instead of failing the job unpaid. The model's prompt count only arrives at the end
 				 * of the stream, and the prompt was already read in full, so the input is
 				 * billed at the exact count, or without a pinned tokenizer at the bound the
 				 * ticket priced and the buyer escrowed; an estimate would let a dense
 				 * prompt (CJK, say) pay for a fraction of its tokens.
 				 */
-				await bill({ inputTokens: promptTokens ?? promptTokenBound(envelope.request), outputTokens: deliveredChunks, text: delivered, finishReason: 'cancelled' }).catch((billError: Error) =>
+				await bill({ inputTokens: promptTokens ?? promptTokenBound(envelope.request), outputTokens: deliveredChunks, text: delivered, finishReason: overran ? 'length' : 'cancelled' }).catch((billError: Error) =>
 					this.deps.log('warn', `could not bill cancelled job ${ticket.jobId}: ${billError.message}`)
 				);
 				return;
 			}
-			if (this.hungUp.has(id)) {
+			if (this.hungUp.has(id) && !overran) {
 				/* The buyer hung up before any text: not this node's failure. The relay recorded when, and the escrow settles from that record. */
 				this.deps.onJob({ ...summary, status: 'failed', error: 'cancelled by the buyer', at: Date.now() });
 				return;
 			}
-			const message = controller.signal.aborted ? 'stopped on this node' : (error as Error).message;
+			const message = overran ? 'the model sent nothing within the time limit' : controller.signal.aborted ? 'stopped on this node' : (error as Error).message;
 			this.send({ type: 'error', id, code: 'model_failed', message });
 			this.deps.onJob({ ...summary, status: 'failed', error: message, at: Date.now() });
 			try {
@@ -611,6 +620,7 @@ export class Provider {
 				/* the control plane expires it */
 			}
 		} finally {
+			clearTimeout(deadline);
 			this.active.delete(id);
 			this.hungUp.delete(id);
 			this.deps.onChange();

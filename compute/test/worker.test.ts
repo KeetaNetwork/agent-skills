@@ -263,6 +263,8 @@ test('the public router lists models and quotes while the payment service is dow
 	assert.ok(listed.data.some((m) => m.id === MODEL && m.keeta.providers >= 1));
 
 	const body = JSON.stringify({ model: MODEL, messages: [{ role: 'user', content: 'Say hello' }], max_tokens: 32 });
+	const misrouted = await fetch(`${worker.url}/v1/models`, { method: 'POST', headers: { 'content-type': 'application/json' }, body });
+	assert.equal(misrouted.status, 404, 'only /v1/chat/completions takes a chat request');
 	const quote = await fetch(`${worker.url}/v1/chat/completions`, { method: 'POST', headers: { 'content-type': 'application/json' }, body });
 	assert.equal(quote.status, 402);
 	const required = JSON.parse(atob(quote.headers.get('payment-required')!)) as { accepts: Array<{ payTo: string; amount: string; network: string; extra: { jobId: string; external: string } }> };

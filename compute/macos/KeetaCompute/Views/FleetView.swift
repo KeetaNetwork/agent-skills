@@ -150,12 +150,15 @@ struct PairingSheet: View {
             }
             HStack {
                 Spacer()
-                Button(status == .approved || status == .rejected ? "Done" : "Cancel") { dismiss() }
-                    .keyboardShortcut(.cancelAction)
+                Button(status == .approved || status == .rejected ? "Done" : "Cancel") {
+                    model.openPairing = nil
+                    dismiss()
+                }
+                .keyboardShortcut(.cancelAction)
             }
         }
         .padding(16)
-        .task { await start() }
+        .task { await resumeOrStart() }
         .onDisappear { pollGeneration += 1 }
     }
 
@@ -236,6 +239,22 @@ struct PairingSheet: View {
         return String(format: "%d:%02d", seconds / 60, seconds % 60)
     }
 
+    /// The sheet appears again each time the popover reopens: carry on with the
+    /// code already given out, so the machine's claim still shows up here.
+    private func resumeOrStart() async {
+        if created != nil, status == .approved || status == .rejected || status == .expired {
+            return
+        }
+        guard let current = model.openPairing, current.expiresAt > Date().timeIntervalSince1970 * 1000 else {
+            await start()
+            return
+        }
+        error = nil
+        created = current
+        pollGeneration += 1
+        await poll(current, generation: pollGeneration)
+    }
+
     private func start() async {
         error = nil
         record = nil
@@ -257,11 +276,15 @@ struct PairingSheet: View {
         while !Task.isCancelled && generation == pollGeneration {
             if Date().timeIntervalSince1970 * 1000 > pairing.expiresAt, status == .waiting {
                 localStatus = .expired
+                model.openPairing = nil
                 return
             }
             if let latest = try? await model.pairingStatus(pairing.pairingId), generation == pollGeneration {
                 record = latest
-                if latest.status != .waiting { return }
+                if latest.status != .waiting {
+                    if latest.status != .claimed { model.openPairing = nil }
+                    return
+                }
             }
             try? await Task.sleep(for: .seconds(2))
         }

@@ -318,7 +318,9 @@ export function createRouter(deps: RouterDeps) {
 				return errorResponse(402, 'settlement_failed', settlement.errorReason ?? 'the payment could not be settled');
 			}
 			const payer = settlement.payer ?? verified.payer;
-			void control(`/v1/router/jobs/${ticket.jobId}/settled`, { method: 'POST', body: { payer, transaction: settlement.transaction ?? '' } }).catch(() => undefined);
+			/* The payer's signed block too: the settlement's transaction names the vote staple, and the control plane reads the block itself. */
+			const block = typeof payload.payload?.block === 'string' ? payload.payload.block : undefined;
+			void control(`/v1/router/jobs/${ticket.jobId}/settled`, { method: 'POST', body: { payer, transaction: settlement.transaction ?? '', ...(block ? { block } : {}) } }).catch(() => undefined);
 			return base64Json({ success: true, transaction: settlement.transaction, network: requirements.network, payer });
 		}
 	}

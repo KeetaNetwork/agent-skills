@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "description": "Keeta Compute control plane: provider registry, scheduler, receipts, pairing. Runs as a Firebase Cloud Function backed by Firestore, or as a local Node server.",
-  "main": "lib/index.js",
+  "main": "dist/index.js",
   "engines": {
     "node": "22"
   },
@@ -12,7 +12,7 @@
     "typecheck": "tsc -p tsconfig.json",
     "test": "node --import tsx --test test/*.test.ts",
     "dev": "node --import tsx src/server.ts",
-    "build": "esbuild src/index.ts --bundle --platform=node --target=node22 --format=esm --outfile=lib/index.js --packages=external --alias:@keeta-compute/protocol=../../packages/protocol/src/index.ts --alias:@keeta-compute/protocol/keeta=../../packages/protocol/src/keeta.ts",
+    "build": "esbuild src/index.ts --bundle --platform=node --target=node22 --format=esm --outfile=dist/index.js --packages=external --alias:@keeta-compute/protocol=../../packages/protocol/src/index.ts --alias:@keeta-compute/protocol/keeta=../../packages/protocol/src/keeta.ts && node scripts/functions-manifest.mjs",
     "deploy": "npm run build && firebase deploy --only functions,firestore"
   },
   "dependencies": {

@@ -20,10 +20,14 @@ public enum WalletConstants {
     /// Keeta account addresses start with this prefix.
     public static let addressPrefix = "keeta_"
 
-    /// Cheap shape check for addresses typed or pasted by the user. The agent does the real validation.
+    /// Shape check for addresses typed or pasted by the user: the same one the
+    /// control plane applies to allowlists (`keeta_` and 50 to 80 base32 characters).
     public static func looksLikeAddress(_ text: String) -> Bool {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.hasPrefix(addressPrefix), trimmed.count > addressPrefix.count + 20 else { return false }
-        return trimmed.dropFirst(addressPrefix.count).allSatisfy { $0.isASCII && ($0.isLowercase || $0.isNumber) }
+        guard trimmed.hasPrefix(addressPrefix) else { return false }
+        let body = trimmed.dropFirst(addressPrefix.count)
+        return (50...80).contains(body.count) && body.allSatisfy(base32.contains)
     }
+
+    private static let base32 = Set("abcdefghijklmnopqrstuvwxyz234567")
 }

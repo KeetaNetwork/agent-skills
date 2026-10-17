@@ -85,5 +85,11 @@ final class AmountTests: XCTestCase {
         XCTAssertTrue(WalletConstants.looksLikeAddress("keeta_apna75yhhvnv4ei7ape55hndk4yepno7a7i2mhtiwahiygixjcnmvswxhnmnk"))
         XCTAssertFalse(WalletConstants.looksLikeAddress("0x1234"))
         XCTAssertFalse(WalletConstants.looksLikeAddress("keeta_short"))
+        // Base32 has no 0, 1, 8 or 9, so the control plane would refuse these.
+        XCTAssertFalse(WalletConstants.looksLikeAddress("keeta_apna75yhhvnv4ei7ape55hndk4yepno7a7i2mhtiwahiygixjcnmvswxhnmn0"))
+        XCTAssertFalse(WalletConstants.looksLikeAddress("keeta_apna75yhhvnv4ei7ape55hndk4yepno7a7i2mhtiwahiygixjcnmvswxhnmn9"))
+        XCTAssertFalse(WalletConstants.looksLikeAddress("keeta_" + String(repeating: "a", count: 49)))
+        XCTAssertTrue(WalletConstants.looksLikeAddress("keeta_" + String(repeating: "a", count: 80)))
+        XCTAssertFalse(WalletConstants.looksLikeAddress("keeta_" + String(repeating: "a", count: 81)))
     }
 }

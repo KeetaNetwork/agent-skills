@@ -399,3 +399,75 @@ test('a cancel that arrives while an app ticket is still being checked stops the
 	assert.equal(runs, 1);
 	assert.deepEqual(framesFor('run_2'), ['chunk', 'chunk', 'receipt']);
 });
+
+test('a job that runs past the time limit is stopped and billed for the text it sent', async (t) => {
+	/* A model that sends one token and then keeps the stream open without finishing. */
+	const server = createServer((req, res) => {
+		req.resume();
+		res.writeHead(200, { 'content-type': 'text/event-stream' });
+		res.write(`data: ${JSON.stringify({ id: 'c1', created: 1, choices: [{ index: 0, delta: { content: 'Hi' }, finish_reason: null }] })}\n\n`);
+	});
+	await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+	t.after(() => {
+		server.closeAllConnections();
+		server.close();
+	});
+	const baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`;
+
+	const store = memoryStore();
+	store.state.provider = { ...store.state.provider, enabled: true };
+	const models = new ModelManager(store, tempDir(t), null, () => undefined);
+	const price = { inputPerMillion: '50000', outputPerMillion: '200000' };
+	models.addExternal({ modelId: 'my-model', name: 'Mine', backend: { baseUrl, servedName: 'mine' }, weightsHash: 'a'.repeat(64), sizeBytes: 1, path: '/dev/null', contextLength: 4096, price });
+	const control = {
+		get: async () => ({ coordinatorKey: 'keeta_coordinator' }),
+		post: async () => ({ eligible: true, status: 'online', relayUrl: 'ws://127.0.0.1:1', relayToken: 'token', relayTokenExpiresAt: Date.now() + 60_000, creditToken: 'keeta_credits' })
+	} as unknown as ControlClient;
+	const sent: ProviderFrame[] = [];
+	class Socket {
+		readyState = 1;
+		addEventListener() {}
+		close() {}
+		send(raw: string) {
+			sent.push(JSON.parse(raw) as ProviderFrame);
+		}
+	}
+	const node = { publicKey: 'keeta_node', sign: async () => 'signature' };
+	const provider = new Provider({
+		store,
+		control,
+		node,
+		verify: () => true,
+		models,
+		runtime: null,
+		kind: 'linux',
+		hardware: () => ({ os: 'linux', osVersion: '6.8', chip: 'x86_64', memoryBytes: 64 * 2 ** 30, freeDiskBytes: 500 * 2 ** 30 }),
+		registration: () => ({}),
+		log: () => undefined,
+		onJob: () => undefined,
+		onChange: () => undefined,
+		WebSocketImpl: Socket as unknown as typeof WebSocket,
+		localConditions: async () => ({ onBattery: false, idleSeconds: 1e9 }),
+		maxJobMs: 200
+	});
+	const internals = provider as unknown as { beat(): Promise<void>; onFrame(raw: string): Promise<void>; active: Map<string, AbortController> };
+	await internals.beat();
+
+	const envelope: JobEnvelope = {
+		ticket: {
+			ticket: { v: 1, jobId: 'job_long', network: 'test', nodeKey: node.publicKey, modelId: 'my-model', buyer: 'keeta_buyer', maxInputTokens: 1000, maxOutputTokens: 16, price, asset: 'keeta_credits', payTo: 'keeta_operator', paymentMode: 'escrow', issuedAt: Date.now(), expiresAt: Date.now() + 60_000 },
+			coordinatorSig: 'signature',
+			relayMac: 'mac'
+		},
+		request: { model: 'my-model', messages: [{ role: 'user', content: 'hi' }], max_tokens: 16 },
+		buyerSig: 'signature'
+	};
+	await internals.onFrame(JSON.stringify({ type: 'job', id: 'run_long', envelope }));
+	const frames = sent.filter((f) => 'id' in f && f.id === 'run_long');
+	assert.deepEqual(frames.map((f) => f.type), ['chunk', 'receipt'], 'the job ends with a receipt instead of running on');
+	const receipt = (frames[1] as Extract<ProviderFrame, { type: 'receipt' }>).receipt.receipt;
+	assert.equal(receipt.finishReason, 'length');
+	assert.equal(receipt.outputTokens, 1);
+	assert.equal(receipt.outputHash, createHash('sha256').update('Hi').digest('hex'), 'billed for exactly the text sent');
+	assert.equal(internals.active.size, 0, 'the slot is free');
+});

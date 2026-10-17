@@ -55,9 +55,18 @@ export const QUOTE_TTL_MS = 60_000;
 export const NO_SHOW_WINDOW_MS = 10_000;
 
 /**
- * An escrowed app job still missing its receipt or the relay's delivery
- * record this long after its ticket was issued is settled without them: the
- * buyer is refunded in full, less the no-show fee when it owes one.
+ * The longest a node runs one job. It then stops the model and bills the
+ * text already sent (finish reason `length`), so every job ends, with its
+ * receipt and the relay's record, well before SETTLE_LAPSE_MS.
+ */
+export const MAX_JOB_MS = 10 * 60_000;
+
+/**
+ * An escrowed app job, or a paid router job, still missing its receipt or the
+ * relay's delivery record this long after its ticket was issued is settled
+ * without them: the buyer is refunded in full, less the no-show fee when it
+ * owes one. It covers the ticket's TTL, a router job's start wait, a job
+ * running MAX_JOB_MS, and the relay's retries of its record.
  */
 export const SETTLE_LAPSE_MS = 15 * 60_000;
 

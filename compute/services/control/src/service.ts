@@ -35,6 +35,7 @@ import {
 	findCatalogModel,
 	hardwareTier,
 	jobCost,
+	MAX_ALLOWLISTED,
 	maxJobCost,
 	networkFee,
 	operatorLinkMessage,
@@ -45,6 +46,7 @@ import {
 	randomId,
 	receiptMessage,
 	rescaleAmount,
+	samePolicy,
 	ticketMac,
 	ticketMessage,
 	type AccessPolicy,
@@ -68,6 +70,7 @@ import {
 	type Signer,
 	type Verifier
 } from '@keeta-compute/protocol';
+import { encodedBlockHash } from '@keeta-compute/protocol/keeta';
 import { ConflictError, NotFoundError, type Store, type StoredProvider } from './store.ts';
 
 /**
@@ -202,8 +205,6 @@ const MAX_IN_FLIGHT = 8;
 const MAX_PROVIDER_LIST = 100;
 /** A signed receipt as the job record keeps it, in bytes of JSON; a real one is under 2 KB. */
 const MAX_RECEIPT_BYTES = 8_192;
-/** Addresses a node's stored allowlists may hold, its own and its offers' together: as many as one list may. */
-const MAX_ALLOWLISTED = 1000;
 const PUBLIC_ACCESS: AccessPolicy = { mode: 'public', allow: [] };
 /** A payout attempt that has not recorded its block this long after it started may be retried (after checking the ledger). */
 const PAYOUT_RETRY_MS = 5 * 60_000;
@@ -486,15 +487,16 @@ export class ControlService {
 				if (args.maxInputTokens + args.maxOutputTokens > offer.contextLength) {
 					return [];
 				}
-				const access: AccessPolicy = offer.access.mode === 'allowlist' ? offer.access : provider.access;
-				if (!allows(access)) {
+				/* A helper's own record keeps only a copy of its master's policy from pairing time; the master's current one applies. */
+				const master = provider.kind === 'linux-helper' ? (provider.masterNodeKey ? masters.get(provider.masterNodeKey) : null) : undefined;
+				if (master === null) {
 					return [];
 				}
-				if (provider.kind === 'linux-helper') {
-					const master = provider.masterNodeKey ? masters.get(provider.masterNodeKey) : null;
-					if (!master || !allows(master.access)) {
-						return [];
-					}
+				const nodeAccess = master ? master.access : provider.access;
+				const access: AccessPolicy = offer.access.mode === 'allowlist' ? offer.access : nodeAccess;
+				/* The master's list covers its whole fleet, models with lists of their own included. */
+				if (!allows(access) || (master && !allows(master.access))) {
+					return [];
 				}
 				if (args.maxPrice && (BigInt(offer.price.inputPerMillion) > BigInt(args.maxPrice.inputPerMillion) || BigInt(offer.price.outputPerMillion) > BigInt(args.maxPrice.outputPerMillion))) {
 					return [];
@@ -830,14 +832,17 @@ export class ControlService {
 	}
 
 	/**
-	 * The router reports the x402 payment's block; the job keeps the hash.
-	 * Nothing is paid on the router's word: a payout to the provider (or back
-	 * to the payer) reads the block from the ledger first (payoutSends).
+	 * The router reports the x402 payment: the payer's signed block, whose
+	 * hash the job keeps, and the settlement's transaction (the vote staple),
+	 * kept only when the block is missing. Nothing is paid on the router's
+	 * word: a payout to the provider (or back to the payer) reads the block
+	 * from the ledger first (routerPayoutSends).
 	 */
 	async routerSettled(jobId: string, body: Record<string, unknown>) {
 		const payer = assertKeetaAddress(body.payer, 'payer');
 		const raw = typeof body.transaction === 'string' ? body.transaction.slice(0, 200) : '';
-		const transaction = /^[0-9A-Fa-f]{64}$/.test(raw) ? raw.toUpperCase() : raw;
+		const block = typeof body.block === 'string' && body.block.length <= 16_384 ? encodedBlockHash(body.block) : null;
+		const transaction = block ?? (/^[0-9A-Fa-f]{64}$/.test(raw) ? raw.toUpperCase() : raw);
 		let receiptCounts = null as SignedReceipt | null;
 		const job = await this.store.updateJob(jobId, (current) => {
 			receiptCounts = null; /* a store may retry this update */
@@ -1295,8 +1300,11 @@ export class ControlService {
 					if (current.status !== status) {
 						return current;
 					}
-					/* Paid to the settlement account but never billed: the payment goes back to the payer. */
+					/* Paid to the settlement account but never billed: the payment goes back to the payer, once a job could no longer be running (MAX_JOB_MS). */
 					if (current.payment && current.paymentTo && !current.settlement) {
+						if ((current.ticketIssuedAt ?? current.createdAt) > now - SETTLE_LAPSE_MS) {
+							return current;
+						}
 						return { ...current, status: 'failed', completedAt: current.completedAt ?? now, ...prepaidSettlement(current, 'no-receipt', now) };
 					}
 					return { ...current, status: 'expired' };
@@ -1567,10 +1575,6 @@ function validateReceipt(job: JobRecord, receipt: SignedReceipt['receipt']): str
 		return 'receipt exceeds the job\'s maximum cost';
 	}
 	return null;
-}
-
-function samePolicy(a: AccessPolicy, b: AccessPolicy): boolean {
-	return a.mode === b.mode && a.allow.length === b.allow.length && a.allow.every((key, i) => key === b.allow[i]);
 }
 
 /** The scheduler's counters, dropping anything else an older record carried (such as a stored earnings total). */

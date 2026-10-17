@@ -100,6 +100,12 @@ class TestLedger {
 		return hash;
 	}
 
+	/** A published block in the base64 form an x402 payment carries it in. */
+	encoded(hash: string): string {
+		const block = this.blocks.get(hash) ?? this.held.get(hash);
+		return Buffer.from(block!.toBytes(true)).toString('base64');
+	}
+
 	release(): void {
 		for (const [hash, block] of this.held) {
 			this.blocks.set(hash, block);
@@ -981,8 +987,11 @@ test('a node that moves to the main network leaves its test-network offers behin
 /** A router quote's x402 payment: the payer's send of the quoted amount to where the ticket says, referencing the job. */
 async function payRouterQuote(h: Harness, ticket: JobTicket, payer = randomAccount()) {
 	const blockHash = await h.ledger.publish(payer, [{ to: ticket.paymentTo ?? ticket.payTo, amount: BigInt(ticket.prepaidAmount!), token: ticket.asset, external: ticket.jobId }]);
-	const res = await h.call(null, 'POST', `/v1/router/jobs/${ticket.jobId}/settled`, { payer: payer.publicKeyString.get(), transaction: blockHash }, ROUTER);
+	/* As the router reports it: the settlement's transaction is the vote staple's hash, and the payer's signed block comes with it. */
+	const staple = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('hex').toUpperCase();
+	const res = await h.call(null, 'POST', `/v1/router/jobs/${ticket.jobId}/settled`, { payer: payer.publicKeyString.get(), transaction: staple, block: h.ledger.encoded(blockHash) }, ROUTER);
 	assert.equal(res.status, 200, JSON.stringify(res.body));
+	assert.equal((res.body as JobRecord).payment?.blockHash, blockHash, "the job keeps the payer's block, which the payout reads from the ledger");
 	return { payer: payer.publicKeyString.get(), blockHash, job: res.body as JobRecord };
 }
 
@@ -1043,10 +1052,13 @@ test('a router payment goes back to its payer when the job fails, lapses, or fai
 	assert.equal((await paidOut(h, early.jobId)).status, 'failed');
 	refunded(early, earlyPayer);
 
-	/* Paid, but no receipt ever came: the sweep refunds it after the ticket lapses. */
+	/* Paid, but no receipt ever came: the sweep refunds it once the job could no longer be running. */
 	const silent = await routerTicket();
 	const silentPayer = (await payRouterQuote(h, silent)).payer;
 	h.advance(TICKET_TTL_MS + 5 * 60_000 + 1);
+	await h.service.sweep();
+	assert.equal((await h.store.getJob(silent.jobId))!.status, 'scheduled', 'a paid job may still be running (up to MAX_JOB_MS)');
+	h.advance(SETTLE_LAPSE_MS);
 	await h.service.sweep();
 	const lapsed = (await h.store.getJob(silent.jobId))!;
 	assert.deepEqual([lapsed.status, lapsed.settlement?.reason, Boolean(lapsed.settlement?.blockHash)], ['failed', 'no-receipt', true]);
@@ -1182,6 +1194,10 @@ test('Linux helpers pair by code with check string and master approval', async (
 	assert.equal(record.status, 'claimed');
 	assert.equal(record.claim.checkString, (claimed.body as { checkString: string }).checkString);
 
+	/* The Mac has an allowlist when it approves the helper, so the helper's record starts with a copy of it. */
+	const listed = newSigner();
+	const stranger = newSigner();
+	await h.call(master, 'POST', '/v1/providers/heartbeat', { status: 'paused', offers: [], access: { mode: 'allowlist', allow: [listed.publicKey] } });
 	const approvalSig = await master.sign(pairingApprovalMessage({ pairingId, helperNodeKey: helper.publicKey, masterNodeKey: master.publicKey, payTo: operator.publicKey }));
 	assert.equal((await h.call(master, 'POST', `/v1/pairing/${pairingId}/approve`, { approvalSig })).status, 200);
 
@@ -1190,15 +1206,13 @@ test('Linux helpers pair by code with check string and master approval', async (
 	assert.equal((registered.body as { provider: { payTo: string } }).provider.payTo, operator.publicKey, 'helper earnings go to the master wallet');
 
 	/* The helper serves under the Mac's allowlist, whatever it reports itself. */
-	const listed = newSigner();
-	const stranger = newSigner();
-	await h.call(master, 'POST', '/v1/providers/heartbeat', { status: 'paused', offers: [], access: { mode: 'allowlist', allow: [listed.publicKey] } });
 	await h.call(helper, 'POST', '/v1/providers/heartbeat', { status: 'online', offers: [offer('qwen3-8b')], access: { mode: 'public', allow: [] }, load: { active: 0, capacity: 4 } });
 	const job = { network: 'test', model: 'qwen3-8b', maxInputTokens: 10, maxOutputTokens: 10 };
 	assert.equal((await h.call(stranger, 'POST', '/v1/jobs', job)).status, 503, 'buyers off the Mac allowlist are not scheduled on its helpers');
 	assert.equal((await h.call(listed, 'POST', '/v1/jobs', job)).status, 200);
 	await h.call(master, 'POST', '/v1/providers/heartbeat', { status: 'paused', offers: [], access: { mode: 'public', allow: [] } });
 	assert.equal((await h.call(stranger, 'POST', '/v1/jobs', job)).status, 200, 'and follow the Mac when it opens up');
+	assert.equal((await h.call(null, 'POST', '/v1/router/quote', job, ROUTER)).status, 200, 'public router traffic included, whatever list the Mac had at pairing');
 
 	const fleet = await h.call(master, 'GET', '/v1/fleet');
 	assert.equal((fleet.body as { helpers: unknown[] }).helpers.length, 1);

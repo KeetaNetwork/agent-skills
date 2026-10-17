@@ -126,8 +126,9 @@ export interface ProviderStatus {
 	activeJobs: number;
 	/**
 	 * Credits the settlement account paid the operator, read from the ledger
-	 * (UTC today, and in all the history read). Router jobs pay the operator
-	 * in stablecoins directly, which shows in the wallet balance instead.
+	 * (UTC today, and in all the history read). The same account pays router
+	 * jobs in the stablecoin their buyer paid, which shows in the wallet
+	 * balance instead.
 	 */
 	earnedToday: string;
 	earnedTotal: string;

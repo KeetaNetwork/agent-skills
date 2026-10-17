@@ -108,6 +108,19 @@ export interface ExpectedPayment {
 export type PaymentCheck = { status: 'confirmed'; amount: bigint } | { status: 'not-found' } | { status: 'mismatch'; reason: string };
 
 /**
+ * The hash of a signed block in its base64 wire form, as an x402 payment
+ * carries it, or null if it is not one. (The x402 settlement's
+ * `transaction` is the hash of the vote staple holding the block.)
+ */
+export function encodedBlockHash(encoded: string): string | null {
+	try {
+		return new KeetaNet.lib.Block(encoded).hash.toString().toUpperCase();
+	} catch {
+		return null;
+	}
+}
+
+/**
  * Confirm a payment block on the ledger: a block signed by `from` sending
  * `asset` to `to` (for an app job's escrow, credits to the settlement
  * account), at least `minAmount` in total, counting only sends whose

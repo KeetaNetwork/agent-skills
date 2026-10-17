@@ -9,14 +9,21 @@
 import { join } from 'node:path';
 import {
 	LOCAL_API_PORT,
+	MAX_ALLOWLISTED,
+	MAX_CONTEXT_LENGTH,
 	MIN_PROVIDER_MEMORY_BYTES,
 	NETWORKS,
+	ValidationError,
+	allowlistedCount,
+	assertAccess,
+	assertPrice,
 	availableAssets,
 	generatePairingCode,
 	hardwareTier,
 	operatorLinkMessage,
 	pairingApprovalMessage,
 	pairingCodeHash,
+	type AccessPolicy,
 	type HardwareProfile,
 	type NetworkCredits,
 	type NetworkName,
@@ -97,6 +104,18 @@ function earnings(payouts: Array<{ amount: bigint; at: number }>): { today: stri
 	return { today: today.toString(), total: total.toString() };
 }
 
+/** Runs a protocol validator on a setting from the app, so the app hears what the control plane would refuse. */
+function checkSetting<T>(check: () => T): T {
+	try {
+		return check();
+	} catch (error) {
+		if (error instanceof ValidationError) {
+			throw new RpcError(RPC_ERRORS.invalidParams, error.message);
+		}
+		throw error;
+	}
+}
+
 export class AgentApp {
 	readonly store: StateStore;
 	private readonly queue = new SerialQueue();
@@ -160,6 +179,21 @@ export class AgentApp {
 			throw new RpcError(RPC_ERRORS.notInitialized, 'call agent.initialize first');
 		}
 		return { node: this.node, nodeSigner: this.nodeSigner, control: this.control, models: this.models, provider: this.provider, buyer: this.buyer, spend: this.spend, ledger: this.ledger };
+	}
+
+	/**
+	 * Refuses a policy or offer change that would put more addresses on this
+	 * node's allowlists than the control plane takes in a heartbeat, which would
+	 * otherwise refuse every heartbeat and take the node offline.
+	 */
+	private checkAllowlisted(policy: AccessPolicy, change?: { modelId: string; offered: boolean; access: AccessPolicy | null | undefined }) {
+		const offers = this.store.state.models.flatMap((model) => {
+			const offer = model.modelId === change?.modelId ? { offered: change.offered, access: change.access === undefined ? model.offer.access : change.access } : model.offer;
+			return offer.offered ? [offer.access ?? policy] : [];
+		});
+		if (allowlistedCount(policy, offers) > MAX_ALLOWLISTED) {
+			throw new RpcError(RPC_ERRORS.invalidParams, `this node's allowlists may hold at most ${MAX_ALLOWLISTED} addresses in total: its own list and the lists its models set for themselves`);
+		}
 	}
 
 	private emitState = () => {
@@ -662,7 +696,12 @@ export class AgentApp {
 				this.requireInit().models.installCatalog(p.modelId, this.hardware);
 				return { started: true };
 			},
-			'models.installCustom': async (p: Params<'models.installCustom'>) => ({ started: true, modelId: this.requireInit().models.installCustom(p.repo, p.name, p.contextLength) }),
+			'models.installCustom': async (p: Params<'models.installCustom'>) => {
+				if (p.contextLength !== undefined && !(Number.isInteger(p.contextLength) && p.contextLength > 0 && p.contextLength <= MAX_CONTEXT_LENGTH)) {
+					throw new RpcError(RPC_ERRORS.invalidParams, `contextLength must be between 1 and ${MAX_CONTEXT_LENGTH}`);
+				}
+				return { started: true, modelId: this.requireInit().models.installCustom(p.repo, p.name, p.contextLength) };
+			},
 			'models.cancelInstall': async (p: Params<'models.cancelInstall'>) => ({ cancelled: this.requireInit().models.cancel(p.modelId) }),
 			'models.remove': async (p: Params<'models.remove'>) => {
 				const removed = this.requireInit().models.remove(p.modelId);
@@ -670,7 +709,11 @@ export class AgentApp {
 				return { removed };
 			},
 			'models.setOffer': async (p: Params<'models.setOffer'>) => {
-				const model = this.requireInit().models.setOffer(p.modelId, p.offered, p.price, p.access);
+				const { models } = this.requireInit();
+				const price = p.price === undefined ? undefined : checkSetting(() => assertPrice(p.price));
+				const access = p.access ? checkSetting(() => assertAccess(p.access)) : p.access;
+				this.checkAllowlisted(this.store.state.provider.access, { modelId: p.modelId, offered: p.offered, access });
+				const model = models.setOffer(p.modelId, p.offered, price, access);
 				this.provider!.poke();
 				this.emitState();
 				return model;
@@ -678,8 +721,12 @@ export class AgentApp {
 			'provider.status': async () => this.requireInit().provider.status,
 			'provider.setPolicy': async (p: Params<'provider.setPolicy'>) => {
 				const { provider } = this.requireInit();
+				const access = p.access === undefined ? undefined : checkSetting(() => assertAccess(p.access));
+				if (access) {
+					this.checkAllowlisted(access);
+				}
 				this.store.update((s) => {
-					s.provider = { ...s.provider, ...p, schedule: { ...s.provider.schedule, ...(p.schedule ?? {}) } };
+					s.provider = { ...s.provider, ...p, ...(access ? { access } : {}), schedule: { ...s.provider.schedule, ...(p.schedule ?? {}) } };
 					s.provider.maxConcurrentJobs = Math.min(8, Math.max(1, Math.floor(s.provider.maxConcurrentJobs)));
 				});
 				provider.poke();

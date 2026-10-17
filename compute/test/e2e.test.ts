@@ -576,4 +576,16 @@ test('a buyer buys credits with a stablecoin, escrows each job at ticket time, a
 	assert.deepEqual([funded.from, funded.to, funded.amount, funded.token], [linuxOperator, linuxSpend, 500_000n, stablecoin.address]);
 	await assert.rejects(cli.walletSend({ dataDir: linuxDir, to: operator, amount: '0.1', asset: stablecoin.symbol }, { ...io, passphrase: async () => 'not the passphrase' }), /wrong passphrase/);
 	assert.equal(ledger.sends.length, sendsBefore + 1);
+
+	/* The Mac refuses allowlists a heartbeat would carry and the control plane refuse, which would take the node offline. */
+	const B32 = 'abcdefghijklmnopqrstuvwxyz234567';
+	const listOf = (n: number, salt: string) => Array.from({ length: n }, (_, i) => `keeta_${salt}${B32[i >> 5]!}${B32[i & 31]!}`.padEnd(62, 'q'));
+	await assert.rejects(provider.rpc['provider.setPolicy']!({ access: { mode: 'allowlist', allow: ['keeta_0000'] } }), /must be a Keeta address/);
+	await assert.rejects(provider.rpc['models.setOffer']!({ modelId: MODEL, offered: true, access: { mode: 'allowlist', allow: listOf(1001, 'b') } }), /must be a list/);
+	await provider.rpc['models.setOffer']!({ modelId: MODEL, offered: true, access: { mode: 'allowlist', allow: listOf(600, 'b') } });
+	await assert.rejects(provider.rpc['provider.setPolicy']!({ access: { mode: 'allowlist', allow: listOf(600, 'c') } }), /at most 1000 addresses/);
+	await provider.rpc['models.setOffer']!({ modelId: MODEL, offered: true, access: null });
+	await provider.rpc['provider.setPolicy']!({ access: { mode: 'allowlist', allow: listOf(1000, 'c') } });
+	await until('the Mac\'s 1000-address list to reach the control plane', async () => (await control.store.getProvider(macKey))?.access.allow.length === 1000);
+	assert.equal((await control.store.getProvider(macKey))?.status, 'online');
 });

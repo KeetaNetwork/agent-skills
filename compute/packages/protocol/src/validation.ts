@@ -47,6 +47,24 @@ export function assertAccess(value: unknown, field = 'access'): AccessPolicy {
 	return { mode: access.mode, allow: access.allow.map((key, i) => assertKeetaAddress(key, `${field}.allow[${i}]`)) };
 }
 
+/** Most buyer addresses one node's allowlists may hold together: its own list and the lists its models set for themselves. */
+export const MAX_ALLOWLISTED = 1000;
+
+/** Whether two policies are the same: both public, or the same list. */
+export function samePolicy(a: AccessPolicy, b: AccessPolicy): boolean {
+	return a.mode === b.mode && a.allow.length === b.allow.length && a.allow.every((key, i) => key === b.allow[i]);
+}
+
+/**
+ * The addresses a node's allowlists hold, counted as the control plane
+ * stores them: the node's own list, plus each offer's list that differs
+ * from it.
+ */
+export function allowlistedCount(policy: AccessPolicy, offers: AccessPolicy[]): number {
+	const own = policy.mode === 'allowlist' ? policy.allow.length : 0;
+	return offers.reduce((sum, access) => sum + (access.mode === 'allowlist' && !samePolicy(access, policy) ? access.allow.length : 0), own);
+}
+
 const MODEL_ID = /^[a-z0-9][a-z0-9._:/-]{0,127}$/i;
 
 export function assertModelId(value: unknown, field = 'model'): string {
