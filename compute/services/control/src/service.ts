@@ -807,7 +807,9 @@ export class ControlService {
 	async routerSettled(jobId: string, body: Record<string, unknown>) {
 		const payer = assertKeetaAddress(body.payer, 'payer');
 		const transaction = typeof body.transaction === 'string' ? body.transaction.slice(0, 200) : '';
+		let receiptCounts = null as SignedReceipt | null;
 		const job = await this.store.updateJob(jobId, (current) => {
+			receiptCounts = null; /* a store may retry this update */
 			if (current.paymentMode !== 'prepaid') {
 				throw new ConflictError('not a router job');
 			}
@@ -816,12 +818,17 @@ export class ControlService {
 			if (current.fallback) {
 				return { ...current, payment, routerPayer: payer, status: 'paid', completedAt: this.now() };
 			}
-			/* The provider's receipt can land first; the job is paid now. */
+			/* The provider's receipt can land first; the job is paid now, and the receipt counts for the provider now. */
 			if (current.status === 'completed' && !current.payment) {
+				receiptCounts = current.receipt ?? null;
 				return { ...current, payment, routerPayer: payer, status: 'paid' };
 			}
 			return { ...current, payment, routerPayer: payer };
 		});
+		if (receiptCounts) {
+			const { outputTokens } = receiptCounts.receipt;
+			await this.store.updateProvider(job.nodeKey, (record) => ({ ...record, stats: { ...record.stats, completed: record.stats.completed + 1, tokensOut: record.stats.tokensOut + outputTokens } }));
+		}
 		return redactJob(job);
 	}
 
@@ -884,10 +891,16 @@ export class ControlService {
 			const prepaidSettled = current.paymentMode === 'prepaid' && current.payment;
 			return { ...current, status: prepaidSettled ? 'paid' : 'completed', completedAt: now, receipt: stored };
 		});
+		/*
+		 * A router job counts once its payment is reported (routerSettled counts
+		 * it when the receipt came first), so receipts on quotes nobody paid
+		 * count for nothing. An app job counts now; settlement records disputes.
+		 */
+		const counts = updated.paymentMode === 'escrow' || updated.status === 'paid';
 		await this.store.updateProvider(nodeKey, (record) => ({
 			...record,
 			load: { ...record.load, active: Math.max(0, record.load.active - (heldSlot ? 1 : 0)) },
-			stats: { ...record.stats, completed: record.stats.completed + 1, tokensOut: record.stats.tokensOut + receipt.outputTokens }
+			stats: counts ? { ...record.stats, completed: record.stats.completed + 1, tokensOut: record.stats.tokensOut + receipt.outputTokens } : record.stats
 		}));
 		if (updated.paymentMode === 'escrow') {
 			this.settleInBackground(jobId);

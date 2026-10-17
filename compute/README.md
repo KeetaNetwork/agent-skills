@@ -62,7 +62,7 @@ The public router (`api.keeta.ai`) prepays instead: it answers with HTTP 402 car
 Firestore holds routing state and Keeta block hashes, never balances.
 
 - **Jobs**: who, what and where (buyer, node, operator, model, price, limits, network, credit token), the buyer's price ceiling and allowed providers from the quote request, status and timestamps (`quoteExpiresAt`, `ticketIssuedAt`, `handedBackAt`, `providerOfflineAt`, `completedAt`), the provider's signed receipt (its signed fields and signature only, at most 8 KB), the relay's delivery record, `escrow {blockHash, at}` and `settlement {reason, decidedAt, attemptAt, blockHash, sentAt, error}`. `payoutDue` marks a job the sweep still has to pay out. Router jobs also keep the x402 payment's block hash, `routerPayer` and `prepaidAmount` (the amount on the signed ticket).
-- **Providers**: registration, offers, heartbeat and load, and the scheduler's counters (`completed`, `failed`, `tokensOut`, `disputed`). No earnings.
+- **Providers**: registration, offers, heartbeat and load, and the scheduler's counters (`completed`, `failed`, `tokensOut`, `disputed`; a router job counts as completed only once the router reports its payment). No earnings.
 - **Pairings** of Linux helpers, **nonces** of signed requests, and a per-buyer lock that caps how many quotes and jobs a buyer has in flight.
 
 Spend limits are kept by the agent on the buyer's machine, not by the control plane.

@@ -967,6 +967,34 @@ test('router quotes are prepaid to the provider over x402 in the default stablec
 	assert.equal(h.payouts.published, 0, 'router jobs never touch the settlement account');
 });
 
+test('a receipt on a router quote counts for its provider only once the router reports the payment', async () => {
+	const h = harness();
+	const { node } = await registerMac(h);
+	await h.call(node, 'POST', '/v1/providers/heartbeat', { status: 'online', offers: [offer('qwen3-8b')], load: { active: 0, capacity: 2 } });
+	const stats = async () => (await h.store.getProvider(node.publicKey))!.stats;
+	const routerTicket = async () => ((await h.call(null, 'POST', '/v1/router/quote', { network: 'test', model: 'qwen3-8b', ...LIMITS }, ROUTER)).body as { ticket: SignedTicket }).ticket.ticket;
+	const reportPayment = (jobId: string) => h.call(null, 'POST', `/v1/router/jobs/${jobId}/settled`, { payer: newSigner().publicKey, transaction: 'tx' }, ROUTER);
+
+	/* The 402 hands anyone the signed ticket, so a provider can file receipts on quotes nobody pays. */
+	const unpaid = await routerTicket();
+	assert.equal((await fileReceipt(h, node, receiptFor(unpaid, h.coordinator.publicKey, { outputTokens: 7 }))).status, 200);
+	assert.equal((await h.store.getJob(unpaid.jobId))!.status, 'completed');
+	assert.deepEqual(await stats(), { completed: 0, failed: 0, tokensOut: 0 }, 'a receipt with no payment reported counts for nothing');
+
+	/* A payment reported after the receipt counts it then, once. */
+	assert.equal(((await reportPayment(unpaid.jobId)).body as JobRecord).status, 'paid');
+	assert.deepEqual(await stats(), { completed: 1, failed: 0, tokensOut: 7 });
+	await reportPayment(unpaid.jobId);
+	assert.deepEqual(await stats(), { completed: 1, failed: 0, tokensOut: 7 }, 'a repeated report counts nothing more');
+
+	/* The usual order: the payment, then the receipt. */
+	const paid = await routerTicket();
+	await reportPayment(paid.jobId);
+	assert.equal((await fileReceipt(h, node, receiptFor(paid, h.coordinator.publicKey, { outputTokens: 3 }))).status, 200);
+	assert.equal((await h.store.getJob(paid.jobId))!.status, 'paid');
+	assert.deepEqual(await stats(), { completed: 2, failed: 0, tokensOut: 10 });
+});
+
 test('router quotes nobody paid, and receipts filed on them, never hold up the sweep settling app jobs', async () => {
 	const h = harness();
 	const { node } = await registerMac(h);

@@ -72,7 +72,7 @@ Balances are only ever read from the ledger. The network's job records keep the 
    - A ticket holds a slot on its provider, so it must be brought to the relay within 10 seconds of being issued and not hung up on within 10 seconds of arriving before any text. A ticket the relay never saw, or hung up on that early, is a no-show: the provider gets the no-show fee, `1000` base units (0.001 credits), and the rest of the escrow goes back to the buyer. A ticket brought late that runs pays the fee on top of its `amount`. A buyer that waited longer than 10 seconds for text gets the whole escrow back.
 
    Before paying, the settlement account looks for a block of its own that references the job, so a job is never paid out twice.
-10. **Reputation.** Completed, failed and disputed jobs update the provider's record, which the scheduler reads.
+10. **Reputation.** Completed, failed and disputed jobs update the provider's record, which the scheduler reads. A router job counts as completed only once the router has reported its payment.
 
 Structured output is compiled before the first token, so requests are bounded: `response_format` JSON schemas (and tool parameters when a tool call is forced) must be at most 8 KB, nest at most 8 levels and avoid `anyOf`, `oneOf`, `allOf`, `not`, `$ref`, `pattern` and conditionals; `stop` takes at most 4 sequences of 256 bytes. Counting a prompt's tokens takes time in proportion to its size, so a provider refuses a request whose size bound (the one tickets use without a pinned tokenizer) is more than 16 times its ticket's input limit plus 65,536, before counting it.
 
