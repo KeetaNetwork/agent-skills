@@ -1,14 +1,21 @@
+import AppKit
 import KeetaComputeKit
 import SwiftUI
 
-enum SidebarItem: String, CaseIterable, Identifiable, Hashable {
-    case home, wallet, models, provide, use, fleet, settings
+/// Popover size. The app lives in the menu bar, like Keeta Agent, with no main window.
+enum PopoverMetrics {
+    static let width: CGFloat = 400
+    static let height: CGFloat = 600
+}
+
+/// The screens reachable from Home.
+enum Page: String, CaseIterable, Identifiable, Hashable {
+    case wallet, models, provide, use, fleet, settings
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
-        case .home: return "Home"
         case .wallet: return "Wallet"
         case .models: return "Models"
         case .provide: return "Provide"
@@ -20,7 +27,6 @@ enum SidebarItem: String, CaseIterable, Identifiable, Hashable {
 
     var systemImage: String {
         switch self {
-        case .home: return "house"
         case .wallet: return "wallet.pass"
         case .models: return "shippingbox"
         case .provide: return "bolt.horizontal.circle"
@@ -31,18 +37,56 @@ enum SidebarItem: String, CaseIterable, Identifiable, Hashable {
     }
 }
 
+/// Moves the popover to another screen.
+struct OpenPageAction {
+    var action: (Page) -> Void = { _ in }
+
+    func callAsFunction(_ page: Page) {
+        action(page)
+    }
+}
+
+private struct OpenPageKey: EnvironmentKey {
+    static let defaultValue = OpenPageAction()
+}
+
+extension EnvironmentValues {
+    var openPage: OpenPageAction {
+        get { self[OpenPageKey.self] }
+        set { self[OpenPageKey.self] = newValue }
+    }
+}
+
+/// Everything in the menu bar popover: a header, the current screen, and "Powered by Keeta".
 struct RootView: View {
     @EnvironmentObject private var model: AppModel
+    @State private var page: Page?
+
+    init(page: Page? = nil) {
+        self._page = State(initialValue: page)
+    }
 
     var body: some View {
-        Group {
-            if model.onboardingComplete {
-                MainView()
-            } else {
-                OnboardingView()
-                    .frame(minWidth: 720, minHeight: 560)
+        VStack(spacing: 0) {
+            PopoverHeader(page: model.onboardingComplete ? page : nil) { page = nil }
+            ConnectionBanner()
+            Group {
+                if !model.onboardingComplete {
+                    OnboardingView()
+                } else if let page {
+                    screen(for: page)
+                } else {
+                    HomeView()
+                }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            PopoverFooter()
         }
+        .frame(width: PopoverMetrics.width, height: PopoverMetrics.height)
+        .background(Color.keetaGray)
+        .foregroundStyle(Color.keetaYellow)
+        .environment(\.colorScheme, .dark)
+        .environment(\.openPage, OpenPageAction { page = $0 })
         .alert(
             model.alert?.title ?? "",
             isPresented: Binding(get: { model.alert != nil }, set: { if !$0 { model.alert = nil } }),
@@ -55,59 +99,22 @@ struct RootView: View {
         .overlay(alignment: .bottom) {
             if let notice = model.notice {
                 Text(notice)
+                    .font(.callout)
+                    .foregroundStyle(Color.keetaBlack)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 10)
-                    .background(.regularMaterial, in: Capsule())
-                    .padding(.bottom, 20)
+                    .background(Color.keetaYellow, in: Capsule())
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 56)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
         .animation(.default, value: model.notice)
     }
-}
-
-struct MainView: View {
-    @EnvironmentObject private var model: AppModel
-    @SceneStorage("sidebarSelection") private var selection: SidebarItem = .home
-
-    var body: some View {
-        NavigationSplitView {
-            List(selection: Binding<SidebarItem?>(get: { selection }, set: { selection = $0 ?? .home })) {
-                Section {
-                    ForEach([SidebarItem.home, .wallet]) { item in
-                        Label(item.title, systemImage: item.systemImage).tag(item)
-                    }
-                }
-                Section("Earn") {
-                    ForEach([SidebarItem.models, .provide, .fleet]) { item in
-                        Label(item.title, systemImage: item.systemImage).tag(item)
-                    }
-                }
-                Section("Spend") {
-                    Label(SidebarItem.use.title, systemImage: SidebarItem.use.systemImage).tag(SidebarItem.use)
-                }
-                Section {
-                    Label(SidebarItem.settings.title, systemImage: SidebarItem.settings.systemImage).tag(SidebarItem.settings)
-                }
-            }
-            .navigationSplitViewColumnWidth(min: 180, ideal: 200)
-            .safeAreaInset(edge: .bottom) {
-                SidebarFooter()
-            }
-        } detail: {
-            VStack(spacing: 0) {
-                ConnectionBanner()
-                detail
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
-        }
-        .frame(minWidth: 860, minHeight: 560)
-    }
 
     @ViewBuilder
-    private var detail: some View {
-        switch selection {
-        case .home: HomeView(selection: $selection)
+    private func screen(for page: Page) -> some View {
+        switch page {
         case .wallet: WalletView()
         case .models: ModelsView()
         case .provide: ProvideView()
@@ -118,25 +125,63 @@ struct MainView: View {
     }
 }
 
-/// Balance and network at the bottom of the sidebar.
-private struct SidebarFooter: View {
+/// Title in Keeta cream, as in Keeta Agent, with a back button on inner screens.
+private struct PopoverHeader: View {
     @EnvironmentObject private var model: AppModel
+    let page: Page?
+    let back: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Divider()
-            if let credits = model.creditBalance {
-                Text(model.money.string(credits))
-                    .font(.headline)
-                    .monospacedDigit()
+        HStack(spacing: 10) {
+            if let page {
+                Button(action: back) {
+                    Image(systemName: "chevron.left")
+                        .font(.title3.weight(.semibold))
+                        .frame(width: 24, height: 28)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(Color.keetaRed)
+                .help("Back")
+                Text(page.title)
+                    .font(.title.weight(.medium))
+            } else {
+                Text("Keeta Compute")
+                    .font(.title.weight(.medium))
             }
+            Spacer()
             if model.isTestNetwork {
                 Badge(text: "Test network", color: .orange)
             }
         }
-        .padding(.horizontal, 12)
+        .foregroundStyle(Color.keetaYellow)
+        .padding(.horizontal, 16)
+        .padding(.top, 16)
         .padding(.bottom, 10)
-        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct PopoverFooter: View {
+    var body: some View {
+        HStack {
+            PoweredByKeeta()
+            Spacer()
+            Button {
+                NSApp.terminate(nil)
+            } label: {
+                Image(systemName: "power")
+                    .font(.body.weight(.medium))
+            }
+            .buttonStyle(.borderless)
+            .foregroundStyle(Color.keetaGray40)
+            .keyboardShortcut("q")
+            .help("Quit Keeta Compute")
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .overlay(alignment: .top) {
+            Rectangle().fill(Color.keetaGray50.opacity(0.5)).frame(height: 1)
+        }
     }
 }
 
@@ -155,14 +200,15 @@ struct ConnectionBanner: View {
                 }
                 Text(message)
                     .font(.callout)
-                Spacer()
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
                 if case .failed = model.connection {
                     Button("Try again") { Task { await model.restartAgent() } }
                 }
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
-            .background(.orange.opacity(0.12))
+            .background(.orange.opacity(0.14))
         }
     }
 

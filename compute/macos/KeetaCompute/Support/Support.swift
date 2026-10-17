@@ -7,10 +7,15 @@ import SwiftUI
 
 // MARK: - Brand
 
+// The same palette as the Keeta Agent app.
 extension Color {
     static let keetaGreen = Color("KeetaGreen")
     static let keetaGray = Color("KeetaGray")
+    static let keetaGray40 = Color("KeetaGray40")
     static let keetaGray50 = Color("KeetaGray50")
+    static let keetaBlack = Color("KeetaBlack")
+    static let keetaRed = Color("KeetaRed")
+    static let keetaYellow = Color("KeetaYellow")
 }
 
 // MARK: - Pasteboard

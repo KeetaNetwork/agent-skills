@@ -114,10 +114,15 @@ final class PasskeyWallet {
         if inFlight != nil {
             throw WalletError.authorization("Another passkey request is already open.")
         }
+        // The popover is the key window; keep it open while the system prompt has focus.
         let anchor = NSApp.keyWindow ?? NSApp.mainWindow ?? NSApp.windows.first(where: { $0.isVisible }) ?? NSWindow()
         let session = AuthorizationSession(anchor: anchor)
         inFlight = session
-        defer { inFlight = nil }
+        PopoverHold.begin()
+        defer {
+            inFlight = nil
+            PopoverHold.end()
+        }
         return try await session.run(request)
     }
 

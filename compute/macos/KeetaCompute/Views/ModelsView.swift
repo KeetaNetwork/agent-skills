@@ -54,6 +54,14 @@ struct ModelsView: View {
                         if entry.id != available.last?.id { Divider() }
                     }
                 }
+                Divider()
+                Button {
+                    showingCustom = true
+                } label: {
+                    Label("Add a custom model from Hugging Face…", systemImage: "plus")
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(Color.keetaRed)
             }
 
             if !tooBig.isEmpty {
@@ -65,28 +73,15 @@ struct ModelsView: View {
                 }
             }
         }
-        .toolbar {
-            ToolbarItem {
-                Button {
-                    showingCustom = true
-                } label: {
-                    Label("Add a custom model", systemImage: "plus")
-                }
-                .help("Add a custom model from Hugging Face")
-            }
-        }
         .task { await model.refreshCatalog() }
-        .sheet(item: Binding(get: { offerSettingsFor.map(IdentifiedString.init) }, set: { offerSettingsFor = $0?.id })) { item in
+        .panel(item: Binding(get: { offerSettingsFor.map(IdentifiedString.init) }, set: { offerSettingsFor = $0?.id })) { item in
             OfferSettingsSheet(modelId: item.id)
-                .environmentObject(model)
         }
-        .sheet(item: Binding(get: { licenseFor.map(IdentifiedString.init) }, set: { licenseFor = $0?.id })) { item in
+        .panel(item: Binding(get: { licenseFor.map(IdentifiedString.init) }, set: { licenseFor = $0?.id })) { item in
             LicenseSheet(modelId: item.id)
-                .environmentObject(model)
         }
-        .sheet(isPresented: $showingCustom) {
+        .panel(isPresented: $showingCustom) {
             CustomModelSheet()
-                .environmentObject(model)
         }
     }
 
@@ -113,32 +108,37 @@ struct ModelRow: View {
     let onSettings: () -> Void
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 6) {
-                    Text(entry.model.name)
-                        .font(.body.weight(.semibold))
-                    if entry.installed?.custom == true {
-                        Badge(text: "Custom")
-                    }
-                    if entry.installed?.offer.offered == true {
-                        Badge(text: "Offered", color: .keetaGreen)
-                    }
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(entry.model.name)
+                    .font(.body.weight(.semibold))
+                if entry.installed?.custom == true {
+                    Badge(text: "Custom")
                 }
-                Text(details)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                if let installed = entry.installed, installed.offer.offered {
-                    Text(model.money.priceSummary(installed.offer.price))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                if entry.installed?.offer.offered == true {
+                    Badge(text: "Offered", color: .keetaGreen)
                 }
-                if let progress {
-                    InstallProgressView(progress: progress)
+                Spacer(minLength: 8)
+                if entry.installed == nil {
+                    actions
                 }
             }
-            Spacer(minLength: 12)
-            actions
+            Text(details)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if let installed = entry.installed, installed.offer.offered {
+                Text(model.money.priceSummary(installed.offer.price))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            if let progress {
+                InstallProgressView(progress: progress)
+            }
+            if entry.installed != nil {
+                actions
+                    .padding(.top, 2)
+            }
         }
         .padding(.vertical, 4)
     }
@@ -160,18 +160,18 @@ struct ModelRow: View {
             HStack(spacing: 10) {
                 Toggle("Offer to the network", isOn: Binding(get: { installed.offer.offered }, set: { onOffer($0) }))
                     .toggleStyle(.switch)
+                    .controlSize(.small)
                     .disabled(model.provider?.state == .notEligible)
+                Spacer()
                 Button("Settings…", action: onSettings)
+                    .controlSize(.small)
             }
         } else if entry.compatibility.fits {
             Button(progress?.phase == .failed ? "Retry" : "Install") {
                 Task { await model.install(entry.id) }
             }
+            .controlSize(.small)
             .disabled(!model.connection.isRunning)
-        } else {
-            Text(entry.compatibility.summary)
-                .font(.callout)
-                .foregroundStyle(.secondary)
         }
     }
 }
@@ -200,7 +200,7 @@ struct InstallProgressView: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .frame(maxWidth: 360, alignment: .leading)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var label: String {
@@ -223,7 +223,7 @@ struct InstallProgressView: View {
 
 struct LicenseSheet: View {
     @EnvironmentObject var model: AppModel
-    @Environment(\.dismiss) var dismiss
+    @Environment(\.closePanel) var dismiss
     let modelId: String
     @State var accepted = false
 
@@ -234,6 +234,12 @@ struct LicenseSheet: View {
     private var entry: CatalogEntry? { model.catalog.first { $0.id == modelId } }
 
     var body: some View {
+        ScrollView {
+            licenseBody
+        }
+    }
+
+    private var licenseBody: some View {
         VStack(alignment: .leading, spacing: 16) {
             if let entry {
                 let license = entry.model.license
@@ -270,7 +276,7 @@ struct LicenseSheet: View {
                         Task { await model.setOffer(modelId: modelId, offered: true) }
                         dismiss()
                     }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.keetaPrimary)
                     .keyboardShortcut(.defaultAction)
                     .disabled(!accepted)
                 }
@@ -279,8 +285,7 @@ struct LicenseSheet: View {
                 Button("Close") { dismiss() }
             }
         }
-        .padding(24)
-        .frame(width: 520)
+        .padding(16)
     }
 }
 
@@ -300,7 +305,7 @@ struct OfferSettingsSheet: View {
     }
 
     @EnvironmentObject var model: AppModel
-    @Environment(\.dismiss) var dismiss
+    @Environment(\.closePanel) var dismiss
     let modelId: String
     @State var inputPrice = "0"
     @State var outputPrice = "0"
@@ -361,13 +366,14 @@ struct OfferSettingsSheet: View {
                     }
                 }
                 .formStyle(.grouped)
+                .scrollContentBackground(.hidden)
                 .onAppear { load(installed) }
                 HStack {
                     Button("Cancel", role: .cancel) { dismiss() }
                         .keyboardShortcut(.cancelAction)
                     Spacer()
                     Button("Save") { save(installed) }
-                        .buttonStyle(.borderedProminent)
+                        .buttonStyle(.keetaPrimary)
                         .keyboardShortcut(.defaultAction)
                         .disabled(access == .allowlist && allow.isEmpty)
                 }
@@ -376,8 +382,7 @@ struct OfferSettingsSheet: View {
                 Button("Close") { dismiss() }
             }
         }
-        .padding(24)
-        .frame(width: 560, height: 620)
+        .padding(16)
         .confirmationDialog("Remove this model?", isPresented: $confirmingRemove) {
             Button("Remove", role: .destructive) {
                 Task { await model.remove(modelId) }
@@ -418,7 +423,7 @@ struct OfferSettingsSheet: View {
 
 struct CustomModelSheet: View {
     @EnvironmentObject var model: AppModel
-    @Environment(\.dismiss) var dismiss
+    @Environment(\.closePanel) var dismiss
     @State var repo = ""
     @State var name = ""
     @State var contextLength = ""
@@ -443,6 +448,7 @@ struct CustomModelSheet: View {
                 TextField("Context length (optional)", text: $contextLength, prompt: Text("32768"))
             }
             .formStyle(.grouped)
+            .scrollContentBackground(.hidden)
             if let error {
                 Text(error).foregroundStyle(.red).font(.callout)
             }
@@ -452,13 +458,12 @@ struct CustomModelSheet: View {
                 Spacer()
                 if working { ProgressView().controlSize(.small) }
                 Button("Install") { install() }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.keetaPrimary)
                     .keyboardShortcut(.defaultAction)
                     .disabled(!repoIsValid || name.trimmingCharacters(in: .whitespaces).isEmpty || working)
             }
         }
-        .padding(24)
-        .frame(width: 520)
+        .padding(16)
     }
 
     private func install() {

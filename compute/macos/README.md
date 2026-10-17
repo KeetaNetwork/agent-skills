@@ -1,7 +1,9 @@
 # Keeta Compute for macOS
 
-Keeta Compute is a menu bar and window app for Apple Silicon Macs. It lets the
-owner of a Mac:
+Keeta Compute is a menu bar app for Apple Silicon Macs, built like the Keeta
+Agent app: it has no Dock icon or main window, and everything happens in a
+popover under its menu bar icon (right-click the icon for Quit). The popover
+opens by itself on first launch for setup. It lets the owner of a Mac:
 
 - **Pay with Keeta stablecoins**: buy Keeta Compute Credits (one credit is one
   US dollar) with KUSD, KEUR, KJPY, KMXN, KCAD, KAED, KGBP or USDC in the Wallet
@@ -34,11 +36,11 @@ the app starts and talks to over JSON-RPC.
 | `project.yml` | XcodeGen spec: app target `KeetaCompute`, framework `KeetaComputeKit`, test target `KeetaComputeKitTests`, the agent bundling run script |
 | `Package.swift`, `Sources/KeetaComputeKit/` | Pure Swift logic shared by the app and tests: RPC contract types, JSON-RPC framing, DER→raw ECDSA and low-S, compressed points, amount and price formatting |
 | `Tests/KeetaComputeKitTests/` | XCTest tests for the above |
-| `KeetaCompute/App/` | App entry: main window, logs window, menu bar extra, termination handling |
+| `KeetaCompute/App/` | App entry (`LSUIElement`, no main window), the status item and its popover, the logs window, termination handling, Debug-only screenshot mode |
 | `KeetaCompute/Agent/` | `AgentRPCClient` actor: process lifecycle, request ids, timeouts, restart with backoff |
 | `KeetaCompute/Security/` | `NodeKeySigner` (Secure Enclave node key), `PasskeyWallet` + `PasskeyPRF` (operator wallet) |
 | `KeetaCompute/Model/AppModel.swift` | Observable state driven by `event.state` and call results |
-| `KeetaCompute/Views/` | Onboarding, Home, Wallet, Models, Provide, Use, Fleet, Settings, Logs, menu bar |
+| `KeetaCompute/Views/` | The popover (`RootView`): Onboarding, Home, Wallet, Models, Provide, Use, Fleet, Settings; panels that stand in for sheets; Logs |
 | `Config/` | `Info.plist`, app entitlements, entitlements for signing the agent helper |
 | `apple-app-site-association.json` | Template for the keeta.ai associated-domain file |
 
@@ -55,6 +57,18 @@ make run                             # build and open the app
 
 Or open `KeetaCompute.xcodeproj` after `make project` and run the
 `KeetaCompute` scheme.
+
+### Screenshots
+
+A Debug build can draw every popover screen with made-up sample data, without
+the agent, a wallet or a network, and quit:
+
+```sh
+"build/DerivedData/Build/Products/Debug/Keeta Compute.app/Contents/MacOS/Keeta Compute" --snapshot /tmp/keeta-compute-screenshots
+```
+
+CI does this on every change and uploads the images as the
+`macos-popover-screenshots` artifact of the CI run.
 
 ### The bundled agent
 

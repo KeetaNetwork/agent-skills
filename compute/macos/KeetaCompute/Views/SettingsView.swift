@@ -4,7 +4,6 @@ import SwiftUI
 
 struct SettingsView: View {
     @EnvironmentObject var model: AppModel
-    @Environment(\.openWindow) var openWindow
     @State var confirmingMain = false
     @State var switching = false
     @State var showAdvanced = false
@@ -51,6 +50,7 @@ struct SettingsView: View {
                 Text("Main (real money)").tag(NetworkName.main)
             }
             .pickerStyle(.radioGroup)
+            .labelsHidden()
             .disabled(switching || !model.connection.isRunning)
             if switching {
                 ProgressView("Switching…").controlSize(.small)
@@ -78,7 +78,7 @@ struct SettingsView: View {
             Text("This Mac signs a receipt for every request it serves with its own key. That key can't move money.")
                 .foregroundStyle(.secondary)
             if let nodeKey = model.agent?.nodeKey {
-                LabeledContent("Node address") {
+                LabeledField("Node address") {
                     CopyField(value: nodeKey)
                 }
             }
@@ -101,7 +101,7 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
             if let address = model.wallet?.operatorAddress {
-                LabeledContent("Wallet address") {
+                LabeledField("Wallet address") {
                     CopyField(value: address)
                 }
             }
@@ -125,7 +125,7 @@ struct SettingsView: View {
                 }
             ))
             if LaunchAtLogin.needsApproval {
-                HStack {
+                VStack(alignment: .leading, spacing: 6) {
                     Text("Allow Keeta Compute in System Settings › Login Items.")
                         .font(.callout)
                         .foregroundStyle(.secondary)
@@ -136,8 +136,9 @@ struct SettingsView: View {
                 Text(launchError).font(.callout).foregroundStyle(.red)
             }
             HStack {
-                Button("Show logs") { openWindow(id: WindowID.logs) }
-                Button("Restart background service") { Task { await model.restartAgent() } }
+                Button("Show logs") { AppDelegate.shared?.showLogs() }
+                Button("Restart service") { Task { await model.restartAgent() } }
+                    .help("Restart the background service")
             }
             LabeledContent("Version") {
                 Text("App \(model.appVersion)\(model.agent.map { " · Service \($0.version)" } ?? "")")
@@ -156,11 +157,11 @@ struct SettingsView: View {
                     Text("Only change these if Keeta support asks you to. The background service restarts to apply them.")
                         .font(.callout)
                         .foregroundStyle(.secondary)
-                    LabeledContent("Control service") {
+                    LabeledField("Control service") {
                         TextField("Control service URL", text: $controlURL)
                             .textFieldStyle(.roundedBorder)
                     }
-                    LabeledContent("Relay service") {
+                    LabeledField("Relay service") {
                         TextField("Relay service URL", text: $relayURL)
                             .textFieldStyle(.roundedBorder)
                     }
@@ -173,7 +174,7 @@ struct SettingsView: View {
                         Button("Apply and restart") {
                             Task { await model.setEndpoints(control: controlURL, relay: relayURL) }
                         }
-                        .buttonStyle(.borderedProminent)
+                        .buttonStyle(.keetaPrimary)
                         .disabled(!urlsValid || (controlURL == model.controlURL && relayURL == model.relayURL))
                     }
                 }

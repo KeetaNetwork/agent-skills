@@ -11,21 +11,22 @@ struct OnboardingView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            ConnectionBanner()
             ProgressDots(current: step.rawValue, count: Step.allCases.count)
-                .padding(.top, 24)
-            Group {
-                switch step {
-                case .welcome: WelcomeStep { step = .wallet }
-                case .wallet: WalletStep { step = .hardware }
-                case .hardware: HardwareStep(onProvide: { step = .models }, onBuyOnly: { step = .done })
-                case .models: ModelPickStep { step = .done }
-                case .done: DoneStep { model.finishOnboarding() }
+                .padding(.top, 4)
+            ScrollView {
+                Group {
+                    switch step {
+                    case .welcome: WelcomeStep { step = .wallet }
+                    case .wallet: WalletStep { step = .hardware }
+                    case .hardware: HardwareStep(onProvide: { step = .models }, onBuyOnly: { step = .done })
+                    case .models: ModelPickStep { step = .done }
+                    case .done: DoneStep { model.finishOnboarding() }
+                    }
                 }
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 16)
             }
-            .frame(maxWidth: 560)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .padding(32)
         }
         .animation(.easeInOut(duration: 0.2), value: step)
     }
@@ -54,14 +55,14 @@ private struct StepHeader: View {
     var body: some View {
         VStack(spacing: 12) {
             Image(systemName: systemImage)
-                .font(.system(size: 44, weight: .regular))
-                .foregroundStyle(Color.keetaGreen)
+                .font(.system(size: 34, weight: .regular))
+                .foregroundStyle(Color.keetaRed)
             Text(title)
-                .font(.largeTitle.weight(.semibold))
+                .font(.title2.weight(.semibold))
                 .multilineTextAlignment(.center)
             Text(message)
-                .font(.title3)
-                .foregroundStyle(.secondary)
+                .font(.body)
+                .foregroundStyle(Color.keetaGray40)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -74,7 +75,7 @@ private struct WelcomeStep: View {
     let next: () -> Void
 
     var body: some View {
-        VStack(spacing: 28) {
+        VStack(spacing: 22) {
             StepHeader(
                 systemImage: "macbook.and.iphone",
                 title: "Welcome to Keeta Compute",
@@ -86,8 +87,7 @@ private struct WelcomeStep: View {
                 Point(symbol: "terminal", text: "Point your own tools and agents at a local endpoint and pay per request.")
             }
             Button("Get started", action: next)
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
+                .buttonStyle(.keetaPrimary)
                 .keyboardShortcut(.defaultAction)
         }
     }
@@ -100,9 +100,10 @@ private struct WelcomeStep: View {
             Label {
                 Text(text)
             } icon: {
-                Image(systemName: symbol).foregroundStyle(Color.keetaGreen)
+                Image(systemName: symbol).foregroundStyle(Color.keetaRed)
             }
-            .font(.body)
+            .font(.callout)
+            .fixedSize(horizontal: false, vertical: true)
         }
     }
 }
@@ -127,7 +128,8 @@ private struct WalletStep: View {
                 Label("Only you can move money. Keeta Compute asks for Touch ID every time.", systemImage: "touchid")
             }
             .font(.callout)
-            .foregroundStyle(.secondary)
+            .foregroundStyle(Color.keetaGray40)
+            .fixedSize(horizontal: false, vertical: true)
 
             if model.hasOperator, let address = model.wallet?.operatorAddress {
                 VStack(spacing: 8) {
@@ -139,8 +141,7 @@ private struct WalletStep: View {
                         .foregroundStyle(.secondary)
                 }
                 Button("Continue", action: next)
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.large)
+                    .buttonStyle(.keetaPrimary)
                     .keyboardShortcut(.defaultAction)
             } else {
                 VStack(spacing: 10) {
@@ -153,8 +154,7 @@ private struct WalletStep: View {
                             Text("Create wallet with passkey")
                         }
                     }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.large)
+                    .buttonStyle(.keetaPrimary)
                     .keyboardShortcut(.defaultAction)
 
                     Button("I already have a wallet passkey") {
@@ -222,8 +222,7 @@ private struct HardwareStep: View {
                     Label("This Mac can earn by serving models to the network.", systemImage: "checkmark.seal.fill")
                         .foregroundStyle(Color.keetaGreen)
                     Button("Choose models", action: onProvide)
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.large)
+                        .buttonStyle(.keetaPrimary)
                         .keyboardShortcut(.defaultAction)
                 } else {
                     VStack(spacing: 6) {
@@ -234,8 +233,7 @@ private struct HardwareStep: View {
                             .multilineTextAlignment(.center)
                     }
                     Button("Continue", action: onBuyOnly)
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.large)
+                        .buttonStyle(.keetaPrimary)
                         .keyboardShortcut(.defaultAction)
                 }
             } else if let error {
@@ -327,7 +325,7 @@ private struct ModelPickStep: View {
                         }
                     }
                 }
-                .frame(maxHeight: 280)
+                .frame(maxHeight: 220)
             }
             HStack {
                 Button("Skip for now", action: next)
@@ -341,7 +339,7 @@ private struct ModelPickStep: View {
                     }
                     next()
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.keetaPrimary)
                 .keyboardShortcut(.defaultAction)
             }
         }
@@ -369,9 +367,8 @@ private struct DoneStep: View {
                     ? "Downloads continue in the background. When a model is ready, offer it to the network from Models and turn on Provide to start earning."
                     : "Buy credits with KUSD or another Keeta stablecoin in Wallet, then point your tools at the local endpoint shown under Use."
             )
-            Button("Open Keeta Compute", action: finish)
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
+            Button("Done", action: finish)
+                .buttonStyle(.keetaPrimary)
                 .keyboardShortcut(.defaultAction)
         }
     }

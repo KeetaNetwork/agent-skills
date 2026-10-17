@@ -5,6 +5,7 @@ struct ProvideView: View {
     @EnvironmentObject var model: AppModel
     @State var draft: ProviderPolicy?
     @State var saving = false
+    @State var editing = false
 
     private var policy: ProviderPolicy? { model.provider?.policy }
     private var hasChanges: Bool { draft != nil && draft != policy }
@@ -12,12 +13,15 @@ struct ProvideView: View {
     var body: some View {
         Screen("Provide", subtitle: "Share this Mac's spare AI capacity and get paid per request.") {
             statusCard
-            if draft != nil {
-                policyCard
+            if let policy {
+                policySummaryCard(policy)
             } else {
                 Card { ProgressView("Loading settings…").frame(maxWidth: .infinity) }
             }
             recentCard
+        }
+        .panel(isPresented: $editing) {
+            policyPanel
         }
         .onAppear { resetDraft() }
         .onChange(of: policy) { oldValue, _ in
@@ -35,30 +39,36 @@ struct ProvideView: View {
     private var statusCard: some View {
         Card {
             if let provider = model.provider {
-                HStack(spacing: 14) {
+                HStack(spacing: 12) {
                     Image(systemName: provider.state.symbol)
-                        .font(.system(size: 30))
+                        .font(.system(size: 26))
                         .foregroundStyle(provider.state.color)
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(provider.state.title).font(.title3.weight(.semibold))
-                        Text(provider.state.explanation).foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(provider.state.title).font(.headline)
+                        Text(provider.state.explanation)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
-                    Spacer()
+                    Spacer(minLength: 8)
                     Toggle("Share this Mac", isOn: Binding(
                         get: { provider.policy.enabled },
                         set: { enabled in Task { await model.setProviderPolicy(ProviderPolicyUpdate(enabled: enabled)) } }
                     ))
                     .toggleStyle(.switch)
                     .labelsHidden()
-                    .controlSize(.large)
                     .disabled(provider.state == .notEligible)
                 }
                 Divider()
-                HStack {
-                    Stat(title: "Serving now", value: "\(provider.activeJobs)")
-                    Stat(title: "Earned today", value: model.money.string(provider.earnedToday))
-                    Stat(title: "Tokens today", value: Abbreviate.tokens(provider.tokensServedToday))
-                    Stat(title: "Earned in total", value: model.money.string(provider.earnedTotal))
+                Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 12) {
+                    GridRow {
+                        Stat(title: "Serving now", value: "\(provider.activeJobs)", size: 18)
+                        Stat(title: "Tokens today", value: Abbreviate.tokens(provider.tokensServedToday), size: 18)
+                    }
+                    GridRow {
+                        Stat(title: "Earned today", value: model.money.string(provider.earnedToday), size: 18)
+                        Stat(title: "Earned in total", value: model.money.string(provider.earnedTotal), size: 18)
+                    }
                 }
             } else {
                 EmptyNote(title: "Not connected", systemImage: "bolt.slash", message: "Sharing status appears once the background service is running.")
@@ -68,8 +78,53 @@ struct ProvideView: View {
 
     // MARK: Policy
 
-    private var policyCard: some View {
+    private func policySummaryCard(_ policy: ProviderPolicy) -> some View {
         Card("When and how to share", systemImage: "slider.horizontal.3") {
+            VStack(alignment: .leading, spacing: 6) {
+                summaryRow("Schedule", Self.scheduleSummary(policy))
+                summaryRow("Capacity", "Up to \(policy.maxConcurrentJobs) request\(policy.maxConcurrentJobs == 1 ? "" : "s") at once")
+                summaryRow("Access", policy.access.mode == .public ? "Anyone on the network" : "\(policy.access.allow.count) listed buyer\(policy.access.allow.count == 1 ? "" : "s")")
+            }
+            Button("Change…") {
+                resetDraft()
+                editing = true
+            }
+            .buttonStyle(.keetaSecondary)
+        }
+    }
+
+    private func summaryRow(_ title: String, _ value: String) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(title)
+                .foregroundStyle(.secondary)
+                .frame(width: 76, alignment: .leading)
+            Text(value)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .font(.callout)
+    }
+
+    static func scheduleSummary(_ policy: ProviderPolicy) -> String {
+        var text: String
+        switch policy.schedule.mode {
+        case .always:
+            text = "Always"
+        case .idle:
+            text = "After \(policy.schedule.idleMinutes ?? 10) idle minutes"
+        case .hours:
+            text = "\(hourLabel(policy.schedule.startHour ?? 22)) to \(hourLabel(policy.schedule.endHour ?? 7))"
+        }
+        if policy.pauseOnBattery {
+            text += ", not on battery"
+        }
+        return text
+    }
+
+    private var policyPanel: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("When and how to share")
+                .font(.title2.weight(.semibold))
+                .padding([.horizontal, .top], 16)
             Form {
                 Section("Schedule") {
                     Picker("Share", selection: binding(\.schedule.mode)) {
@@ -80,7 +135,7 @@ struct ProvideView: View {
                     switch draft?.schedule.mode {
                     case .idle:
                         Stepper(value: binding(\.schedule.idleMinutes, default: 10), in: 1...240, step: 1) {
-                            Text("After \(draft?.schedule.idleMinutes ?? 10) minutes without keyboard or mouse use")
+                            Text("After \(draft?.schedule.idleMinutes ?? 10) idle minutes")
                         }
                     case .hours:
                         Picker("From", selection: binding(\.schedule.startHour, default: 22)) {
@@ -111,22 +166,27 @@ struct ProvideView: View {
                 } header: {
                     Text("Access")
                 } footer: {
-                    Text("Each model can override this under Models › Settings.")
+                    Text("Each model can override this in its settings under Models.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
             }
             .formStyle(.grouped)
-            .scrollDisabled(true)
-            .frame(minHeight: 380)
+            .scrollContentBackground(.hidden)
             HStack {
+                Button("Cancel", role: .cancel) {
+                    resetDraft()
+                    editing = false
+                }
+                .keyboardShortcut(.cancelAction)
                 Spacer()
-                Button("Revert") { resetDraft() }
-                    .disabled(!hasChanges || saving)
+                if saving { ProgressView().controlSize(.small) }
                 Button("Save") { save() }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.keetaPrimary)
+                    .keyboardShortcut(.defaultAction)
                     .disabled(!hasChanges || saving || (draft?.access.mode == .allowlist && (draft?.access.allow.isEmpty ?? true)))
             }
+            .padding([.horizontal, .bottom], 16)
         }
     }
 
@@ -143,6 +203,7 @@ struct ProvideView: View {
                 access: draft.access
             ))
             resetDraft()
+            editing = false
         }
     }
 

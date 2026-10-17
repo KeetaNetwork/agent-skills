@@ -1,7 +1,7 @@
 import KeetaComputeKit
 import SwiftUI
 
-/// Rounded panel used for every group of content.
+/// Rounded panel used for every group of content, styled like the Keeta Agent app's.
 struct Card<Content: View>: View {
     var title: String?
     var systemImage: String?
@@ -24,15 +24,16 @@ struct Card<Content: View>: View {
                     }
                 }
                 .font(.headline)
+                .foregroundStyle(Color.keetaYellow)
             }
             content
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.background.secondary, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .background(Color.keetaBlack, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .strokeBorder(.separator.opacity(0.6), lineWidth: 0.5)
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .strokeBorder(Color.keetaGray50, lineWidth: 1)
         )
     }
 }
@@ -42,6 +43,7 @@ struct Stat: View {
     let title: String
     let value: String
     var detail: String?
+    var size: CGFloat = 22
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -49,7 +51,7 @@ struct Stat: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
             Text(value)
-                .font(.system(size: 26, weight: .semibold, design: .rounded))
+                .font(.system(size: size, weight: .semibold, design: .rounded))
                 .monospacedDigit()
                 .lineLimit(1)
                 .minimumScaleFactor(0.6)
@@ -64,7 +66,7 @@ struct Stat: View {
     }
 }
 
-/// Screen scaffold: a scrolling column with a title.
+/// Screen scaffold: a scrolling column. The popover header shows the title.
 struct Screen<Content: View>: View {
     let title: String
     var subtitle: String?
@@ -78,21 +80,40 @@ struct Screen<Content: View>: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(title)
-                        .font(.largeTitle.weight(.semibold))
-                    if let subtitle {
-                        Text(subtitle)
-                            .foregroundStyle(.secondary)
-                    }
+            VStack(alignment: .leading, spacing: 12) {
+                if let subtitle {
+                    Text(subtitle)
+                        .font(.callout)
+                        .foregroundStyle(Color.keetaGray40)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                .padding(.bottom, 4)
                 content
             }
-            .padding(24)
-            .frame(maxWidth: 900, alignment: .leading)
+            .padding(.horizontal, 16)
+            .padding(.top, 4)
+            .padding(.bottom, 16)
             .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .accessibilityLabel(title)
+    }
+}
+
+/// A small caption above a field.
+struct LabeledField<Content: View>: View {
+    let title: String
+    @ViewBuilder var content: Content
+
+    init(_ title: String, @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            content
         }
     }
 }
@@ -113,14 +134,14 @@ struct CopyField: View {
     var body: some View {
         HStack(spacing: 8) {
             Text(display ?? value)
-                .font(.system(.body, design: .monospaced))
+                .font(.system(.callout, design: .monospaced))
                 .textSelection(.enabled)
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 6))
+                .background(Color.keetaGray, in: RoundedRectangle(cornerRadius: 8))
             Button {
                 Pasteboard.copy(value)
                 copied = true
@@ -129,8 +150,12 @@ struct CopyField: View {
                     copied = false
                 }
             } label: {
-                Label(copied ? "Copied" : label, systemImage: copied ? "checkmark" : "doc.on.doc")
+                Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                    .frame(width: 16)
             }
+            .buttonStyle(.borderless)
+            .foregroundStyle(Color.keetaRed)
+            .help(copied ? "Copied" : label)
         }
     }
 }
@@ -150,13 +175,14 @@ struct CodeBlock: View {
                     .padding(12)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 8))
+            .background(Color.keetaGray, in: RoundedRectangle(cornerRadius: 8))
             Button {
                 Pasteboard.copy(copyValue ?? code)
             } label: {
                 Image(systemName: "doc.on.doc")
             }
             .buttonStyle(.borderless)
+            .foregroundStyle(Color.keetaRed)
             .help("Copy")
             .padding(8)
         }
@@ -198,7 +224,7 @@ struct AmountField: View {
                 TextField(title, text: $text)
                     .textFieldStyle(.roundedBorder)
                     .multilineTextAlignment(.trailing)
-                    .frame(minWidth: 90, maxWidth: 140)
+                    .frame(minWidth: 80, maxWidth: 120)
                     .onSubmit(commit)
                 Text(formatter.symbol)
                     .foregroundStyle(.secondary)
@@ -414,5 +440,145 @@ struct EmptyNote: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 20)
+    }
+}
+
+// MARK: - Buttons
+
+/// The Keeta Agent app's buttons: a coral pill for the main action, an outlined pill otherwise.
+struct KeetaButtonStyle: ButtonStyle {
+    enum Kind { case primary, secondary }
+
+    var kind: Kind
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.body.weight(.semibold))
+            .lineLimit(1)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 7)
+            .foregroundStyle(kind == .primary ? Color.keetaBlack : Color.keetaYellow)
+            .background(Capsule().fill(kind == .primary ? Color.keetaRed : Color.clear))
+            .overlay(Capsule().strokeBorder(kind == .primary ? Color.clear : Color.keetaGray50, lineWidth: 1))
+            .contentShape(Capsule())
+            .opacity(isEnabled ? (configuration.isPressed ? 0.75 : 1) : 0.4)
+    }
+}
+
+extension ButtonStyle where Self == KeetaButtonStyle {
+    static var keetaPrimary: KeetaButtonStyle { KeetaButtonStyle(kind: .primary) }
+    static var keetaSecondary: KeetaButtonStyle { KeetaButtonStyle(kind: .secondary) }
+}
+
+// MARK: - Panels
+
+/// Closes the panel a view is shown in. Panels stand in for sheets, which
+/// don't fit in a menu bar popover; panel views call it as `dismiss()`.
+struct ClosePanelAction {
+    var action: () -> Void = {}
+
+    func callAsFunction() {
+        action()
+    }
+}
+
+private struct ClosePanelKey: EnvironmentKey {
+    static let defaultValue = ClosePanelAction()
+}
+
+extension EnvironmentValues {
+    var closePanel: ClosePanelAction {
+        get { self[ClosePanelKey.self] }
+        set { self[ClosePanelKey.self] = newValue }
+    }
+}
+
+extension View {
+    /// Shows `content` over this screen, inside the popover, while `item` is set.
+    func panel<Item: Identifiable, Content: View>(item: Binding<Item?>, @ViewBuilder content: @escaping (Item) -> Content) -> some View {
+        overlay {
+            if let value = item.wrappedValue {
+                PanelContainer { content(value) }
+                    .environment(\.closePanel, ClosePanelAction { item.wrappedValue = nil })
+            }
+        }
+    }
+
+    /// Shows `content` over this screen, inside the popover, while `isPresented` is true.
+    func panel<Content: View>(isPresented: Binding<Bool>, @ViewBuilder content: @escaping () -> Content) -> some View {
+        overlay {
+            if isPresented.wrappedValue {
+                PanelContainer(content: content)
+                    .environment(\.closePanel, ClosePanelAction { isPresented.wrappedValue = false })
+            }
+        }
+    }
+}
+
+private struct PanelContainer<Content: View>: View {
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        content
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .background(Color.keetaGray)
+    }
+}
+
+// MARK: - Popover chrome
+
+/// "Powered by Keeta", linking to keeta.com, as at the bottom of the Keeta Agent app.
+struct PoweredByKeeta: View {
+    @Environment(\.openURL) private var openURL
+
+    var body: some View {
+        Button {
+            if let url = URL(string: "https://keeta.com") { openURL(url) }
+        } label: {
+            Image("Powered")
+                .resizable()
+                .scaledToFit()
+                .frame(width: 113, height: 24)
+        }
+        .buttonStyle(.plain)
+        .help("keeta.com")
+    }
+}
+
+/// A row that opens another screen.
+struct NavRow: View {
+    let title: String
+    let systemImage: String
+    var detail: String?
+    var detailColor: Color = .keetaGray40
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                Image(systemName: systemImage)
+                    .font(.body.weight(.medium))
+                    .foregroundStyle(Color.keetaRed)
+                    .frame(width: 22)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title)
+                        .foregroundStyle(Color.keetaYellow)
+                    if let detail {
+                        Text(detail)
+                            .font(.caption)
+                            .foregroundStyle(detailColor)
+                            .lineLimit(1)
+                    }
+                }
+                Spacer(minLength: 8)
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Color.keetaGray50)
+            }
+            .padding(.vertical, 6)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 }

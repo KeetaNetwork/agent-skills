@@ -66,7 +66,7 @@ final class AppModel: ObservableObject {
     let signer: NodeKeySigner?
     let signerError: String?
 
-    private let defaults = UserDefaults.standard
+    private let defaults: UserDefaults
     private let log = Logger(subsystem: "ai.keeta.compute", category: "app")
     private var started = false
     private var noticeTask: Task<Void, Never>?
@@ -82,6 +82,7 @@ final class AppModel: ObservableObject {
     init() {
         // A local copy: stored properties can't be read through `self` until all are initialized.
         let defaults = UserDefaults.standard
+        self.defaults = defaults
         onboardingComplete = defaults.bool(forKey: Keys.onboardingComplete)
         network = defaults.string(forKey: Keys.network).flatMap(NetworkName.init(rawValue:)) ?? .test
         controlURL = defaults.string(forKey: Keys.controlURL) ?? ProtocolConstants.defaultControlURL
@@ -95,6 +96,35 @@ final class AppModel: ObservableObject {
             signerError = error.localizedDescription
         }
     }
+
+    #if DEBUG
+    /// Sample state for screenshots (`--snapshot`): no keychain, agent or network,
+    /// and settings go to a throwaway defaults domain.
+    init(sample: Void) {
+        let suite = "ai.keeta.compute.snapshots"
+        let defaults = UserDefaults(suiteName: suite) ?? .standard
+        defaults.removePersistentDomain(forName: suite)
+        self.defaults = defaults
+        onboardingComplete = true
+        network = .test
+        controlURL = ProtocolConstants.defaultControlURL
+        relayURL = ProtocolConstants.defaultRelayURL
+        acknowledgedLicenses = []
+        signer = nil
+        signerError = nil
+    }
+
+    func loadSample(state: AgentState, catalog: [CatalogEntry], progress: [InstallProgress], networkModels: [NetworkModel], fleet: [FleetHelper], running: [JobSummary]) {
+        connection = .running
+        agent = state
+        self.catalog = catalog
+        catalogLoaded = true
+        installProgress = Dictionary(uniqueKeysWithValues: progress.map { ($0.modelId, $0) })
+        self.networkModels = networkModels
+        self.fleet = fleet
+        liveJobs = Dictionary(uniqueKeysWithValues: running.map { ($0.jobId, $0) })
+    }
+    #endif
 
     // MARK: Derived values
 

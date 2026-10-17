@@ -23,18 +23,8 @@ struct WalletView: View {
             }
             bankCard
         }
-        .toolbar {
-            ToolbarItem {
-                Button {
-                    Task { await model.refreshWallet() }
-                } label: {
-                    Label("Refresh", systemImage: "arrow.clockwise")
-                }
-                .help("Refresh balances")
-            }
-        }
         .task { await model.refreshWallet() }
-        .sheet(item: $sheet) { sheet in
+        .panel(item: $sheet) { sheet in
             Group {
                 switch sheet {
                 case .buyCredits: CreditSwapSheet(side: .buy)
@@ -62,15 +52,18 @@ struct WalletView: View {
         Card("Set up your wallet", systemImage: "person.badge.key") {
             Text("Your wallet is protected by a passkey that syncs with iCloud Keychain. There is no recovery phrase.")
                 .foregroundStyle(.secondary)
-            HStack {
-                Button("Create wallet with passkey") {
-                    setUp { try await model.createWallet() }
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Button("Create wallet with passkey") {
+                        setUp { try await model.createWallet() }
+                    }
+                    .buttonStyle(.keetaPrimary)
+                    if settingUp { ProgressView().controlSize(.small) }
                 }
-                .buttonStyle(.borderedProminent)
                 Button("Use my existing passkey") {
                     setUp { try await model.restoreWallet() }
                 }
-                if settingUp { ProgressView().controlSize(.small) }
+                .buttonStyle(.link)
             }
             .disabled(settingUp || !model.connection.isRunning)
         }
@@ -82,40 +75,40 @@ struct WalletView: View {
                 Stat(
                     title: "Credits",
                     value: operatorBalance.map { model.money.string($0.credits) } ?? "—",
-                    detail: model.wallet?.error ?? (model.wallet?.creditsAvailable == false ? "Credits aren't available on this network yet." : nil)
+                    detail: model.wallet?.error ?? (model.wallet?.creditsAvailable == false ? "Credits aren't available on this network yet." : nil),
+                    size: 30
                 )
-                Spacer()
-                VStack(alignment: .trailing, spacing: 8) {
-                    HStack {
-                        Button {
-                            sheet = .buyCredits
-                        } label: {
-                            Label("Buy credits", systemImage: "plus.circle")
-                        }
-                        .buttonStyle(.borderedProminent)
-                        Button {
-                            sheet = .cashOut
-                        } label: {
-                            Label("Cash out", systemImage: "arrow.uturn.backward.circle")
-                        }
-                        .disabled(operatorBalance.map { BaseUnits.isZero($0.credits) } ?? true)
-                    }
-                    .controlSize(.large)
-                    .disabled(model.wallet?.creditsAvailable != true || model.stablecoins.isEmpty)
-                    HStack {
-                        Button {
-                            sheet = .send
-                        } label: {
-                            Label("Send", systemImage: "arrow.up.right")
-                        }
-                        Button {
-                            sheet = .receive
-                        } label: {
-                            Label("Receive", systemImage: "arrow.down.left")
-                        }
-                    }
+                Button {
+                    Task { await model.refreshWallet() }
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(Color.keetaGray40)
+                .help("Refresh balances")
+            }
+            HStack(spacing: 8) {
+                Button("Buy credits") { sheet = .buyCredits }
+                    .buttonStyle(.keetaPrimary)
+                Button("Cash out") { sheet = .cashOut }
+                    .buttonStyle(.keetaSecondary)
+                    .disabled(operatorBalance.map { BaseUnits.isZero($0.credits) } ?? true)
+            }
+            .disabled(model.wallet?.creditsAvailable != true || model.stablecoins.isEmpty)
+            HStack(spacing: 16) {
+                Button {
+                    sheet = .send
+                } label: {
+                    Label("Send", systemImage: "arrow.up.right")
+                }
+                Button {
+                    sheet = .receive
+                } label: {
+                    Label("Receive", systemImage: "arrow.down.left")
                 }
             }
+            .buttonStyle(.borderless)
+            .foregroundStyle(Color.keetaRed)
             if !heldStablecoins.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Stablecoins")
@@ -153,12 +146,12 @@ struct WalletView: View {
             Text("Your tools and agents pay for requests from these credits, so they never touch your main balance. Each request sets aside its most possible cost and gets back what it didn't use. Move credits in and out any time.")
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            HStack(alignment: .center) {
-                Stat(title: "Available to agents", value: spendBalance.map { model.money.string($0.credits) } ?? "—")
-                Spacer()
+            Stat(title: "Available to agents", value: spendBalance.map { model.money.string($0.credits) } ?? "—")
+            HStack(spacing: 8) {
                 Button("Add…") { sheet = .addBudget }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.keetaPrimary)
                 Button("Move back…") { sheet = .moveBack }
+                    .buttonStyle(.keetaSecondary)
                     .disabled(spendBalance.map { BaseUnits.isZero($0.credits) } ?? true)
             }
             if let spent = model.buyer?.spentToday {
@@ -217,7 +210,7 @@ struct WalletView: View {
 
 struct SendSheet: View {
     @EnvironmentObject var model: AppModel
-    @Environment(\.dismiss) var dismiss
+    @Environment(\.closePanel) var dismiss
     @State var address = ""
     @State var amountText = ""
     @State var memo = ""
@@ -268,6 +261,7 @@ struct SendSheet: View {
                 TextField("Note (optional)", text: $memo)
             }
             .formStyle(.grouped)
+            .scrollContentBackground(.hidden)
             Text("Available: \(model.money.string(available)). You'll confirm with Touch ID.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -282,13 +276,12 @@ struct SendSheet: View {
                 Spacer()
                 if sending { ProgressView().controlSize(.small) }
                 Button("Send") { send() }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.keetaPrimary)
                     .keyboardShortcut(.defaultAction)
                     .disabled(!canSend)
             }
         }
-        .padding(24)
-        .frame(width: 480)
+        .padding(16)
     }
 
     private func send() {
@@ -315,7 +308,7 @@ struct SendSheet: View {
 
 struct ReceiveSheet: View {
     @EnvironmentObject var model: AppModel
-    @Environment(\.dismiss) var dismiss
+    @Environment(\.closePanel) var dismiss
 
     var body: some View {
         VStack(spacing: 16) {
@@ -326,7 +319,7 @@ struct ReceiveSheet: View {
                     Image(nsImage: image)
                         .interpolation(.none)
                         .resizable()
-                        .frame(width: 200, height: 200)
+                        .frame(width: 150, height: 150)
                         .padding(12)
                         .background(Color.white, in: RoundedRectangle(cornerRadius: 12))
                 }
@@ -341,8 +334,7 @@ struct ReceiveSheet: View {
             Button("Done") { dismiss() }
                 .keyboardShortcut(.defaultAction)
         }
-        .padding(24)
-        .frame(width: 440)
+        .padding(16)
     }
 }
 
@@ -352,7 +344,7 @@ struct BudgetSheet: View {
     enum Direction { case add, moveBack }
 
     @EnvironmentObject var model: AppModel
-    @Environment(\.dismiss) var dismiss
+    @Environment(\.closePanel) var dismiss
     let direction: Direction
     @State var amountText = ""
     @State var working = false
@@ -403,13 +395,12 @@ struct BudgetSheet: View {
                 Spacer()
                 if working { ProgressView().controlSize(.small) }
                 Button(direction == .add ? "Add" : "Move back") { submit() }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.keetaPrimary)
                     .keyboardShortcut(.defaultAction)
                     .disabled(parsed == nil || working)
             }
         }
-        .padding(24)
-        .frame(width: 440)
+        .padding(16)
     }
 
     private func submit() {
@@ -441,7 +432,7 @@ struct BudgetSheet: View {
 /// the default stablecoin when it is available.
 struct CreditSwapSheet: View {
     @EnvironmentObject var model: AppModel
-    @Environment(\.dismiss) var dismiss
+    @Environment(\.closePanel) var dismiss
     let side: CreditSide
     @State var symbol = ""
     @State var amountText = ""
@@ -506,6 +497,7 @@ struct CreditSwapSheet: View {
                 }
             }
             .formStyle(.grouped)
+            .scrollContentBackground(.hidden)
             if let coinMoney {
                 Group {
                     switch side {
@@ -529,13 +521,12 @@ struct CreditSwapSheet: View {
                 Spacer()
                 if quoting || working { ProgressView().controlSize(.small) }
                 Button(side == .buy ? "Buy" : "Cash out") { submit() }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.keetaPrimary)
                     .keyboardShortcut(.defaultAction)
                     .disabled(parsed == nil || quote == nil || shortfall != nil || working)
             }
         }
-        .padding(24)
-        .frame(width: 480)
+        .padding(16)
         .onAppear {
             if symbol.isEmpty { symbol = model.stablecoins.first?.symbol ?? "" }
         }

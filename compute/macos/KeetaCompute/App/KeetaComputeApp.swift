@@ -2,60 +2,28 @@ import AppKit
 import KeetaComputeKit
 import SwiftUI
 
+/// A menu bar app, like Keeta Agent: no Dock icon and no main window
+/// (`LSUIElement` in Info.plist). Everything happens in the status item's popover.
 @main
 struct KeetaComputeApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @StateObject private var model: AppModel
 
     init() {
         // Writing to the agent after it exits must return EPIPE, not kill the app.
         signal(SIGPIPE, SIG_IGN)
-        let model = AppModel()
-        _model = StateObject(wrappedValue: model)
-        AppDelegate.model = model
+        #if DEBUG
+        if Snapshots.directory != nil {
+            AppDelegate.model = Snapshots.makeModel()
+            return
+        }
+        #endif
+        AppDelegate.model = AppModel()
     }
 
     var body: some Scene {
-        WindowGroup("Keeta Compute", id: WindowID.main) {
-            RootView()
-                .environmentObject(model)
-        }
-        .defaultSize(width: 980, height: 680)
-        .windowResizability(.contentMinSize)
-        .commands {
-            CommandGroup(replacing: .newItem) {}
-        }
-
-        Window("Logs", id: WindowID.logs) {
-            LogsView()
-                .environmentObject(model)
-        }
-        .defaultSize(width: 760, height: 480)
-
-        MenuBarExtra {
-            MenuBarView()
-                .environmentObject(model)
-        } label: {
-            MenuBarLabel()
-        }
-        .menuBarExtraStyle(.window)
-    }
-}
-
-enum WindowID {
-    static let main = "main"
-    static let logs = "logs"
-}
-
-extension NSApplication {
-    /// Brings the main window forward, opening one if none exists.
-    @MainActor
-    func showMainWindow(using openWindow: OpenWindowAction) {
-        activate()
-        if let window = windows.first(where: { $0.identifier?.rawValue.hasPrefix(WindowID.main) == true && $0.canBecomeMain }) {
-            window.makeKeyAndOrderFront(nil)
-        } else {
-            openWindow(id: WindowID.main)
+        // SwiftUI needs a scene; this one opens no window.
+        Settings {
+            EmptyView()
         }
     }
 }
@@ -63,16 +31,35 @@ extension NSApplication {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Set once in `KeetaComputeApp.init`, before any delegate callback.
     @MainActor static var model: AppModel?
+    @MainActor static weak var shared: AppDelegate?
+    @MainActor private var statusBar: StatusBarController?
+    @MainActor private var logsWindow: NSWindow?
     private var terminating = false
 
+    @MainActor
     func applicationDidFinishLaunching(_ notification: Notification) {
+        AppDelegate.shared = self
+        NSApp.setActivationPolicy(.accessory)
+        NSWindow.allowsAutomaticWindowTabbing = false
+        guard let model = AppDelegate.model else { return }
+        #if DEBUG
+        if let directory = Snapshots.directory {
+            Task { @MainActor in
+                await Snapshots.run(model, into: directory)
+                exit(0)
+            }
+            return
+        }
+        #endif
+        // First launch: open the popover so setup is the first thing people see.
+        statusBar = StatusBarController(model: model, showOnLaunch: !model.onboardingComplete)
         Task { @MainActor in
-            await AppDelegate.model?.start()
+            await model.start()
         }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        // Keep providing from the menu bar when the window is closed.
+        // Keep providing from the menu bar when the logs window is closed.
         false
     }
 
@@ -85,23 +72,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         return .terminateLater
     }
-}
 
-/// Status item icon: the Keeta mark as a template image.
-struct MenuBarLabel: View {
-    var body: some View {
-        if let image = Self.icon {
-            Image(nsImage: image)
-        } else {
-            Image(systemName: "cpu")
+    /// Opening the app again (Finder, Spotlight, login item) shows the popover.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        Task { @MainActor in
+            self.statusBar?.showPopover()
         }
+        return false
     }
 
-    private static var icon: NSImage? {
-        guard let image = NSImage(named: "statusbar")?.copy() as? NSImage else { return nil }
-        // The artwork is 42x17; fit it to the menu bar height.
-        image.size = NSSize(width: 37, height: 15)
-        image.isTemplate = true
-        return image
+    /// The agent's and app's log lines, in their own window.
+    @MainActor
+    func showLogs() {
+        guard let model = AppDelegate.model else { return }
+        if logsWindow == nil {
+            let controller = NSHostingController(rootView: LogsView().environmentObject(model))
+            let window = NSWindow(contentViewController: controller)
+            window.title = "Keeta Compute Logs"
+            window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
+            window.setContentSize(NSSize(width: 760, height: 480))
+            window.isReleasedWhenClosed = false
+            window.center()
+            logsWindow = window
+        }
+        statusBar?.closePopover()
+        NSApp.activate()
+        logsWindow?.makeKeyAndOrderFront(nil)
     }
 }

@@ -8,8 +8,8 @@ struct UseView: View {
         var title: String {
             switch self {
             case .curl: return "curl"
-            case .python: return "Python (OpenAI SDK)"
-            case .environment: return "Environment variables"
+            case .python: return "Python"
+            case .environment: return "Environment"
             }
         }
     }
@@ -19,6 +19,7 @@ struct UseView: View {
     @State var snippet: Snippet = .curl
     @State var confirmingRotate = false
     @State var draft: BuyerPolicy?
+    @State var editingLimits = false
 
     private var buyer: BuyerStatus? { model.buyer }
     private var hasChanges: Bool { draft != nil && draft != buyer?.policy }
@@ -35,6 +36,9 @@ struct UseView: View {
         .onAppear { draft = buyer?.policy }
         .onChange(of: buyer?.policy) { oldValue, newValue in
             if draft == nil || draft == oldValue { draft = newValue }
+        }
+        .panel(isPresented: $editingLimits) {
+            limitsPanel
         }
         .confirmationDialog("Create a new API token?", isPresented: $confirmingRotate) {
             Button("Create new token", role: .destructive) { Task { await model.rotateToken() } }
@@ -60,21 +64,31 @@ struct UseView: View {
                 Text("OpenAI-compatible. Only apps on this Mac can reach it.")
                     .foregroundStyle(.secondary)
             }
-            LabeledContent("Base URL") {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Base URL")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 CopyField(value: model.localEndpoint)
             }
-            LabeledContent("API token") {
+            VStack(alignment: .leading, spacing: 4) {
                 HStack {
-                    CopyField(value: token, display: maskedToken)
+                    Text("API token")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer()
                     Button {
                         revealToken.toggle()
                     } label: {
                         Image(systemName: revealToken ? "eye.slash" : "eye")
                     }
+                    .buttonStyle(.borderless)
                     .help(revealToken ? "Hide token" : "Show token")
                     Button("Rotate…") { confirmingRotate = true }
+                        .buttonStyle(.borderless)
                         .disabled(buyer == nil)
                 }
+                .foregroundStyle(Color.keetaRed)
+                CopyField(value: token, display: maskedToken)
             }
         }
     }
@@ -135,6 +149,46 @@ struct UseView: View {
 
     private var limitsCard: some View {
         Card("Spending limits", systemImage: "hand.raised") {
+            if let policy = buyer?.policy {
+                VStack(alignment: .leading, spacing: 6) {
+                    limitRow("Per request", model.money.string(policy.perRequestMax))
+                    limitRow("Per day", model.money.string(policy.dailyMax))
+                    limitRow("Highest price", "\(model.money.number(policy.maxPrice.inputPerMillion)) in · \(model.money.number(policy.maxPrice.outputPerMillion)) out per 1M")
+                    limitRow("Models", policy.allowedModels.isEmpty ? "Any" : policy.allowedModels.joined(separator: ", "))
+                    limitRow("Providers", policy.allowedProviders.isEmpty ? "Any" : "\(policy.allowedProviders.count) listed")
+                }
+                if let spent = buyer?.spentToday {
+                    Text("Spent today: \(model.money.string(spent)). Days reset at midnight UTC.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Button("Change limits…") {
+                    draft = buyer?.policy
+                    editingLimits = true
+                }
+                .buttonStyle(.keetaSecondary)
+            } else {
+                ProgressView().frame(maxWidth: .infinity)
+            }
+        }
+    }
+
+    private func limitRow(_ title: String, _ value: String) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(title)
+                .foregroundStyle(.secondary)
+                .frame(width: 96, alignment: .leading)
+            Text(value)
+                .lineLimit(2)
+        }
+        .font(.callout)
+    }
+
+    private var limitsPanel: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Spending limits")
+                .font(.title2.weight(.semibold))
+                .padding([.horizontal, .top], 16)
             if draft != nil {
                 Form {
                     Section {
@@ -174,19 +228,21 @@ struct UseView: View {
                     }
                 }
                 .formStyle(.grouped)
-                .scrollDisabled(true)
-                .frame(minHeight: 520)
-                HStack {
-                    Spacer()
-                    Button("Revert") { draft = buyer?.policy }
-                        .disabled(!hasChanges)
-                    Button("Save") { saveLimits() }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(!hasChanges)
-                }
-            } else {
-                ProgressView().frame(maxWidth: .infinity)
+                .scrollContentBackground(.hidden)
             }
+            HStack {
+                Button("Cancel", role: .cancel) {
+                    draft = buyer?.policy
+                    editingLimits = false
+                }
+                .keyboardShortcut(.cancelAction)
+                Spacer()
+                Button("Save") { saveLimits() }
+                    .buttonStyle(.keetaPrimary)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(!hasChanges)
+            }
+            .padding([.horizontal, .bottom], 16)
         }
     }
 
@@ -211,6 +267,7 @@ struct UseView: View {
                 maxPrice: draft.maxPrice
             ))
             self.draft = model.buyer?.policy
+            editingLimits = false
         }
     }
 
@@ -221,36 +278,32 @@ struct UseView: View {
             if model.networkModels.isEmpty {
                 EmptyNote(title: "No models available right now", systemImage: "globe", message: model.connection.isRunning ? "When providers come online, their models and prices show up here." : nil)
             } else {
-                Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 8) {
-                    GridRow {
-                        Text("Model")
-                        Text("Lowest price (in / out per 1M)")
-                        Text("Providers")
-                        Text("Context")
-                    }
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    Divider()
-                    ForEach(model.networkModels) { item in
-                        GridRow {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(item.name)
-                                Text(item.id)
-                                    .font(.system(.caption, design: .monospaced))
-                                    .foregroundStyle(.secondary)
-                                    .textSelection(.enabled)
-                            }
-                            Text("\(model.money.number(item.lowestPrice.inputPerMillion)) / \(model.money.number(item.lowestPrice.outputPerMillion)) \(model.money.symbol)")
+                ForEach(model.networkModels) { item in
+                    HStack(alignment: .top) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(item.name)
+                            Text(item.id)
+                                .font(.system(.caption, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                        }
+                        Spacer(minLength: 8)
+                        VStack(alignment: .trailing, spacing: 2) {
+                            Text("\(model.money.number(item.lowestPrice.inputPerMillion)) / \(model.money.number(item.lowestPrice.outputPerMillion))")
                                 .monospacedDigit()
-                            Text("\(item.providers)")
-                                .monospacedDigit()
-                            Text(Abbreviate.tokens(item.contextLength))
-                                .monospacedDigit()
+                            Text("\(item.providers) provider\(item.providers == 1 ? "" : "s") · \(Abbreviate.tokens(item.contextLength)) context")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                         }
                     }
+                    if item.id != model.networkModels.last?.id { Divider() }
                 }
+                Text("Lowest price in \(model.money.symbol), input / output per million tokens.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
             Button("Refresh") { Task { await model.refreshNetworkModels() } }
+                .buttonStyle(.keetaSecondary)
         }
     }
 

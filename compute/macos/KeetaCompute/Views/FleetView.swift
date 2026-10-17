@@ -8,23 +8,16 @@ struct FleetView: View {
 
     var body: some View {
         Screen("Fleet", subtitle: "Add Linux machines you own as extra capacity. Everything they earn is paid into this Mac's wallet.") {
-            Card {
-                HStack(alignment: .center) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Linux helpers")
-                            .font(.headline)
-                        Text("A helper only serves requests. It has no wallet of its own and can't spend anything.")
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    Button {
-                        pairing = true
-                    } label: {
-                        Label("Add a Linux machine", systemImage: "plus")
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(!model.connection.isRunning || !model.hasOperator)
+            Card("Linux helpers", systemImage: "terminal") {
+                Text("A helper only serves requests. It has no wallet of its own and can't spend anything.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button("Add a Linux machine") {
+                    pairing = true
                 }
+                .buttonStyle(.keetaPrimary)
+                .disabled(!model.connection.isRunning || !model.hasOperator)
             }
 
             Card("Machines", systemImage: "server.rack") {
@@ -44,9 +37,8 @@ struct FleetView: View {
                 try? await Task.sleep(for: .seconds(15))
             }
         }
-        .sheet(isPresented: $pairing) {
+        .panel(isPresented: $pairing) {
             PairingSheet()
-                .environmentObject(model)
         }
         .confirmationDialog(
             "Remove \(revoking?.name ?? "this machine")?",
@@ -78,7 +70,7 @@ struct HelperRow: View {
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             Image(systemName: "server.rack")
-                .font(.title2)
+                .font(.title3)
                 .foregroundStyle(statusColor)
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
@@ -91,6 +83,7 @@ struct HelperRow: View {
                 Text(helper.offers.isEmpty ? "No models offered" : "Offers \(helper.offers.joined(separator: ", "))")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
                 Text("Last seen \(Date(timeIntervalSince1970: helper.lastHeartbeat / 1000).relative)")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
@@ -113,7 +106,7 @@ struct HelperRow: View {
 
 struct PairingSheet: View {
     @EnvironmentObject var model: AppModel
-    @Environment(\.dismiss) var dismiss
+    @Environment(\.closePanel) var dismiss
     @State var created: PairingCreated?
     @State var record: PairingRecord?
     @State var error: String?
@@ -161,8 +154,7 @@ struct PairingSheet: View {
                     .keyboardShortcut(.cancelAction)
             }
         }
-        .padding(24)
-        .frame(width: 560)
+        .padding(16)
         .task { await start() }
         .onDisappear { pollGeneration += 1 }
     }
@@ -175,7 +167,7 @@ struct PairingSheet: View {
             Text("2. Then pair it with this code:")
             CodeBlock(code: "keeta-compute-agent helper pair \(created.code)")
             Text(created.code)
-                .font(.system(size: 22, weight: .semibold, design: .monospaced))
+                .font(.system(size: 20, weight: .semibold, design: .monospaced))
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 8)
@@ -219,7 +211,7 @@ struct PairingSheet: View {
                 Spacer()
                 if deciding { ProgressView().controlSize(.small) }
                 Button("Approve") { decide(approve: true, pairingId: pairingId) }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.keetaPrimary)
             }
             .disabled(deciding)
         }

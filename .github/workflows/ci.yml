@@ -91,3 +91,17 @@ jobs:
           xcodebuild -project KeetaCompute.xcodeproj -scheme KeetaCompute -configuration Debug \
             -destination 'platform=macOS,arch=arm64' -derivedDataPath build/DerivedData \
             CODE_SIGNING_ALLOWED=NO build
+      - name: Draw the menu bar popover with sample data
+        timeout-minutes: 5
+        run: |
+          APP="build/DerivedData/Build/Products/Debug/Keeta Compute.app"
+          # An ad-hoc signature is enough to run the unsigned Debug build here.
+          codesign --force --deep --sign - "$APP"
+          "$APP/Contents/MacOS/Keeta Compute" --snapshot "$PWD/build/screenshots"
+          ls -la build/screenshots
+      - name: Upload the popover screenshots
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-popover-screenshots
+          path: compute/macos/build/screenshots
+          if-no-files-found: error
