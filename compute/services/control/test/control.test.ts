@@ -545,6 +545,42 @@ test('a payout is idempotent on the ledger: an attempt that published but never 
 	assert.equal(h.payouts.published, 1);
 });
 
+test('a job keeps only a small signed receipt, and a job the sweep cannot settle does not stop it settling the rest', async () => {
+	const h = harness();
+	const { node } = await registerMac(h);
+	await h.call(node, 'POST', '/v1/providers/heartbeat', { status: 'online', offers: [offer('qwen3-8b')], load: { active: 0, capacity: 4 } });
+	const buyer = newBuyer();
+
+	/* Padding inside the receipt is covered by the node's signature, so a large receipt is refused; fields beside it are not signed, so they are dropped. */
+	const padded = await escrowedJob(h, buyer);
+	const large = await fileReceipt(h, node, { ...receiptFor(padded.ticket, buyer.address), pad: 'x'.repeat(8_192) } as Receipt);
+	assert.equal(large.status, 400, JSON.stringify(large.body));
+	assert.match(JSON.stringify(large.body), /at most 8192 bytes/);
+	assert.equal((await h.store.getJob(padded.jobId))!.status, 'scheduled');
+	const receipt = receiptFor(padded.ticket, buyer.address);
+	const filed = await h.call(node, 'POST', `/v1/jobs/${padded.jobId}/receipt`, { receipt: { receipt, signature: await node.sign(receiptMessage(receipt)), pad: 'x'.repeat(8_192) } });
+	assert.equal(filed.status, 200, JSON.stringify(filed.body));
+	assert.deepEqual(Object.keys((await h.store.getJob(padded.jobId))!.receipt!).sort(), ['receipt', 'signature']);
+
+	/* Receipts with no delivery record: one job's record can no longer be written (as one at the store's size limit could not), and the jobs after it still settle. */
+	const stuck = await escrowedJob(h, buyer);
+	await fileReceipt(h, node, receiptFor(stuck.ticket, buyer.address));
+	const after = await escrowedJob(h, buyer);
+	await fileReceipt(h, node, receiptFor(after.ticket, buyer.address));
+	const updateJob = h.store.updateJob.bind(h.store);
+	h.store.updateJob = async (jobId, update) => {
+		if (jobId === stuck.jobId) {
+			throw new Error('the document is too large');
+		}
+		return updateJob(jobId, update);
+	};
+	h.advance(DELIVERY_GRACE_MS + 1);
+	assert.deepEqual(await h.service.sweep(), { expired: 0, settled: 2, paidOut: 0 });
+	assert.equal((await h.store.getJob(after.jobId))!.settlement!.reason, 'no-delivery');
+	assert.ok((await h.store.getJob(after.jobId))!.settlement!.blockHash, 'and paid out');
+	assert.equal((await h.store.getJob(stuck.jobId))!.settlement, undefined, 'the stuck job waits for the next run');
+});
+
 test('a buyer who hands a ticket back mid-stream pays for what the relay forwarded, from the escrow on the ledger', async () => {
 	const h = harness();
 	const { node, operator } = await registerMac(h);

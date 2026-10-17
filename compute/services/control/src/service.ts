@@ -197,6 +197,8 @@ const MAX_OPEN_QUOTES = 4;
 const MAX_IN_FLIGHT = 8;
 /** Providers a quote request may name to use (allowedProviders, kept on the job) or to skip (excludeProviders). */
 const MAX_PROVIDER_LIST = 100;
+/** A signed receipt as the job record keeps it, in bytes of JSON; a real one is under 2 KB. */
+const MAX_RECEIPT_BYTES = 8_192;
 /** A payout attempt that has not recorded its block this long after it started may be retried (after checking the ledger). */
 const PAYOUT_RETRY_MS = 5 * 60_000;
 
@@ -852,6 +854,11 @@ export class ControlService {
 		if (!signed || typeof signed !== 'object' || typeof signed.signature !== 'string' || !signed.receipt) {
 			throw new ValidationError('receipt is required');
 		}
+		/* The job record keeps the receipt through settlement, so it holds only the signed fields and the signature, and stays small. */
+		const stored: SignedReceipt = { receipt: signed.receipt, signature: signed.signature };
+		if (new TextEncoder().encode(JSON.stringify(stored)).length > MAX_RECEIPT_BYTES) {
+			throw new ValidationError(`a signed receipt may be at most ${MAX_RECEIPT_BYTES} bytes`);
+		}
 		const job = await this.store.getJob(jobId);
 		if (!job) {
 			throw new NotFoundError('job not found');
@@ -875,7 +882,7 @@ export class ControlService {
 			}
 			heldSlot = holdsSlot(current);
 			const prepaidSettled = current.paymentMode === 'prepaid' && current.payment;
-			return { ...current, status: prepaidSettled ? 'paid' : 'completed', completedAt: now, receipt: signed };
+			return { ...current, status: prepaidSettled ? 'paid' : 'completed', completedAt: now, receipt: stored };
 		});
 		await this.store.updateProvider(nodeKey, (record) => ({
 			...record,
@@ -1147,34 +1154,40 @@ export class ControlService {
 		let expired = 0;
 		let settled = 0;
 		let paidOut = 0;
-		for (const job of await this.store.listJobsByStatus('quoted', now - QUOTE_TTL_MS, 200)) {
+		/* A job that fails here (a write the store refuses, a ledger call) is logged and left for the next run, so it never stops the jobs after it. */
+		const each = async (jobs: JobRecord[], step: (job: JobRecord) => Promise<void>) => {
+			for (const job of jobs) {
+				await step(job).catch((error: Error) => console.warn(`sweeping ${job.jobId} failed; the next run retries`, error.message));
+			}
+		};
+		await each(await this.store.listJobsByStatus('quoted', now - QUOTE_TTL_MS, 200), async (job) => {
 			const updated = await this.store.updateJob(job.jobId, (current) =>
 				current.status !== 'quoted' || current.escrow || (current.quoteExpiresAt ?? 0) > now ? current : { ...current, status: 'expired', completedAt: now }
 			);
 			expired += updated.status === 'expired' ? 1 : 0;
-		}
+		});
 		const ticketLapse = now - TICKET_TTL_MS - 5 * 60_000;
-		for (const job of await this.store.listJobsByStatus('scheduled', ticketLapse, 200)) {
+		await each(await this.store.listJobsByStatus('scheduled', ticketLapse, 200), async (job) => {
 			if (job.paymentMode === 'prepaid') {
 				await this.store.updateJob(job.jobId, (current) => (current.status === 'scheduled' ? { ...current, status: 'expired' } : current));
 				expired++;
-				continue;
+				return;
 			}
 			/* An app ticket that drew no receipt frees its provider; the job stays open until it settles at the lapse. */
 			if (!job.handedBackAt && (job.ticketIssuedAt ?? job.createdAt) < ticketLapse) {
 				await this.handBack(job.jobId, 'the ticket went unused').catch(() => undefined);
 			}
 			settled += (await this.serially(() => this.settle(job.jobId))).settlement ? 1 : 0;
-		}
+		});
 		/* Receipts the relay has not recorded a delivery for within the grace period. */
-		for (const job of await this.store.listJobsByStatus('completed', now - DELIVERY_GRACE_MS, 200)) {
+		await each(await this.store.listJobsByStatus('completed', now - DELIVERY_GRACE_MS, 200), async (job) => {
 			if (job.paymentMode === 'escrow' && !job.settlement) {
 				settled += (await this.serially(() => this.settle(job.jobId))).settlement ? 1 : 0;
 			}
-		}
-		for (const job of await this.store.listPayoutsDue(200)) {
+		});
+		await each(await this.store.listPayoutsDue(200), async (job) => {
 			paidOut += (await this.serially(() => this.payout(job))).settlement?.blockHash ? 1 : 0;
-		}
+		});
 		return { expired, settled, paidOut };
 	}
 

@@ -61,7 +61,7 @@ The public router (`api.keeta.ai`) prepays instead: it answers with HTTP 402 car
 
 Firestore holds routing state and Keeta block hashes, never balances.
 
-- **Jobs**: who, what and where (buyer, node, operator, model, price, limits, network, credit token), the buyer's price ceiling and allowed providers from the quote request, status and timestamps (`quoteExpiresAt`, `ticketIssuedAt`, `handedBackAt`, `providerOfflineAt`, `completedAt`), the provider's signed receipt, the relay's delivery record, `escrow {blockHash, at}` and `settlement {reason, decidedAt, attemptAt, blockHash, sentAt, error}`. `payoutDue` marks a job the sweep still has to pay out. Router jobs also keep the x402 payment's block hash, `routerPayer` and `prepaidAmount` (the amount on the signed ticket).
+- **Jobs**: who, what and where (buyer, node, operator, model, price, limits, network, credit token), the buyer's price ceiling and allowed providers from the quote request, status and timestamps (`quoteExpiresAt`, `ticketIssuedAt`, `handedBackAt`, `providerOfflineAt`, `completedAt`), the provider's signed receipt (its signed fields and signature only, at most 8 KB), the relay's delivery record, `escrow {blockHash, at}` and `settlement {reason, decidedAt, attemptAt, blockHash, sentAt, error}`. `payoutDue` marks a job the sweep still has to pay out. Router jobs also keep the x402 payment's block hash, `routerPayer` and `prepaidAmount` (the amount on the signed ticket).
 - **Providers**: registration, offers, heartbeat and load, and the scheduler's counters (`completed`, `failed`, `tokensOut`, `disputed`). No earnings.
 - **Pairings** of Linux helpers, **nonces** of signed requests, and a per-buyer lock that caps how many quotes and jobs a buyer has in flight.
 
@@ -185,7 +185,7 @@ Nothing is deployed by CI. Each step below is run by hand by someone with access
 5. **Control plane** (Firebase project with Firestore in native mode):
    - Set secrets: `firebase functions:secrets:set COORDINATOR_SEED RELAY_SECRET ROUTER_SECRET SETTLEMENT_SEED`. Fund the settlement account with KTA for fees. App jobs stay off on a network until it has a credit token and `SETTLEMENT_SEED` is set.
    - Before the test-network credit pin lands, the `TEST_CREDIT_TOKEN` and `TEST_FX_ACCOUNT` parameters name the token and FX account; the main network only ever uses its pin.
-   - `cd services/control && npm run build && firebase deploy --only functions,firestore,hosting`. The scheduled `sweep` function settles jobs whose background settlement did not finish.
+   - `cd services/control && npm run build && firebase deploy --only functions,firestore,hosting`. The scheduled `sweep` function settles jobs whose background settlement did not finish. A job it cannot settle or pay is logged and retried on the next run, without holding up the jobs after it.
    - Point `control.keeta.ai` at the Hosting site; `/v1/**` rewrites to the `api` function.
 6. **Relay and router** (Cloudflare):
    - `cd services/relay && wrangler secret put RELAY_SECRET && wrangler secret put ROUTER_SECRET`.

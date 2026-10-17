@@ -100,7 +100,7 @@ A signed ticket is `{ticket, coordinatorSig, relayMac}`: `coordinatorSig` is che
 
 ## Receipts
 
-A signed receipt is `{receipt, signature}`, where `signature` is by `receipt.nodeKey` over the receipt message above.
+A signed receipt is `{receipt, signature}`, where `signature` is by `receipt.nodeKey` over the receipt message above. The control plane keeps only those two fields and refuses a signed receipt larger than 8 KB of JSON.
 
 | Field | Meaning |
 | --- | --- |

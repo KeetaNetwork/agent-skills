@@ -144,7 +144,7 @@ sha256hex(body)</code></pre>
 </table>
 <p>A signed ticket is <code>{ticket, coordinatorSig, relayMac}</code>: <code>coordinatorSig</code> is checked by the provider, <code>relayMac</code> by the relay.</p>
 <h2 id="receipts">Receipts</h2>
-<p>A signed receipt is <code>{receipt, signature}</code>, where <code>signature</code> is by <code>receipt.nodeKey</code> over the receipt message above.</p>
+<p>A signed receipt is <code>{receipt, signature}</code>, where <code>signature</code> is by <code>receipt.nodeKey</code> over the receipt message above. The control plane keeps only those two fields and refuses a signed receipt larger than 8 KB of JSON.</p>
 <table>
 <thead><tr><th>Field</th><th>Meaning</th></tr></thead>
 <tbody>
