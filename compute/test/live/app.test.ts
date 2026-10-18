@@ -17,7 +17,8 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { operatorAccount, spendAccount } from '@keeta-compute/wallet';
+import { operatorAccount, spendAccount, unlockWallet } from '@keeta-compute/wallet';
+import { toHex } from '@keeta-compute/protocol';
 import { Scratch, macAgent, passkeyEntropy, until } from '../support/harness.ts';
 import { Funder, NETWORK, USDC, announceSkip, skipLive } from './support.ts';
 import { fundAppBuyer, watchSettlement, type AppBuyer } from './payments.ts';
@@ -71,6 +72,9 @@ before(async () => {
 	const earns = /Node key (keeta_[a-z0-9]+) now earns for (keeta_[a-z0-9]+)/.exec(init);
 	assert.ok(earns, init);
 	[, linux.nodeKey, linux.operator] = earns as unknown as [string, string, string];
+	/* Its earnings land on its own operator wallet; the sweep brings them back. */
+	const linuxOperator = funder.track(await operatorAccount(toHex(await unlockWallet(linux.dir, LINUX_PASSPHRASE))));
+	assert.equal(linuxOperator.publicKeyString.get(), linux.operator);
 	const weights = scratch.dir('weights');
 	mkdirSync(join(weights, 'shards'));
 	writeFileSync(join(weights, 'shards', 'model.safetensors'), 'weights');

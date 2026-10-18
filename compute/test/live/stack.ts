@@ -15,6 +15,7 @@ import type { ModelManager } from '@keeta-compute/provider';
 import { Scratch, fakeModelServer, freePort, listen, macAgent, passkeyEntropy, until } from '../support/harness.ts';
 import { startWorker, type RunningWorker } from '../support/worker.ts';
 import { startCredits, type LiveCredits } from './credits.ts';
+import { operatorAccount } from '@keeta-compute/wallet';
 import { NETWORK, liveModel, type Funder } from './support.ts';
 
 export const MODEL = 'llama-3.2-3b';
@@ -84,6 +85,8 @@ export async function startStack(scratch: Scratch, options: { credits?: { funder
 	await mac.rpc['provider.setPolicy']!({ enabled: true });
 	const entropy = passkeyEntropy();
 	const { operator } = (await mac.rpc['wallet.setOperator']!({ entropy })) as { operator: string };
+	/* The provider's earnings land on its operator; the sweep brings them back. */
+	(options.credits ?? options.settlement)?.funder.track(await operatorAccount(entropy));
 	await until('the Mac provider to connect to the relay Worker', async () => (await mac.rpc['provider.status']!({})).state === 'online', 60_000, 250).catch((error: Error) => {
 		throw new Error(`${error.message}\n--- wrangler output ---\n${worker.output()}`);
 	});

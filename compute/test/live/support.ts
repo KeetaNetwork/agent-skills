@@ -92,11 +92,24 @@ async function decimalsOf(client: UserClient, token: string): Promise<number | n
  * The funding account. Tops up fresh accounts (USDC by send; KTA from the
  * faucet first, then by send if the faucet is slow) and sweeps them back.
  */
+/** Every token balance of the client's account, by token address. */
+async function balancesOf(client: UserClient): Promise<Map<string, bigint>> {
+	const balances = new Map<string, bigint>();
+	for (const { token, balance } of await client.allBalances()) {
+		if (balance !== 0n) {
+			balances.set(token.publicKeyString.get(), balance);
+		}
+	}
+	return balances;
+}
+
 export class Funder {
 	private readonly queue = new SerialQueue();
 	private readonly tracked = new Map<string, KeetaAccount>();
 	/** The stablecoins sent out, which the sweep brings back: test USDC, and any other the funding account holds (KUSD once pinned). */
 	private readonly funded = new Set<string>([USDC.address]);
+	/** The funding account's balance of every token at `open`, which `sweep` restores and checks. */
+	private start = new Map<string, bigint>();
 
 	private constructor(
 		readonly account: KeetaAccount,
@@ -123,6 +136,7 @@ export class Funder {
 			console.log('KTA decimals not readable from token metadata; assuming 18');
 		}
 		const funder = new Funder(account, client, kta, 10n ** BigInt(decimals ?? 18));
+		funder.start = await balancesOf(client);
 		const [usdc, ktaBalance] = await Promise.all([funder.balance(funder.address, 'usdc'), funder.balance(funder.address, 'kta')]);
 		console.log(`funding account ${funder.address} on the test network: ${formatAmount(usdc, USDC.decimals)} USDC, ${formatAmount(ktaBalance, decimals ?? 18)} KTA`);
 		console.log(`explorer: ${NETWORKS.test.explorer}/account/${funder.address}`);
@@ -176,7 +190,7 @@ export class Funder {
 	}
 
 	/** Give each address at least `amount` KTA for network fees: the faucet first, the funding account if it is slow. */
-	async fundKta(addresses: string[], amount = this.ktaUnit, faucetWaitMs = 45_000): Promise<void> {
+	async fundKta(addresses: string[], amount = this.ktaUnit, faucetWaitMs = 45_000, fallback = true): Promise<void> {
 		await Promise.all(
 			addresses.map((address) =>
 				fetch(FAUCET_URL, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: `address=${encodeURIComponent(address)}&amount=10` }).catch(() => null)
@@ -189,6 +203,9 @@ export class Funder {
 			const balances = await Promise.all(short.map((address) => this.balance(address, 'kta')));
 			short = short.filter((_, i) => balances[i]! < amount);
 		}
+		if (short.length && !fallback) {
+			throw new Error(`the faucet did not fund ${short.join(', ')} in time`);
+		}
 		if (short.length) {
 			console.log(`the faucet was slow for ${short.length} account(s); sending KTA from the funding account`);
 		}
@@ -200,31 +217,117 @@ export class Funder {
 		}
 	}
 
-	/** Best effort: return the stablecoins and KTA left on tracked accounts to the funding account, then close. Credits made for the run stay where they are. */
+	/**
+	 * Return everything the tracked accounts hold to the funding account, then
+	 * check that the run left the funding account exactly as it found it:
+	 * every token balance, KTA included, as at `open`. Throws when it did not.
+	 *
+	 * Every token a tracked account holds comes back in full. KTA comes back up
+	 * to the starting balance: the run's block fees are paid from the faucet's
+	 * KTA on the tracked accounts, and what the faucet gave beyond that stays
+	 * on them.
+	 */
 	async sweep(): Promise<void> {
+		try {
+			for (const account of this.tracked.values()) {
+				await this.sweepTokens(account);
+			}
+			await this.settleKta();
+			await this.checkUnchanged();
+		} finally {
+			this.tracked.clear();
+			await this.client.destroy().catch(() => undefined);
+		}
+	}
+
+	/** KTA a tracked account keeps back for the fee of its own sweep sends (a block costs about 2e-14 KTA on the test network). */
+	private get feeMargin(): bigint {
+		return this.ktaUnit / 1_000_000n;
+	}
+
+	private clientFor(account: KeetaAccount): UserClient {
+		return KeetaNet.UserClient.fromNetwork(NETWORK, account as Parameters<typeof KeetaNet.UserClient.fromNetwork>[1]);
+	}
+
+	/** Send every token but KTA that `account` holds back to the funding account. */
+	private async sweepTokens(account: KeetaAccount): Promise<void> {
+		const address = account.publicKeyString.get();
+		const client = this.clientFor(account);
+		try {
+			const held = (await client.allBalances()).filter(({ token, balance }) => balance > 0n && token.publicKeyString.get() !== this.kta);
+			if (held.length === 0) {
+				return;
+			}
+			if ((await client.balance(client.baseToken)) < this.feeMargin) {
+				/* Fee money for the sweep; it comes back with the KTA below. */
+				await this.send(address, this.feeMargin, 'kta', 'keeta-compute live test sweep fee');
+				await until(`${address} to receive KTA for its sweep`, async () => (await this.balance(address, 'kta')) >= this.feeMargin, 60_000, 1_000);
+			}
+			const builder = client.initBuilder();
+			for (const { token, balance } of held) {
+				builder.send(this.account as never, balance, token);
+			}
+			await client.publishBuilder(builder);
+		} catch (error) {
+			console.log(`could not sweep the tokens on ${address}: ${(error as Error).message}`);
+		} finally {
+			await client.destroy().catch(() => undefined);
+		}
+	}
+
+	/** Bring the funding account's KTA back to its starting balance from the KTA on the tracked accounts (the faucet's, then its own). */
+	private async settleKta(): Promise<void> {
+		let due = this.start.get(this.kta)! - (await this.balance(this.address, 'kta'));
 		for (const account of this.tracked.values()) {
+			if (due <= 0n) {
+				break;
+			}
 			const address = account.publicKeyString.get();
-			const client = KeetaNet.UserClient.fromNetwork(NETWORK, account as Parameters<typeof KeetaNet.UserClient.fromNetwork>[1]);
+			const spare = (await this.balance(address, 'kta')) - this.feeMargin;
+			if (spare <= 0n) {
+				continue;
+			}
+			const amount = spare < due ? spare : due;
+			const client = this.clientFor(account);
 			try {
-				for (const token of this.funded) {
-					const held = await client.balance(token);
-					if (held > 0n && (await client.balance(client.baseToken)) > 0n) {
-						await client.send(this.address, held, token, 'keeta-compute live test sweep').catch((error: Error) => console.log(`could not sweep ${token} from ${address}: ${error.message}`));
-					}
-				}
-				const kta = await client.balance(client.baseToken);
-				/* Leave a little for the fee of this last send. */
-				const margin = this.ktaUnit / 100n;
-				if (kta > margin) {
-					await client.send(this.address, kta - margin, client.baseToken, 'keeta-compute live test sweep').catch((error: Error) => console.log(`could not sweep KTA from ${address}: ${error.message}`));
-				}
+				await client.send(this.address, amount, client.baseToken, 'keeta-compute live test sweep');
+				due -= amount;
 			} catch (error) {
-				console.log(`sweep of ${address} failed: ${(error as Error).message}`);
+				console.log(`could not return KTA from ${address}: ${(error as Error).message}`);
 			} finally {
 				await client.destroy().catch(() => undefined);
 			}
 		}
-		this.tracked.clear();
-		await this.client.destroy().catch(() => undefined);
+		if (due > 0n) {
+			/* The tracked accounts ran short (the faucet was slow and the funding account paid their fees): get the rest from the faucet. */
+			const sink = this.track(freshAccount());
+			await this.fundKta([sink.publicKeyString.get()], due + this.feeMargin, 60_000, false);
+			const client = this.clientFor(sink);
+			try {
+				await client.send(this.address, due, client.baseToken, 'keeta-compute live test sweep');
+			} finally {
+				await client.destroy().catch(() => undefined);
+			}
+		} else if (due < 0n) {
+			/* The funding account gained KTA during the run; pass the surplus to a throwaway account. */
+			await this.send(freshAccount().publicKeyString.get(), -due, 'kta', 'keeta-compute live test surplus');
+		}
+	}
+
+	/** Throw unless every token balance of the funding account is what it was at `open`. */
+	private async checkUnchanged(): Promise<void> {
+		const end = await balancesOf(this.client);
+		const changed: string[] = [];
+		for (const token of new Set([...this.start.keys(), ...end.keys()])) {
+			const before = this.start.get(token) ?? 0n;
+			const after = end.get(token) ?? 0n;
+			if (before !== after) {
+				changed.push(`${token}: ${before} -> ${after} (${after - before > 0n ? '+' : ''}${after - before})`);
+			}
+		}
+		if (changed.length) {
+			throw new Error(`the live run changed the funding account's balances:\n  ${changed.join('\n  ')}`);
+		}
+		console.log(`the funding account ${this.address} ends with the same balance of every token it started with`);
 	}
 }

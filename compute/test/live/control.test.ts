@@ -61,7 +61,8 @@ before(async () => {
 	api = new ControlClient(control.url);
 
 	node = accountSigner(freshAccount());
-	const operatorSigner = accountSigner(freshAccount());
+	/* Payouts land here; the sweep brings them back. */
+	const operatorSigner = accountSigner(funder.track(freshAccount()));
 	operator = operatorSigner.publicKey;
 	const issuedAt = Date.now();
 	const link = await operatorSigner.sign(operatorLinkMessage({ nodeKey: node.publicKey, payTo: operator, network: NETWORK, issuedAt }));
