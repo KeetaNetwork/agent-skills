@@ -25,7 +25,7 @@ on:
 permissions:
   contents: read
 
-# One run at a time spends the funding account; later runs wait instead of racing it.
+# One run at a time uses the funding account (each checks its balances); later runs wait instead of racing it.
 concurrency:
   group: compute-live-testnet-funding
   cancel-in-progress: false

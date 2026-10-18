@@ -12,10 +12,10 @@ import { Account } from '@keeta-compute/protocol/keeta';
 import { toHex, type Price } from '@keeta-compute/protocol';
 import { startServer } from '../../services/control/src/server.ts';
 import type { ModelManager } from '@keeta-compute/provider';
+import { operatorAccount } from '@keeta-compute/wallet';
 import { Scratch, fakeModelServer, freePort, listen, macAgent, passkeyEntropy, until } from '../support/harness.ts';
 import { startWorker, type RunningWorker } from '../support/worker.ts';
 import { startCredits, type LiveCredits } from './credits.ts';
-import { operatorAccount } from '@keeta-compute/wallet';
 import { NETWORK, liveModel, type Funder } from './support.ts';
 
 export const MODEL = 'llama-3.2-3b';

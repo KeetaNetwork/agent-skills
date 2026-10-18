@@ -129,7 +129,7 @@ The binaries land in `packages/cli/dist/`. `self-test` initializes the agent as 
 
 `npm run test:live` runs `test/live/*.test.ts` one file at a time against the **Keeta test network**. Only the model is a fake (an OpenAI-compatible server that answers "Hello from Keeta"), unless `LIVE_MODEL_URL` points at a real one. `KEETA_LIVE_SKIP=1` skips every live test.
 
-The suite has one credit token (`test/live/credits.ts`): the funding account issued it on the first run, the way `credits:create` does, keeps its supply and reuses it. Each run sends its share to a fresh FX account, serves the FX service on a local port with its metadata published, and uses a fresh settlement account for the control plane. The sweep returns the credits along with the USDC and KTA.
+The suite has one credit token (`test/live/credits.ts`): the funding account issued it on the first run, the way `credits:create` does, keeps its supply and reuses it. Each run sends its share to a fresh FX account, serves the FX service on a local port with its metadata published, and uses a fresh settlement account for the control plane.
 
 | File | What only the network can show |
 | --- | --- |
@@ -138,7 +138,7 @@ The suite has one credit token (`test/live/credits.ts`): the funding account iss
 | `app.test.ts` | The relay Worker under `wrangler dev` pointing at a local control plane: the buyer agent buys credits with test USDC through the FX service; a Mac-style provider (`AgentApp`) and a Linux node driven by the real CLI (`init`, `models add`, `provide --on`, `run`) each serve it through the Worker; each job is escrowed before its ticket and paid out from the relay's record, and the ledger shows the operator up by the bill less the network fee and the buyer down by the bill. A buyer hanging up mid-answer pays for the text the relay attests it forwarded and gets the rest back. The provider's earnings are read from the ledger and cashed out to USDC. |
 | `router.test.ts` | A client with only `@x402/fetch` and the Keeta exact scheme calls `POST /v1/chat/completions` on the Worker, gets 402, pays the run's settlement account in the router's stablecoin through the real facilitator (`https://facilitator.x402.keeta.com`), and gets the completion with the provider's signed receipt; the settlement account then pays the operator the bill less the network fee, returns the rest of the prepayment to the payer and keeps the fee; replaying the payment header is refused and moves no money. |
 
-Each run creates fresh accounts, tops them up from the funding account with a few cents of test USDC (KTA for fees comes from the faucet, or from the funding account when the faucet is slow), and sends the stablecoins and KTA left at the end back. It prints the funding account's address and balances first, and stops with a clear message if it holds less than 0.10 test USDC. A run spends well under one cent.
+Each run creates fresh accounts and tops them up from the funding account with a few cents of test USDC (KTA for fees comes from the faucet, or from the funding account when the faucet is slow). Each test file leaves the funding account exactly as it found it: it records every token balance of the funding account when it starts, and at the end sweeps every token on the run's accounts back (operators' payouts included), returns KTA up to the starting balance (block fees are paid from the faucet's KTA), and fails if any balance differs by even one base unit. It prints the funding account's address and balances first, and stops with a clear message if it holds less than 0.10 test USDC.
 
 How the app tests fund a buyer and decide that a job settled lives in `test/live/payments.ts`.
 
@@ -147,7 +147,7 @@ How the app tests fund a buyer and decide that a job settled lives in `test/live
 ```bash
 cd compute
 npm ci
-npm run test:live                      # spends from the suite's fixed test-network account
+npm run test:live                      # borrows from the suite's fixed test-network account and returns it all
 # KEETA_TESTNET_SEED=... (or KEETA_TESTNET_PASSPHRASE="24 words") uses another funding account instead
 ```
 
@@ -175,7 +175,7 @@ The seed is public on purpose, so anyone can top the account up and run the suit
 
 ### In CI
 
-`.github/workflows/compute-live.yml` runs the suite on manual dispatch, and nightly and on pull requests that touch `compute/` unless the repository variable `COMPUTE_LIVE` is `false`. Set it to `false` to pause those runs, for example while the test account is being refilled. It spends from the fixed test account above and reads no repository secrets, since a branch pushed to the repository can rewrite the workflow. `KEETA_TESTNET_SEED` and `KEETA_TESTNET_PASSPHRASE` are for local runs only. Pull requests from forks don't run it. A concurrency group keeps two runs from spending the funding account at once. A manual run with `model: llama` starts llama.cpp's server container with Qwen2.5 0.5B (about 400 MB from Hugging Face) and runs the same suite against it.
+`.github/workflows/compute-live.yml` runs the suite on manual dispatch, and nightly and on pull requests that touch `compute/` unless the repository variable `COMPUTE_LIVE` is `false`. Set it to `false` to pause those runs, for example while the test account is being refilled. It borrows from the fixed test account above and reads no repository secrets, since a branch pushed to the repository can rewrite the workflow. `KEETA_TESTNET_SEED` and `KEETA_TESTNET_PASSPHRASE` are for local runs only. Pull requests from forks don't run it. A concurrency group keeps two runs from using the funding account at once, since each checks its balances. A manual run with `model: llama` starts llama.cpp's server container with Qwen2.5 0.5B (about 400 MB from Hugging Face) and runs the same suite against it.
 
 ## Deploy
 
