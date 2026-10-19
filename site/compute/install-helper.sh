@@ -16,7 +16,7 @@
 #                           writable, otherwise ~/.local/bin)
 set -eu
 
-REPO="KeetaNetwork/agent-skills"
+REPO="KeetaNetwork/keeta-inference"
 NAME="keeta-compute-agent"
 
 # Set together when a release is published (see compute/README.md, Deploy).

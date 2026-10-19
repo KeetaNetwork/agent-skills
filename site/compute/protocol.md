@@ -1,6 +1,6 @@
 # Protocol
 
-Status: test-network preview. Version 1 of the formats below; field names match the shared protocol package in the [source repository](https://github.com/KeetaNetwork/agent-skills).
+Status: test-network preview. Version 1 of the formats below; field names match the shared protocol package in the [source repository](https://github.com/KeetaNetwork/keeta-inference).
 
 ## Identities
 
