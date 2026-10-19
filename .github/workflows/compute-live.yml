@@ -1,0 +1,79 @@
+# Keeta Compute against the live Keeta test network: real ledger sends, the
+# relay Worker under wrangler dev, and x402 through the real facilitator.
+# Spends from the suite's fixed test-network account (compute/test/live/support.ts),
+# which must hold test USDC and some KTA (and test KUSD once KUSD is pinned, for
+# the router test). It reads no secrets: a branch pushed to this repository can
+# rewrite this file, so anything it read would be readable from an unreviewed
+# pull request. See compute/README.md.
+name: Compute live (test network)
+
+on:
+  workflow_dispatch:
+    inputs:
+      model:
+        description: "Model behind the providers: the fake server, or llama.cpp with a small GGUF"
+        type: choice
+        options: [fake, llama]
+        default: fake
+  schedule:
+    - cron: "23 5 * * *"
+  pull_request:
+    paths:
+      - "compute/**"
+      - ".github/workflows/compute-live.yml"
+
+permissions:
+  contents: read
+
+# One run at a time uses the funding account (each checks its balances); later runs wait instead of racing it.
+concurrency:
+  group: compute-live-testnet-funding
+  cancel-in-progress: false
+
+jobs:
+  live:
+    # Automatic runs (nightly, pull requests) are on unless the repository
+    # variable COMPUTE_LIVE is false. A manual run always goes. Pull requests
+    # from forks never spend the shared test account.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (vars.COMPUTE_LIVE != 'false' &&
+       (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository))
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: compute
+    env:
+      KEETA_LIVE_NETWORK: test
+      LLAMA_HF_REPO: Qwen/Qwen2.5-0.5B-Instruct-GGUF
+      LLAMA_HF_FILE: qwen2.5-0.5b-instruct-q4_k_m.gguf
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: compute/package-lock.json
+      - name: Install
+        run: npm ci
+      - name: Start llama.cpp with a small model
+        if: github.event_name == 'workflow_dispatch' && inputs.model == 'llama'
+        run: |
+          mkdir -p "$HOME/.cache/llama.cpp"
+          docker run -d --name llama -p 8080:8080 -v "$HOME/.cache/llama.cpp:/root/.cache/llama.cpp" \
+            ghcr.io/ggml-org/llama.cpp:server \
+            --hf-repo "$LLAMA_HF_REPO" --hf-file "$LLAMA_HF_FILE" --alias live-model \
+            --host 0.0.0.0 --port 8080 --ctx-size 4096
+          for i in $(seq 1 120); do
+            if curl -fsS http://127.0.0.1:8080/health > /dev/null 2>&1; then break; fi
+            sleep 5
+          done
+          curl -fsS http://127.0.0.1:8080/v1/models
+          echo "LIVE_MODEL_URL=http://127.0.0.1:8080/v1" >> "$GITHUB_ENV"
+          echo "LIVE_MODEL_NAME=live-model" >> "$GITHUB_ENV"
+      - name: Live suite
+        run: npm run test:live
+      - name: llama.cpp log
+        if: failure() && github.event_name == 'workflow_dispatch' && inputs.model == 'llama'
+        run: docker logs llama 2>&1 | tail -200

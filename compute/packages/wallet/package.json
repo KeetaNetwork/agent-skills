@@ -1,0 +1,20 @@
+{
+  "name": "@keeta-compute/wallet",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "The Keeta wallet for Keeta Compute nodes: node, budget and operator keys, the encrypted operator wallet file with its recovery phrase, ledger sends and balances, and credit swaps through the keeta.ai FX provider.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "node --import tsx --test test/*.test.ts"
+  },
+  "dependencies": {
+    "@keeta-compute/protocol": "0.1.0",
+    "@keetanetwork/anchor": "0.0.102",
+    "@keetanetwork/keetanet-client": "0.18.7",
+    "@scure/bip39": "1.6.0"
+  }
+}

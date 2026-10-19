@@ -1,0 +1,27 @@
+{
+  "name": "@keeta-compute/control",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Keeta Compute control plane: provider registry, scheduler, receipts, pairing. Runs as a Firebase Cloud Function backed by Firestore, or as a local Node server.",
+  "main": "dist/index.js",
+  "engines": {
+    "node": "22"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "node --import tsx --test test/*.test.ts",
+    "dev": "node --import tsx src/server.ts",
+    "build": "esbuild src/index.ts --bundle --platform=node --target=node22 --format=esm --outfile=dist/index.js --packages=external --alias:@keeta-compute/protocol=../../packages/protocol/src/index.ts --alias:@keeta-compute/protocol/keeta=../../packages/protocol/src/keeta.ts && node scripts/functions-manifest.mjs",
+    "deploy": "npm run build && firebase deploy --only functions,firestore"
+  },
+  "dependencies": {
+    "@keeta-compute/protocol": "0.1.0",
+    "@keetanetwork/keetanet-client": "0.18.7",
+    "firebase-admin": "^13.4.0",
+    "firebase-functions": "^6.4.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0"
+  }
+}

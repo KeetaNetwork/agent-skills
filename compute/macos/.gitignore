@@ -1,0 +1,7 @@
+KeetaCompute.xcodeproj/
+build/
+.build/
+.swiftpm/
+DerivedData/
+*.xcuserstate
+*.profraw

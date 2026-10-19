@@ -1,0 +1,23 @@
+{
+  "functions": [
+    {
+      "source": "dist",
+      "codebase": "keeta-compute",
+      "runtime": "nodejs22",
+      "ignore": ["node_modules", "*.log"]
+    }
+  ],
+  "firestore": {
+    "rules": "firestore.rules",
+    "indexes": "firestore.indexes.json"
+  },
+  "hosting": {
+    "public": "public",
+    "rewrites": [{ "source": "/v1/**", "function": { "functionId": "api", "region": "us-central1" } }]
+  },
+  "emulators": {
+    "functions": { "port": 5001 },
+    "firestore": { "port": 8080 },
+    "hosting": { "port": 5000 }
+  }
+}

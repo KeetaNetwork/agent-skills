@@ -1,4 +1,4 @@
-name: Validate skills
+name: CI
 
 on:
   push:
@@ -13,30 +13,128 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Validate skill structure and metadata
-        run: python3 .github/scripts/validate-skills.py
+      - name: Check the Compute pages match their Markdown
+        run: |
+          python3 .github/scripts/render-compute-pages.py site/compute
+          git diff --exit-code site/compute
       - name: Build the keeta.ai site
         run: python3 .github/scripts/build-site.py _site
       - name: Check hosted entry points
         run: |
           test -s _site/index.html && test -s _site/404.html && test -s _site/styles.css && test -s _site/app.js
           test -s _site/assets/og-image.png && test -s _site/assets/fonts/Geist-Regular.woff2
-          test -s _site/SKILL.md && test -s _site/skill.md && test -s _site/llms.txt && test -s _site/llms-full.txt
-          test -s _site/skills/keeta/SKILL.md && test -s _site/skills/keeta/references/anchors.md
-          test -s _site/.well-known/agent-skills/index.json
-          test -s _site/.well-known/skills/index.json
+          test -s _site/llms.txt && test -s _site/_headers && test -s _site/_redirects
+          test -s _site/compute/compute.css
+          python3 -c "import json; apps = json.load(open('_site/.well-known/apple-app-site-association'))['webcredentials']['apps']; assert apps == ['2BG69HN56W.ai.keeta.compute'], apps"
+          for page in index app models router helper protocol; do
+            test -s "_site/compute/$page.html" && test -s "_site/compute/$page.md" || { echo "missing compute page $page"; exit 1; }
+          done
+          grep -q 'llama-3.2-3b-instruct' _site/compute/models.md && grep -q 'llama-3.2-3b-instruct' _site/compute/models.html
+          if grep -q 'keeta-compute:models-table' _site/compute/models.md _site/compute/models.html; then echo "models table not generated"; exit 1; fi
+          grep -q 'https://keeta.ai/compute/router.md' _site/llms.txt && grep -q 'https://keeta.md/llms.txt' _site/llms.txt
+      - name: Check the Pages output directory matches the build
+        run: grep -qx 'pages_build_output_dir = "./_site"' wrangler.toml
+      - name: Check the skills live only at keeta.md
+        run: |
+          # The skills moved to KeetaNetwork/keeta.md; old keeta.ai skill URLs redirect there, and the old
+          # plugin marketplace points existing Claude Code installs there.
+          if git ls-files | grep -qi 'skill\.md$'; then echo "SKILL.md files belong in KeetaNetwork/keeta.md"; exit 1; fi
+          python3 - <<'EOF'
+          import json
+          plugins = json.load(open(".claude-plugin/marketplace.json"))["plugins"]
+          expected = {"source": "git-subdir", "url": "https://github.com/KeetaNetwork/keeta.md.git", "path": "plugins/keeta"}
+          assert [p["name"] for p in plugins] == ["keeta"] and plugins[0]["source"] == expected, plugins
+          EOF
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - name: Check the Pages output directory matches the build
-        run: grep -qx 'pages_build_output_dir = "./_site"' wrangler.toml
-      - name: Install every skill from the built site with the skills CLI
+      - name: Serve the build as Pages does, and check the old skill URLs and the passkey file
         env:
           DISABLE_TELEMETRY: "1"
         run: |
-          python3 -m http.server 8000 --bind 127.0.0.1 --directory _site &
-          sleep 1
-          npx --yes skills@1.7.0 add http://127.0.0.1:8000 --list | tee skills-list.txt
-          for skill in $(python3 -c "import json; print(' '.join(s['name'] for s in json.load(open('_site/.well-known/agent-skills/index.json'))['skills']))"); do
-            grep -q "$skill" skills-list.txt || { echo "skills CLI did not list $skill"; exit 1; }
+          npx --yes wrangler@4.151.0 pages dev _site --port 8788 --ip 127.0.0.1 > pages-dev.log 2>&1 &
+          for i in $(seq 1 60); do curl -fs -o /dev/null http://127.0.0.1:8788/llms.txt && break; sleep 1; done
+          curl -fsS -o /dev/null http://127.0.0.1:8788/llms.txt || { cat pages-dev.log; exit 1; }
+          # Browser-based agents follow a redirect only if it allows their origin.
+          for path in /SKILL.md /skill.md /skills/keeta/SKILL.md /skills/keeta/references/anchors.md /llms-full.txt \
+              /.well-known/agent-skills/index.json /.well-known/skills/index.json; do
+            headers=$(curl -sS -o /dev/null -D - -H 'Origin: https://example.com' "http://127.0.0.1:8788$path" | tr -d '\r')
+            echo "$headers" | grep -qx 'HTTP/1.1 301 Moved Permanently' || { echo "$path: not a 301"; echo "$headers"; exit 1; }
+            echo "$headers" | grep -qix "location: https://keeta.md$path" || { echo "$path: wrong location"; echo "$headers"; exit 1; }
+            echo "$headers" | grep -qix 'access-control-allow-origin: \*' || { echo "$path: no CORS header"; echo "$headers"; exit 1; }
           done
+          # The Mac app's passkeys need this file as JSON, with no redirect.
+          curl -fsS -D - -o /dev/null http://127.0.0.1:8788/.well-known/apple-app-site-association | tr -d '\r' | grep -qix 'content-type: application/json'
+
+  compute:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: compute
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: compute/package-lock.json
+      - name: Install
+        run: npm ci
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Test
+        run: npm test
+      - name: End-to-end test
+        run: npm run test:e2e
+      - name: Relay Worker under wrangler dev
+        run: npm run test:worker
+      - name: Agent compiled with the pinned bun answers the app over stdio
+        run: |
+          npm run build:linux-x64 -w @keeta-compute/cli
+          packages/cli/dist/linux-x64/keeta-compute-agent self-test
+          KEETA_COMPUTE_AGENT_BINARY=packages/cli/dist/linux-x64/keeta-compute-agent npm run test:agent-binary
+
+  macos:
+    runs-on: macos-15
+    defaults:
+      run:
+        working-directory: compute/macos
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: compute/package-lock.json
+      - name: Install compute/ (the build bundles the agent with the bun it pins)
+        working-directory: compute
+        run: npm ci
+      - name: Unit tests (KeetaComputeKit)
+        run: swift test
+      - name: Build the app (unsigned)
+        run: |
+          brew install xcodegen
+          xcodegen generate
+          xcodebuild -project KeetaCompute.xcodeproj -scheme KeetaCompute -configuration Debug \
+            -destination 'platform=macOS,arch=arm64' -derivedDataPath build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO build
+      - name: The bundled agent answers the app over stdio
+        working-directory: compute
+        run: |
+          AGENT="macos/build/DerivedData/Build/Products/Debug/Keeta Compute.app/Contents/Resources/keeta-compute-agent"
+          test -x "$AGENT"
+          KEETA_COMPUTE_AGENT_BINARY="$AGENT" npm run test:agent-binary
+      - name: Draw the menu bar popover with sample data
+        timeout-minutes: 5
+        run: |
+          APP="build/DerivedData/Build/Products/Debug/Keeta Compute.app"
+          # An ad-hoc signature is enough to run the unsigned Debug build here.
+          codesign --force --deep --sign - "$APP"
+          "$APP/Contents/MacOS/Keeta Compute" --snapshot "$PWD/build/screenshots"
+          ls -la build/screenshots
+      - name: Upload the popover screenshots
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-popover-screenshots
+          path: compute/macos/build/screenshots
+          if-no-files-found: error

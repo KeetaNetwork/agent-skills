@@ -1,0 +1,246 @@
+/*
+ * Keeta Compute docs. Loaded after /styles.css, so the pages share the site's tokens,
+ * type, header and footer; this file only lays out the docs: a page list beside a
+ * readable column of prose rendered from the Markdown twins.
+ */
+
+.docs {
+  display: grid;
+  grid-template-columns: 200px minmax(0, 760px);
+  gap: 72px;
+  padding: 64px var(--gutter) 112px;
+}
+
+/* Page list */
+
+.docs-nav {
+  position: sticky;
+  top: calc(var(--nav-height) + 32px);
+  align-self: start;
+}
+
+.docs-nav .section-kicker {
+  margin-bottom: 12px;
+}
+
+.docs-nav nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.docs-nav a {
+  padding: 7px 12px;
+  border-left: 2px solid transparent;
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+  color: var(--text-secondary);
+  font-size: 14px;
+  line-height: 20px;
+  transition: background 160ms ease, color 160ms ease;
+}
+
+.docs-nav a:hover {
+  color: var(--text-primary);
+  background: var(--surface-hover);
+}
+
+.docs-nav a[aria-current="page"] {
+  border-left-color: var(--accent);
+  color: var(--text-primary);
+  background: var(--surface-wash);
+  font-weight: 500;
+}
+
+/* Prose */
+
+.docs-body {
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: 16px;
+  line-height: 26px;
+}
+
+.docs-body h1 {
+  margin: 0 0 24px;
+  color: var(--text-primary);
+  font-size: 48px;
+  line-height: 56px;
+}
+
+.docs-body h2 {
+  margin: 56px 0 16px;
+  padding-top: 32px;
+  border-top: 1px solid var(--line);
+  color: var(--text-primary);
+  font-size: 28px;
+  line-height: 36px;
+}
+
+.docs-body h3 {
+  margin: 36px 0 12px;
+  color: var(--text-primary);
+  font-size: 20px;
+  line-height: 28px;
+}
+
+.docs-body p,
+.docs-body ul,
+.docs-body ol,
+.docs-body pre,
+.docs-body table {
+  margin: 0 0 20px;
+}
+
+.docs-body ul,
+.docs-body ol {
+  padding-left: 1.25em;
+}
+
+.docs-body li {
+  margin-bottom: 8px;
+}
+
+.docs-body li::marker {
+  color: var(--accent);
+}
+
+.docs-body ol > li::marker {
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+
+.docs-body strong {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.docs-body a {
+  color: var(--text-primary);
+  text-decoration: underline;
+  text-decoration-color: var(--line-strong);
+  text-underline-offset: 4px;
+  transition: text-decoration-color 160ms ease;
+}
+
+.docs-body a:hover {
+  text-decoration-color: var(--accent);
+}
+
+.docs-body code {
+  padding: 1px 6px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  color: var(--text-primary);
+  background: var(--surface-wash);
+  font-family: var(--font-mono);
+  font-size: 0.86em;
+  overflow-wrap: anywhere;
+}
+
+.docs-body pre {
+  overflow-x: auto;
+  padding: 18px 20px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface-wash);
+}
+
+.docs-body pre code {
+  padding: 0;
+  border: 0;
+  background: none;
+  font-size: 13px;
+  line-height: 20px;
+  overflow-wrap: normal;
+}
+
+.docs-body table {
+  display: block;
+  overflow-x: auto;
+  border-collapse: collapse;
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.docs-body th {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line-strong);
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  text-align: left;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.docs-body td {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+  white-space: nowrap;
+}
+
+.docs-body td.wrap {
+  min-width: 240px;
+  white-space: normal;
+}
+
+.docs-source {
+  margin-top: 64px !important;
+  padding-top: 24px;
+  border-top: 1px solid var(--line);
+  color: var(--text-tertiary);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+@media (max-width: 1023px) {
+  .docs {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 32px;
+    padding-top: 32px;
+  }
+
+  .docs-nav {
+    position: static;
+  }
+
+  .docs-nav nav {
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .docs-nav a {
+    padding: 6px 14px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-full);
+    font-size: 13px;
+  }
+
+  .docs-nav a[aria-current="page"] {
+    border-color: var(--accent);
+    background: var(--accent);
+  }
+}
+
+@media (max-width: 767px) {
+  .docs {
+    padding-bottom: 72px;
+  }
+
+  .docs-body h1 {
+    font-size: 36px;
+    line-height: 44px;
+  }
+
+  .docs-body h2 {
+    margin-top: 44px;
+    padding-top: 24px;
+    font-size: 24px;
+    line-height: 32px;
+  }
+}

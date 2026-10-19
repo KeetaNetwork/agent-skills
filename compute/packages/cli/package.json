@@ -1,0 +1,30 @@
+{
+  "name": "@keeta-compute/cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "keeta-compute-agent: the agent binary the macOS app bundles, and the Linux CLI (a full node with its own wallet, or a helper paired with one).",
+  "bin": {
+    "keeta-compute-agent": "src/main.ts"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "node --import tsx --test test/*.test.ts",
+    "start": "node --import tsx src/main.ts",
+    "build:mac": "bun build src/main.ts --compile --minify --target=bun-darwin-arm64 --external bufferutil --external utf-8-validate --outfile dist/darwin-arm64/keeta-compute-agent",
+    "build:linux-x64": "bun build src/main.ts --compile --minify --target=bun-linux-x64 --external bufferutil --external utf-8-validate --outfile dist/linux-x64/keeta-compute-agent",
+    "build:linux-arm64": "bun build src/main.ts --compile --minify --target=bun-linux-arm64 --external bufferutil --external utf-8-validate --outfile dist/linux-arm64/keeta-compute-agent"
+  },
+  "dependencies": {
+    "@keeta-compute/agent": "0.1.0",
+    "@keeta-compute/protocol": "0.1.0",
+    "@keeta-compute/provider": "0.1.0",
+    "@keeta-compute/runtime-openai": "0.1.0",
+    "@keeta-compute/tokens": "0.1.0",
+    "@keeta-compute/wallet": "0.1.0",
+    "@noble/curves": "^1.9.7"
+  }
+}

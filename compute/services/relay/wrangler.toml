@@ -1,0 +1,28 @@
+# Keeta Compute relay + public API router (Cloudflare Workers).
+# Secrets: wrangler secret put RELAY_SECRET / ROUTER_SECRET
+# Optional: wrangler secret put OPENROUTER_API_KEY turns on the fallback for
+# router jobs the control plane marks (see FALLBACK_MODELS there).
+name = "keeta-compute-relay"
+main = "src/index.ts"
+compatibility_date = "2026-10-01"
+# enable_request_signal: without it request.signal never fires, so a buyer
+# hanging up would not cancel the job on the provider (test/worker.test.ts).
+compatibility_flags = ["nodejs_compat", "enable_request_signal"]
+
+routes = [
+  { pattern = "relay.keeta.ai", custom_domain = true },
+  { pattern = "api.keeta.ai", custom_domain = true }
+]
+
+[vars]
+CONTROL_URL = "https://control.keeta.ai"
+NETWORK = "test"
+FACILITATOR_URL = "https://facilitator.x402.keeta.com"
+
+[[durable_objects.bindings]]
+name = "PROVIDER_CHANNEL"
+class_name = "ProviderChannel"
+
+[[migrations]]
+tag = "v1"
+new_classes = ["ProviderChannel"]

@@ -1,0 +1,17 @@
+{
+  "name": "@keeta-compute/runtime-openai",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Streams chat completions from a local OpenAI-compatible model server (mlx_lm.server, llama.cpp, vLLM, SGLang) and returns what a Keeta Compute receipt needs.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "node --import tsx --test test/*.test.ts"
+  },
+  "dependencies": {
+    "@keeta-compute/protocol": "0.1.0"
+  }
+}
