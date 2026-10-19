@@ -22,11 +22,11 @@ The Keeta agent skills (wallets, payments, bank payouts, cards, bridges, FX, ide
 | Claude Code plugin | `/plugin marketplace add KeetaNetwork/keeta.md`, then `/plugin install keeta@keeta` |
 
 keeta.ai's old skill URLs (`/SKILL.md`, `/skills/…`, `/llms-full.txt` and the `/.well-known/` skill indexes) redirect to the same paths on keeta.md.
-Claude Code users who added the old `KeetaNetwork/agent-skills` marketplace keep the `keeta` plugin: `.claude-plugin/marketplace.json` here now installs it from KeetaNetwork/keeta.md.
+Claude Code users who added the old `KeetaNetwork/agent-skills` marketplace (this repository before it was renamed `keeta-inference`; GitHub redirects the old name) keep the `keeta` plugin: `.claude-plugin/marketplace.json` here now installs it from KeetaNetwork/keeta.md.
 
 ## Hosting on keeta.ai
 
-keeta.ai is the Cloudflare Pages project `agent-skills`, connected to this repository. Pages builds every push. `main` deploys to keeta.ai, and other branches and pull requests get preview URLs.
+keeta.ai is the Cloudflare Pages project `agent-skills` (named before the repository was renamed), connected to this repository. Pages builds every push. `main` deploys to keeta.ai, and other branches and pull requests get preview URLs.
 
 The build turns `site/` into `_site/`, the folder Pages serves, and fills the Compute models table from `compute/packages/protocol/catalog.json`.
 
